@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,27 +18,50 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include <memory.h>
+#include <errno.h>
 
 #include "concurrent/aeron_thread.h"
 #include "util/aeron_error.h"
 #include "aeron_alloc.h"
 #include "command/aeron_control_protocol.h"
 
+#if defined(AERON_COMPILER_MSVC)
+#include <WinSock2.h>
+#include <windows.h>
+#endif
+
 static AERON_INIT_ONCE error_is_initialized = AERON_INIT_ONCE_VALUE;
+
+#if defined(AERON_COMPILER_MSVC)
+static pthread_key_t error_key = TLS_OUT_OF_INDEXES;
+#else
 static pthread_key_t error_key;
+#endif
 
 static void initialize_per_thread_error()
 {
-    if (aeron_thread_key_create(&error_key, free) < 0)
+    if (aeron_thread_key_create(&error_key, free))
     {
         fprintf(stderr, "could not create per thread error key, exiting.\n");
         exit(EXIT_FAILURE);
     }
 }
 
+static void initialize_error()
+{
+#if defined(AERON_COMPILER_MSVC)
+    if (error_key != TLS_OUT_OF_INDEXES)
+    {
+        return;
+    }
+#endif
+
+    (void) aeron_thread_once(&error_is_initialized, initialize_per_thread_error);
+}
+
 int aeron_errcode()
 {
-    (void) aeron_thread_once(&error_is_initialized, initialize_per_thread_error);
+    initialize_error();
     aeron_per_thread_error_t *error_state = aeron_thread_get_specific(error_key);
     int result = 0;
 
@@ -52,7 +75,7 @@ int aeron_errcode()
 
 const char *aeron_errmsg()
 {
-    (void) aeron_thread_once(&error_is_initialized, initialize_per_thread_error);
+    initialize_error();
     aeron_per_thread_error_t *error_state = aeron_thread_get_specific(error_key);
     const char *result = "";
 
@@ -64,9 +87,9 @@ const char *aeron_errmsg()
     return result;
 }
 
-void aeron_set_err(int errcode, const char *format, ...)
+static aeron_per_thread_error_t* get_required_error_state()
 {
-    (void) aeron_thread_once(&error_is_initialized, initialize_per_thread_error);
+    initialize_error();
     aeron_per_thread_error_t *error_state = aeron_thread_get_specific(error_key);
 
     if (NULL == error_state)
@@ -77,12 +100,19 @@ void aeron_set_err(int errcode, const char *format, ...)
             exit(EXIT_FAILURE);
         }
 
-        if (aeron_thread_set_specific(error_key, error_state) < 0)
+        if (aeron_thread_set_specific(error_key, error_state))
         {
             fprintf(stderr, "could not associate per thread error key, exiting.\n");
             exit(EXIT_FAILURE);
         }
     }
+
+    return error_state;
+}
+
+void aeron_set_err(int errcode, const char *format, ...)
+{
+    aeron_per_thread_error_t *error_state = get_required_error_state();
 
     error_state->errcode = errcode;
     va_list args;
@@ -91,7 +121,58 @@ void aeron_set_err(int errcode, const char *format, ...)
     va_start(args, format);
     vsnprintf(stack_message, sizeof(stack_message) - 1, format, args);
     va_end(args);
-    strncpy(error_state->errmsg, stack_message, sizeof(error_state->errmsg) - 1);
+    strncpy(error_state->errmsg, stack_message, sizeof(error_state->errmsg));
+}
+
+void aeron_set_err_from_last_err_code(const char* format, ...)
+{
+#if defined(AERON_COMPILER_MSVC)
+    int errcode = GetLastError();
+#else
+    int errcode = errno;
+#endif
+
+    aeron_per_thread_error_t* error_state = get_required_error_state();
+
+    error_state->errcode = errcode;
+    va_list args;
+    char stack_message[sizeof(error_state->errmsg)];
+
+    va_start(args, format);
+    int written = vsnprintf(stack_message, sizeof(stack_message) - 1, format, args);
+    va_end(args);
+
+    if (written < 0)
+    {
+        error_state->errmsg[0] = '\0';
+        return;
+    }
+
+    strncpy(error_state->errmsg, stack_message, sizeof(error_state->errmsg));
+
+#if defined(AERON_COMPILER_MSVC)
+    const int length = FormatMessageA(
+        FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+        NULL,
+        errcode,
+        MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+        stack_message,
+        sizeof(stack_message),
+        NULL);
+
+    if (length >= 2 && stack_message[length - 1] == '\n' && stack_message[length - 2] == '\r')
+    {
+        stack_message[length - 2] = '\0';
+    }
+    else if (!length)
+    {
+        snprintf(stack_message, sizeof(stack_message), "error %d", errcode);
+    }
+
+    snprintf(error_state->errmsg + written, sizeof(error_state->errmsg) - written, ": %s", stack_message);
+#else
+    snprintf(error_state->errmsg + written, sizeof(error_state->errmsg) - written, ": %s", strerror(errcode));
+#endif
 }
 
 const char *aeron_error_code_str(int errcode)
@@ -130,25 +211,46 @@ const char *aeron_error_code_str(int errcode)
     }
 }
 
-#ifdef _MSC_VER
-#include <WinSock2.h>
-#include <windows.h>
+#if defined(AERON_COMPILER_MSVC)
 
-void aeron_set_windows_error()
+bool aeron_error_dll_process_attach()
 {
-    const DWORD errorId = GetLastError();
-    LPSTR messageBuffer = NULL;
+    if (error_key != TLS_OUT_OF_INDEXES)
+    {
+        return false;
+    }
 
-    FormatMessageA(
-        FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
-        NULL,
-        errorId,
-        MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-        (LPSTR)&messageBuffer,
-        0,
-        NULL);
-
-    aeron_set_err(errorId, messageBuffer);
-    free(messageBuffer);
+    error_key = TlsAlloc();
+    return error_key != TLS_OUT_OF_INDEXES;
 }
+
+void aeron_error_dll_thread_detach()
+{
+    if (error_key == TLS_OUT_OF_INDEXES)
+    {
+        return;
+    }
+
+    aeron_per_thread_error_t* error_state = aeron_thread_get_specific(error_key);
+
+    if (NULL != error_state)
+    {
+        aeron_free(error_state);
+        aeron_thread_set_specific(error_key, NULL);
+    }
+}
+
+void aeron_error_dll_process_detach()
+{
+    if (error_key == TLS_OUT_OF_INDEXES)
+    {
+        return;
+    }
+
+    aeron_error_dll_thread_detach();
+
+    aeron_thread_key_delete(error_key);
+    error_key = TLS_OUT_OF_INDEXES;
+}
+
 #endif

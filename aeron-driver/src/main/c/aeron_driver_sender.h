@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -54,6 +54,14 @@ typedef struct aeron_driver_sender_stct
     }
     recv_buffers;
 
+    aeron_udp_channel_data_paths_t data_paths;
+
+    int64_t *total_bytes_sent_counter;
+    int64_t *errors_counter;
+    int64_t *invalid_frames_counter;
+    int64_t *status_messages_received_counter;
+    int64_t *nak_messages_received_counter;
+
     aeron_driver_context_t *context;
     aeron_udp_transport_poller_poll_func_t poller_poll_func;
     aeron_udp_channel_transport_recvmmsg_func_t recvmmsg_func;
@@ -64,11 +72,7 @@ typedef struct aeron_driver_sender_stct
     size_t duty_cycle_counter;
     size_t duty_cycle_ratio;
 
-    int64_t *total_bytes_sent_counter;
-    int64_t *errors_counter;
-    int64_t *invalid_frames_counter;
-    int64_t *status_messages_received_counter;
-    int64_t *nak_messages_received_counter;
+    uint8_t padding[AERON_CACHE_LINE_LENGTH];
 }
 aeron_driver_sender_t;
 

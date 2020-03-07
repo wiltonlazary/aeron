@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,7 +27,6 @@
 #include "aeron_alloc.h"
 #include "aeron_distinct_error_log.h"
 #include "aeron_atomic.h"
-#include "aeron_driver_context.h"
 
 int aeron_distinct_error_log_init(
     aeron_distinct_error_log_t *log,
@@ -45,9 +44,7 @@ int aeron_distinct_error_log_init(
 
     if (aeron_alloc((void **)&log->observation_list, sizeof(aeron_distinct_error_log_observation_list_t)) < 0)
     {
-        int errcode = errno;
-
-        aeron_set_err(errcode, "%s:%d: %s", __FILE__, __LINE__, strerror(errcode));
+        aeron_set_err_from_last_err_code("%s:%d", __FILE__, __LINE__);
         return -1;
     }
 
@@ -76,6 +73,7 @@ void aeron_distinct_error_log_close(aeron_distinct_error_log_t *log)
     }
 
     aeron_free(log->observation_list);
+    aeron_mutex_destroy(&log->mutex);
 }
 
 static aeron_distinct_observation_t *aeron_distinct_error_log_find_observation(
@@ -199,6 +197,9 @@ int aeron_distinct_error_log_record(
             aeron_format_date(buffer, sizeof(buffer), timestamp);
             fprintf(stderr, "%s - unrecordable error %d: %s %s\n", buffer, error_code, description, message);
             errno = ENOMEM;
+#if defined(AERON_COMPILER_MSVC)
+            SetLastError(ERROR_OUTOFMEMORY);
+#endif
             return -1;
         }
     }

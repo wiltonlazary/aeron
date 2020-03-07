@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,7 +15,7 @@
  */
 
 #include <functional>
-#include <limits.h>
+#include <climits>
 
 #include <gtest/gtest.h>
 #include <aeron_driver_common.h>
@@ -28,13 +28,9 @@ extern "C"
 class ParseUtilTest : public testing::Test
 {
 public:
-    ParseUtilTest()
-    {
-    }
+    ParseUtilTest() = default;
 
-    virtual ~ParseUtilTest()
-    {
-    }
+    virtual ~ParseUtilTest() = default;
 };
 
 TEST_F(ParseUtilTest, shouldNotParseInvalidNumber)

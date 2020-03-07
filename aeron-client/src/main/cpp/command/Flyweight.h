@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -82,7 +82,7 @@ protected:
 
     inline void getBytes(util::index_t offset, uint8_t *dest, util::index_t length) const
     {
-        m_buffer.getBytes(offset, dest, length);
+        m_buffer.getBytes(m_baseOffset + offset, dest, length);
     }
 
     template <typename struct_t2>

@@ -1,5 +1,5 @@
 /*
- *  Copyright 2014-2019 Real Logic Ltd.
+ *  Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,11 +15,14 @@
  */
 package io.aeron.cluster.service;
 
+import io.aeron.ExclusivePublication;
 import io.aeron.Image;
 import io.aeron.Publication;
 import io.aeron.cluster.codecs.CloseReason;
 import io.aeron.logbuffer.Header;
 import org.agrona.DirectBuffer;
+
+import java.util.concurrent.TimeUnit;
 
 /**
  * Interface which a service must implement to be contained in the cluster.
@@ -30,9 +33,9 @@ public interface ClusteredService
      * Start event for the service where the service can perform any initialisation required and load snapshot state.
      * The snapshot image can be null if no previous snapshot exists.
      * <p>
-     * <b>Note:</b> As this is a potentially long running operation the implementation should occasional call
-     * {@link Cluster#idle()} or {@link Cluster#idle(int)}, especially when polling the snapshot {@link Image}
-     * returns 0.
+     * <b>Note:</b> As this is a potentially long running operation the implementation should use
+     * {@link Cluster#idleStrategy()} and then occasional call {@link org.agrona.concurrent.IdleStrategy#idle()} or
+     * {@link org.agrona.concurrent.IdleStrategy#idle(int)}, especially when polling the {@link Image} returns 0.
      *
      * @param cluster       with which the service can interact.
      * @param snapshotImage from which the service can load its archived state which can be null when no snapshot.
@@ -85,12 +88,14 @@ public interface ClusteredService
     /**
      * The service should take a snapshot and store its state to the provided archive {@link Publication}.
      * <p>
-     * <b>Note:</b> As this is a potentially long running operation the implementation should occasional call
-     * {@link Cluster#idle()} or {@link Cluster#idle(int)}, especially in the event of back pressure.
+     * <b>Note:</b> As this is a potentially long running operation the implementation should use
+     * {@link Cluster#idleStrategy()} and then occasional call {@link org.agrona.concurrent.IdleStrategy#idle()} or
+     * {@link org.agrona.concurrent.IdleStrategy#idle(int)},
+     * especially when polling the snapshot {@link ExclusivePublication} returns {@link Publication#BACK_PRESSURED}.
      *
      * @param snapshotPublication to which the state should be recorded.
      */
-    void onTakeSnapshot(Publication snapshotPublication);
+    void onTakeSnapshot(ExclusivePublication snapshotPublication);
 
     /**
      * Notify that the cluster node has changed role.
@@ -105,4 +110,28 @@ public interface ClusteredService
      * @param cluster with which the service can interact.
      */
     void onTerminate(Cluster cluster);
+
+    /**
+     * An election has been successful and a leader has entered a new term.
+     *
+     * @param leadershipTermId    identity for the new leadership term.
+     * @param logPosition         position the log has reached as the result of this message.
+     * @param timestamp           for the new leadership term.
+     * @param termBaseLogPosition position at the beginning of the leadership term.
+     * @param leaderMemberId      who won the election.
+     * @param logSessionId        session id for the publication of the log.
+     * @param timeUnit            for the timestamps in the coming leadership term.
+     * @param appVersion          for the application configured in the consensus module.
+     */
+    default void onNewLeadershipTermEvent(
+        long leadershipTermId,
+        long logPosition,
+        long timestamp,
+        long termBaseLogPosition,
+        int leaderMemberId,
+        int logSessionId,
+        TimeUnit timeUnit,
+        int appVersion)
+    {
+    }
 }

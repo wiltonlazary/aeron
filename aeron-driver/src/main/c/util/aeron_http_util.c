@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -241,7 +241,7 @@ static char aeron_http_request_format[] =
 int aeron_http_retrieve(aeron_http_response_t **response, const char *url, int64_t timeout_ns)
 {
     aeron_http_parsed_url_t parsed_url;
-    int sock;
+    aeron_socket_t sock;
     aeron_http_response_t *_response = NULL;
 
     *response = NULL;
@@ -260,9 +260,7 @@ int aeron_http_retrieve(aeron_http_response_t **response, const char *url, int64
 
     if (connect(sock, (struct sockaddr *)&parsed_url.address, addr_len) < 0)
     {
-        int errcode = errno;
-
-        aeron_set_err(errcode, "http connect: %s", strerror(errcode));
+        aeron_set_err_from_last_err_code("http connect");
         goto error;
     }
 
@@ -273,25 +271,19 @@ int aeron_http_retrieve(aeron_http_response_t **response, const char *url, int64
 
     if (length < 0 || (sent_length = send(sock, request, (size_t)length, 0)) < length)
     {
-        int errcode = errno;
-
-        aeron_set_err(errcode, "http sent %" PRId64 "/%d bytes: %s", (uint64_t)sent_length, length, strerror(errcode));
+        aeron_set_err_from_last_err_code("http sent %" PRId64 "/%d bytes", (uint64_t)sent_length, length);
         goto error;
     }
 
     if (set_socket_non_blocking(sock) < 0)
     {
-        int errcode = errno;
-
-        aeron_set_err(errcode, "http set_socket_non_blocking: %s", strerror(errcode));
+        aeron_set_err_from_last_err_code("http set_socket_non_blocking");
         goto error;
     }
 
     if (aeron_alloc((void **)&_response, sizeof(aeron_http_response_t)) < 0)
     {
-        int errcode = errno;
-
-        aeron_set_err(errcode, "http alloc response: %s", strerror(errcode));
+        aeron_set_err_from_last_err_code("http alloc response");
         goto error;
     }
 
@@ -333,7 +325,7 @@ int aeron_http_retrieve(aeron_http_response_t **response, const char *url, int64
                 continue;
             }
 
-            aeron_set_err(errcode, "http recv: %s", strerror(errcode));
+            aeron_set_err_from_last_err_code("http recv");
             goto error;
         }
 
@@ -368,7 +360,8 @@ int aeron_http_retrieve(aeron_http_response_t **response, const char *url, int64
 
 int aeron_http_header_get(aeron_http_response_t *response, const char *header_name, char *line, size_t max_length)
 {
-    int line_result = 0, header_name_length = strlen(header_name);
+    int line_result = 0;
+    size_t header_name_length = strlen(header_name);
     size_t cursor = response->headers_offset;
 
     while (cursor < response->body_offset)

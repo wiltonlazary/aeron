@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -34,12 +34,12 @@ struct mmsghdr
 
 int aeron_udp_destination_tracker_init(
     aeron_udp_destination_tracker_t *tracker,
-    aeron_udp_channel_transport_bindings_t *transport_bindings,
-    aeron_clock_func_t clock,
+    aeron_udp_channel_data_paths_t *data_paths,
+    aeron_clock_cache_t *cached_clock,
     int64_t timeout_ns)
 {
-    tracker->nano_clock = clock;
-    tracker->transport_bindings = transport_bindings;
+    tracker->cached_clock = cached_clock;
+    tracker->data_paths = data_paths;
     tracker->destination_timeout_ns = timeout_ns;
     tracker->destinations.array = NULL;
     tracker->destinations.length = 0;
@@ -65,7 +65,7 @@ int aeron_udp_destination_tracker_sendmmsg(
     aeron_udp_channel_transport_t *transport,
     struct mmsghdr *mmsghdr, size_t vlen)
 {
-    int64_t now_ns = tracker->nano_clock();
+    int64_t now_ns = aeron_clock_cached_nano_time(tracker->cached_clock);
     int min_msgs_sent = (int)vlen;
 
     for (int last_index = (int)tracker->destinations.length - 1, i = last_index; i >= 0; i--)
@@ -91,7 +91,8 @@ int aeron_udp_destination_tracker_sendmmsg(
                 mmsghdr[j].msg_len = 0;
             }
 
-            const int sendmmsg_result = tracker->transport_bindings->sendmmsg_func(transport, mmsghdr, vlen);
+            const int sendmmsg_result = tracker->data_paths->sendmmsg_func(
+                tracker->data_paths, transport, mmsghdr, vlen);
 
             min_msgs_sent = sendmmsg_result < min_msgs_sent ? sendmmsg_result : min_msgs_sent;
         }
@@ -103,7 +104,7 @@ int aeron_udp_destination_tracker_sendmmsg(
 int aeron_udp_destination_tracker_sendmsg(
     aeron_udp_destination_tracker_t *tracker, aeron_udp_channel_transport_t *transport, struct msghdr *msghdr)
 {
-    int64_t now_ns = tracker->nano_clock();
+    int64_t now_ns = aeron_clock_cached_nano_time(tracker->cached_clock);
     int min_bytes_sent = (int)msghdr->msg_iov->iov_len;
 
     for (int last_index = (int)tracker->destinations.length - 1, i = last_index; i >= 0; i--)
@@ -125,7 +126,7 @@ int aeron_udp_destination_tracker_sendmsg(
             msghdr->msg_name = &entry->addr;
             msghdr->msg_namelen = AERON_ADDR_LEN(&entry->addr);
 
-            const int sendmsg_result = tracker->transport_bindings->sendmsg_func(transport, msghdr);
+            const int sendmsg_result = tracker->data_paths->sendmsg_func(tracker->data_paths, transport, msghdr);
 
             min_bytes_sent = sendmsg_result < min_bytes_sent ? sendmsg_result : min_bytes_sent;
         }
@@ -164,7 +165,7 @@ int aeron_udp_destination_tracker_on_status_message(
     if (tracker->destination_timeout_ns > 0)
     {
         aeron_status_message_header_t *status_message_header = (aeron_status_message_header_t *)buffer;
-        const int64_t now_ns = tracker->nano_clock();
+        const int64_t now_ns = aeron_clock_cached_nano_time(tracker->cached_clock);
         const int64_t receiver_id = status_message_header->receiver_id;
         bool is_existing = false;
 

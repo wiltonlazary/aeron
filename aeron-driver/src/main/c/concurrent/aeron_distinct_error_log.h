@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,6 +22,7 @@
 #include <stdbool.h>
 #include <aeron_alloc.h>
 #include "aeronmd.h"
+#include "util/aeron_clock.h"
 #include "util/aeron_bitutil.h"
 #include "concurrent/aeron_thread.h"
 #include "concurrent/aeron_atomic.h"
@@ -68,7 +69,7 @@ typedef struct aeron_distinct_error_log_stct
     aeron_clock_func_t clock;
     aeron_resource_linger_func_t linger_resource;
     void *linger_resource_clientd;
-    AERON_MUTEX mutex;
+    aeron_mutex_t mutex;
 }
 aeron_distinct_error_log_t;
 

@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -76,7 +76,6 @@ TEST(utilTests, stringUtilstrPrintfTest)
 {
     std::string val = strPrintf("%s %s", "hello", "world");
     ASSERT_EQ(val, "hello world");
-
 }
 
 TEST(utilTests, findNextPowerOfTwo)
@@ -115,9 +114,13 @@ TEST(utilTests, sourcedException)
 {
 #if defined(_MSC_VER)
     const std::string aeron_client_dir = " aeron-client\\";
-    const std::string testutils_h_filename = "testutils.h";
 #else
     const std::string aeron_client_dir = " aeron-client/";
+#endif
+
+#if defined(_MSC_VER) && defined(MSVC_FILE_IS_LOWER_CASE)
+    const std::string testutils_h_filename = "testutils.h";
+#else
     const std::string testutils_h_filename = "TestUtils.h";
 #endif
 

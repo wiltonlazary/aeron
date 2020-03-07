@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,7 +26,7 @@ class PendingSetupMessageFromSource
     private final int transportIndex;
     private final boolean periodic;
     private final ReceiveChannelEndpoint channelEndpoint;
-    private final InetSocketAddress controlAddress;
+    private InetSocketAddress controlAddress;
 
     private long timeOfStatusMessageNs;
 
@@ -74,6 +74,11 @@ class PendingSetupMessageFromSource
     public boolean shouldElicitSetupMessage()
     {
         return channelEndpoint.shouldElicitSetupMessage();
+    }
+
+    public void controlAddress(final InetSocketAddress newControlAddress)
+    {
+        this.controlAddress = newControlAddress;
     }
 
     public InetSocketAddress controlAddress()

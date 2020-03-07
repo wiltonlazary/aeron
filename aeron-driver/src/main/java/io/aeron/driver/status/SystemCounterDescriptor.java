@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -47,7 +47,8 @@ public enum SystemCounterDescriptor
     POSSIBLE_TTL_ASYMMETRY(21, "Possible TTL Asymmetry"),
     CONTROLLABLE_IDLE_STRATEGY(22, "ControllableIdleStrategy status"),
     LOSS_GAP_FILLS(23, "Loss gap fills"),
-    CLIENT_TIMEOUTS(24, "Client liveness timeouts");
+    CLIENT_TIMEOUTS(24, "Client liveness timeouts"),
+    RESOLUTION_CHANGES(25, "Resolution changes");
 
     /**
      * All system counters have the same type id, i.e. system counters are the same type. Other types can exist.

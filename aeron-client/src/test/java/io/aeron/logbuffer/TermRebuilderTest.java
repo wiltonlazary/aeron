@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,8 +15,8 @@
  */
 package io.aeron.logbuffer;
 
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
 import org.agrona.BitUtil;
 import org.agrona.concurrent.UnsafeBuffer;
@@ -34,7 +34,7 @@ public class TermRebuilderTest
 
     private final UnsafeBuffer termBuffer = mock(UnsafeBuffer.class);
 
-    @Before
+    @BeforeEach
     public void setUp()
     {
         when(termBuffer.capacity()).thenReturn(TERM_BUFFER_CAPACITY);

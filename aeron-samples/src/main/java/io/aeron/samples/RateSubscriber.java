@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -69,7 +69,7 @@ public class RateSubscriber
         try (Aeron aeron = Aeron.connect(ctx);
             Subscription subscription = aeron.addSubscription(CHANNEL, STREAM_ID))
         {
-            final Future future = executor.submit(() -> SamplesUtil.subscriberLoop(
+            final Future<?> future = executor.submit(() -> SamplesUtil.subscriberLoop(
                 rateReporterHandler, FRAGMENT_COUNT_LIMIT, running).accept(subscription));
 
             reporter.run();

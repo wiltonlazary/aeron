@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,15 +15,13 @@
  */
 package io.aeron.cluster;
 
-import io.aeron.Aeron;
-import io.aeron.Publication;
+import io.aeron.*;
 import io.aeron.cluster.client.ClusterException;
 import io.aeron.cluster.codecs.CloseReason;
 import io.aeron.cluster.codecs.EventCode;
 import io.aeron.driver.exceptions.InvalidChannelException;
 import io.aeron.logbuffer.BufferClaim;
-import org.agrona.CloseHelper;
-import org.agrona.DirectBuffer;
+import org.agrona.*;
 import org.agrona.collections.ArrayUtil;
 
 import java.util.Arrays;
@@ -43,12 +41,13 @@ class ClusterSession
     private final long id;
     private long correlationId;
     private long openedLogPosition = Aeron.NULL_VALUE;
+    private long closedLogPosition = Aeron.NULL_VALUE;
     private long timeOfLastActivityNs;
     private boolean isBackupQuery = false;
     private final int responseStreamId;
     private final String responseChannel;
     private Publication responsePublication;
-    private State state = State.INIT;
+    private State state;
     private String responseDetail = null;
     private EventCode eventCode = null;
     private CloseReason closeReason = CloseReason.NULL_VAL;
@@ -59,6 +58,7 @@ class ClusterSession
         this.id = sessionId;
         this.responseStreamId = responseStreamId;
         this.responseChannel = responseChannel;
+        state(State.INIT);
     }
 
     ClusterSession(
@@ -80,19 +80,31 @@ class ClusterSession
 
         if (CloseReason.NULL_VAL != closeReason)
         {
-            state = State.CLOSED;
+            state(State.CLOSED);
         }
         else
         {
-            state = State.OPEN;
+            state(State.OPEN);
         }
     }
 
-    public void close()
+    public void close(final ErrorHandler errorHandler)
     {
-        CloseHelper.close(responsePublication);
-        responsePublication = null;
-        state = State.CLOSED;
+        final Publication responsePublication = this.responsePublication;
+        this.responsePublication = null;
+        state(State.CLOSED);
+
+        if (null != responsePublication)
+        {
+            try
+            {
+                responsePublication.close();
+            }
+            catch (final Throwable ex)
+            {
+                errorHandler.onError(ex);
+            }
+        }
     }
 
     long id()
@@ -110,10 +122,10 @@ class ClusterSession
         return responseChannel;
     }
 
-    void close(final CloseReason closeReason)
+    void close(final CloseReason closeReason, final ErrorHandler errorHandler)
     {
         this.closeReason = closeReason;
-        close();
+        close(errorHandler);
     }
 
     CloseReason closeReason()
@@ -135,6 +147,12 @@ class ClusterSession
         catch (final InvalidChannelException ignore)
         {
         }
+    }
+
+    void disconnect(final ErrorHandler errorHandler)
+    {
+        CloseHelper.close(errorHandler, responsePublication);
+        responsePublication = null;
     }
 
     boolean isResponsePublicationConnected()
@@ -171,9 +189,10 @@ class ClusterSession
         return state;
     }
 
-    void state(final State state)
+    void state(final State newState)
     {
-        this.state = state;
+        //System.out.println("ClusterSession " + id + " " + state + " -> " + newState);
+        this.state = newState;
     }
 
     void authenticate(final byte[] encodedPrincipal)
@@ -183,13 +202,13 @@ class ClusterSession
             this.encodedPrincipal = encodedPrincipal;
         }
 
-        this.state = State.AUTHENTICATED;
+        state(State.AUTHENTICATED);
     }
 
     void open(final long openedLogPosition)
     {
         this.openedLogPosition = openedLogPosition;
-        this.state = State.OPEN;
+        state(State.OPEN);
         encodedPrincipal = null;
     }
 
@@ -198,7 +217,7 @@ class ClusterSession
         return encodedPrincipal;
     }
 
-    void lastActivity(final long timeNs, final long correlationId)
+    void lastActivityNs(final long timeNs, final long correlationId)
     {
         timeOfLastActivityNs = timeNs;
         this.correlationId = correlationId;
@@ -206,7 +225,7 @@ class ClusterSession
 
     void reject(final EventCode code, final String responseDetail)
     {
-        this.state = State.REJECTED;
+        state(State.REJECTED);
         this.eventCode = code;
         this.responseDetail = responseDetail;
     }
@@ -239,6 +258,16 @@ class ClusterSession
     long openedLogPosition()
     {
         return openedLogPosition;
+    }
+
+    void closedLogPosition(final long closedLogPosition)
+    {
+        this.closedLogPosition = closedLogPosition;
+    }
+
+    long closedLogPosition()
+    {
+        return closedLogPosition;
     }
 
     void hasNewLeaderEventPending(final boolean flag)
@@ -284,6 +313,7 @@ class ClusterSession
             "id=" + id +
             ", correlationId=" + correlationId +
             ", openedLogPosition=" + openedLogPosition +
+            ", closedLogPosition=" + closedLogPosition +
             ", timeOfLastActivityNs=" + timeOfLastActivityNs +
             ", responseStreamId=" + responseStreamId +
             ", responseChannel='" + responseChannel + '\'' +

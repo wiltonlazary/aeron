@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,21 +25,22 @@ import io.aeron.driver.MediaDriver;
 import io.aeron.driver.ThreadingMode;
 import io.aeron.logbuffer.Header;
 import io.aeron.security.*;
+import io.aeron.test.Tests;
 import org.agrona.CloseHelper;
 import org.agrona.DirectBuffer;
 import org.agrona.ExpandableArrayBuffer;
 import org.agrona.collections.MutableLong;
 import org.agrona.collections.MutableReference;
-import org.junit.After;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 import java.util.concurrent.atomic.AtomicLong;
 
 import static io.aeron.security.NullCredentialsSupplier.NULL_CREDENTIAL;
 import static org.agrona.BitUtil.SIZE_OF_INT;
-import static org.hamcrest.Matchers.is;
-import static org.junit.Assert.assertThat;
-import static org.junit.Assert.fail;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.fail;
 import static org.mockito.Mockito.spy;
 
 public class AuthenticationTest
@@ -58,7 +59,7 @@ public class AuthenticationTest
     private final byte[] encodedCredentials = CREDENTIALS_STRING.getBytes();
     private final byte[] encodedChallenge = CHALLENGE_STRING.getBytes();
 
-    @After
+    @AfterEach
     public void after()
     {
         CloseHelper.close(aeronCluster);
@@ -68,11 +69,13 @@ public class AuthenticationTest
         if (null != clusteredMediaDriver)
         {
             clusteredMediaDriver.consensusModule().context().deleteDirectory();
-            clusteredMediaDriver.archive().context().deleteArchiveDirectory();
+            clusteredMediaDriver.archive().context().deleteDirectory();
+            clusteredMediaDriver.mediaDriver().context().deleteDirectory();
         }
     }
 
-    @Test(timeout = 10_000)
+    @Test
+    @Timeout(10)
     public void shouldAuthenticateOnConnectRequestWithEmptyCredentials()
     {
         final AtomicLong serviceMsgCounter = new AtomicLong(0L);
@@ -80,64 +83,61 @@ public class AuthenticationTest
         final MutableLong authenticatorSessionId = new MutableLong(-1L);
         final MutableReference<byte[]> encodedPrincipal = new MutableReference<>();
 
-        final CredentialsSupplier credentialsSupplier =
-            spy(new CredentialsSupplier()
+        final CredentialsSupplier credentialsSupplier = spy(new CredentialsSupplier()
+        {
+            public byte[] encodedCredentials()
             {
-                public byte[] encodedCredentials()
-                {
-                    return NULL_CREDENTIAL;
-                }
+                return NULL_CREDENTIAL;
+            }
 
-                public byte[] onChallenge(final byte[] encodedChallenge)
-                {
-                    fail();
-                    return null;
-                }
-            });
-
-        final Authenticator authenticator =
-            spy(new Authenticator()
+            public byte[] onChallenge(final byte[] encodedChallenge)
             {
-                public void onConnectRequest(final long sessionId, final byte[] encodedCredentials, final long nowMs)
-                {
-                    authenticatorSessionId.value = sessionId;
-                    assertThat(encodedCredentials.length, is(0));
-                }
+                fail();
+                return null;
+            }
+        });
 
-                public void onChallengeResponse(final long sessionId, final byte[] encodedCredentials, final long nowMs)
-                {
-                    fail();
-                }
+        final Authenticator authenticator = spy(new Authenticator()
+        {
+            public void onConnectRequest(final long sessionId, final byte[] encodedCredentials, final long nowMs)
+            {
+                authenticatorSessionId.value = sessionId;
+                assertEquals(0, encodedCredentials.length);
+            }
 
-                public void onConnectedSession(final SessionProxy sessionProxy, final long nowMs)
-                {
-                    assertThat(authenticatorSessionId.value, is(sessionProxy.sessionId()));
-                    sessionProxy.authenticate(null);
-                }
+            public void onChallengeResponse(final long sessionId, final byte[] encodedCredentials, final long nowMs)
+            {
+                fail();
+            }
 
-                public void onChallengedSession(final SessionProxy sessionProxy, final long nowMs)
-                {
-                    fail();
-                }
-            });
+            public void onConnectedSession(final SessionProxy sessionProxy, final long nowMs)
+            {
+                assertEquals(sessionProxy.sessionId(), authenticatorSessionId.value);
+                sessionProxy.authenticate(null);
+            }
+
+            public void onChallengedSession(final SessionProxy sessionProxy, final long nowMs)
+            {
+                fail();
+            }
+        });
 
         launchClusteredMediaDriver(() -> authenticator);
         launchService(serviceSessionId, encodedPrincipal, serviceMsgCounter);
 
         connectClient(credentialsSupplier);
         sendCountedMessageIntoCluster(0);
-        while (serviceMsgCounter.get() == 0)
-        {
-            TestUtil.checkInterruptedStatus();
-            Thread.yield();
-        }
+        TestCluster.awaitCount(serviceMsgCounter, 1);
 
-        assertThat(authenticatorSessionId.value, is(aeronCluster.clusterSessionId()));
-        assertThat(serviceSessionId.value, is(aeronCluster.clusterSessionId()));
-        assertThat(encodedPrincipal.get().length, is(0));
+        assertEquals(aeronCluster.clusterSessionId(), authenticatorSessionId.value);
+        assertEquals(aeronCluster.clusterSessionId(), serviceSessionId.value);
+        assertEquals(0, encodedPrincipal.get().length);
+
+        ClusterTests.failOnClusterError();
     }
 
-    @Test(timeout = 10_000)
+    @Test
+    @Timeout(10)
     public void shouldAuthenticateOnConnectRequestWithCredentials()
     {
         final AtomicLong serviceMsgCounter = new AtomicLong(0L);
@@ -145,64 +145,61 @@ public class AuthenticationTest
         final MutableLong authenticatorSessionId = new MutableLong(-1L);
         final MutableReference<byte[]> encodedPrincipal = new MutableReference<>();
 
-        final CredentialsSupplier credentialsSupplier =
-            spy(new CredentialsSupplier()
+        final CredentialsSupplier credentialsSupplier = spy(new CredentialsSupplier()
+        {
+            public byte[] encodedCredentials()
             {
-                public byte[] encodedCredentials()
-                {
-                    return encodedCredentials;
-                }
+                return encodedCredentials;
+            }
 
-                public byte[] onChallenge(final byte[] encodedChallenge)
-                {
-                    fail();
-                    return null;
-                }
-            });
-
-        final Authenticator authenticator =
-            spy(new Authenticator()
+            public byte[] onChallenge(final byte[] encodedChallenge)
             {
-                public void onConnectRequest(final long sessionId, final byte[] encodedCredentials, final long nowMs)
-                {
-                    authenticatorSessionId.value = sessionId;
-                    assertThat(new String(encodedCredentials), is(CREDENTIALS_STRING));
-                }
+                fail();
+                return null;
+            }
+        });
 
-                public void onChallengeResponse(final long sessionId, final byte[] encodedCredentials, final long nowMs)
-                {
-                    fail();
-                }
+        final Authenticator authenticator = spy(new Authenticator()
+        {
+            public void onConnectRequest(final long sessionId, final byte[] encodedCredentials, final long nowMs)
+            {
+                authenticatorSessionId.value = sessionId;
+                assertEquals(CREDENTIALS_STRING, new String(encodedCredentials));
+            }
 
-                public void onConnectedSession(final SessionProxy sessionProxy, final long nowMs)
-                {
-                    assertThat(authenticatorSessionId.value, is(sessionProxy.sessionId()));
-                    sessionProxy.authenticate(PRINCIPAL_STRING.getBytes());
-                }
+            public void onChallengeResponse(final long sessionId, final byte[] encodedCredentials, final long nowMs)
+            {
+                fail();
+            }
 
-                public void onChallengedSession(final SessionProxy sessionProxy, final long nowMs)
-                {
-                    fail();
-                }
-            });
+            public void onConnectedSession(final SessionProxy sessionProxy, final long nowMs)
+            {
+                assertEquals(sessionProxy.sessionId(), authenticatorSessionId.value);
+                sessionProxy.authenticate(PRINCIPAL_STRING.getBytes());
+            }
+
+            public void onChallengedSession(final SessionProxy sessionProxy, final long nowMs)
+            {
+                fail();
+            }
+        });
 
         launchClusteredMediaDriver(() -> authenticator);
         launchService(serviceSessionId, encodedPrincipal, serviceMsgCounter);
 
         connectClient(credentialsSupplier);
         sendCountedMessageIntoCluster(0);
-        while (serviceMsgCounter.get() == 0)
-        {
-            TestUtil.checkInterruptedStatus();
-            Thread.yield();
-        }
+        TestCluster.awaitCount(serviceMsgCounter, 1);
 
-        assertThat(authenticatorSessionId.value, is(aeronCluster.clusterSessionId()));
-        assertThat(serviceSessionId.value, is(aeronCluster.clusterSessionId()));
-        assertThat(new String(encodedPrincipal.get()), is(PRINCIPAL_STRING));
+        assertEquals(aeronCluster.clusterSessionId(), authenticatorSessionId.value);
+        assertEquals(aeronCluster.clusterSessionId(), serviceSessionId.value);
+        assertEquals(PRINCIPAL_STRING, new String(encodedPrincipal.get()));
+
+        ClusterTests.failOnClusterError();
     }
 
-    @Test(timeout = 10_000)
+    @Test
+    @Timeout(10)
     public void shouldAuthenticateOnChallengeResponse()
     {
         final AtomicLong serviceMsgCounter = new AtomicLong(0L);
@@ -210,72 +207,69 @@ public class AuthenticationTest
         final MutableLong authenticatorSessionId = new MutableLong(-1L);
         final MutableReference<byte[]> encodedPrincipal = new MutableReference<>();
 
-        final CredentialsSupplier credentialsSupplier =
-            spy(new CredentialsSupplier()
+        final CredentialsSupplier credentialsSupplier = spy(new CredentialsSupplier()
+        {
+            public byte[] encodedCredentials()
             {
-                public byte[] encodedCredentials()
-                {
-                    return NULL_CREDENTIAL;
-                }
+                return NULL_CREDENTIAL;
+            }
 
-                public byte[] onChallenge(final byte[] encodedChallenge)
-                {
-                    assertThat(new String(encodedChallenge), is(CHALLENGE_STRING));
-                    return encodedCredentials;
-                }
-            });
-
-        final Authenticator authenticator =
-            spy(new Authenticator()
+            public byte[] onChallenge(final byte[] encodedChallenge)
             {
-                boolean challengeSuccessful = false;
+                assertEquals(CHALLENGE_STRING, new String(encodedChallenge));
+                return encodedCredentials;
+            }
+        });
 
-                public void onConnectRequest(final long sessionId, final byte[] encodedCredentials, final long nowMs)
-                {
-                    authenticatorSessionId.value = sessionId;
-                    assertThat(encodedCredentials.length, is(0));
-                }
+        final Authenticator authenticator = spy(new Authenticator()
+        {
+            boolean challengeSuccessful = false;
 
-                public void onChallengeResponse(final long sessionId, final byte[] encodedCredentials, final long nowMs)
-                {
-                    assertThat(authenticatorSessionId.value, is(sessionId));
-                    assertThat(new String(encodedCredentials), is(CREDENTIALS_STRING));
-                    challengeSuccessful = true;
-                }
+            public void onConnectRequest(final long sessionId, final byte[] encodedCredentials, final long nowMs)
+            {
+                authenticatorSessionId.value = sessionId;
+                assertEquals(0, encodedCredentials.length);
+            }
 
-                public void onConnectedSession(final SessionProxy sessionProxy, final long nowMs)
-                {
-                    assertThat(authenticatorSessionId.value, is(sessionProxy.sessionId()));
-                    sessionProxy.challenge(encodedChallenge);
-                }
+            public void onChallengeResponse(final long sessionId, final byte[] encodedCredentials, final long nowMs)
+            {
+                assertEquals(sessionId, authenticatorSessionId.value);
+                assertEquals(CREDENTIALS_STRING, new String(encodedCredentials));
+                challengeSuccessful = true;
+            }
 
-                public void onChallengedSession(final SessionProxy sessionProxy, final long nowMs)
+            public void onConnectedSession(final SessionProxy sessionProxy, final long nowMs)
+            {
+                assertEquals(sessionProxy.sessionId(), authenticatorSessionId.value);
+                sessionProxy.challenge(encodedChallenge);
+            }
+
+            public void onChallengedSession(final SessionProxy sessionProxy, final long nowMs)
+            {
+                if (challengeSuccessful)
                 {
-                    if (challengeSuccessful)
-                    {
-                        assertThat(authenticatorSessionId.value, is(sessionProxy.sessionId()));
-                        sessionProxy.authenticate(PRINCIPAL_STRING.getBytes());
-                    }
+                    assertEquals(sessionProxy.sessionId(), authenticatorSessionId.value);
+                    sessionProxy.authenticate(PRINCIPAL_STRING.getBytes());
                 }
-            });
+            }
+        });
 
         launchClusteredMediaDriver(() -> authenticator);
         launchService(serviceSessionId, encodedPrincipal, serviceMsgCounter);
 
         connectClient(credentialsSupplier);
         sendCountedMessageIntoCluster(0);
-        while (serviceMsgCounter.get() == 0)
-        {
-            TestUtil.checkInterruptedStatus();
-            Thread.yield();
-        }
+        TestCluster.awaitCount(serviceMsgCounter, 1);
 
-        assertThat(authenticatorSessionId.value, is(aeronCluster.clusterSessionId()));
-        assertThat(serviceSessionId.value, is(aeronCluster.clusterSessionId()));
-        assertThat(new String(encodedPrincipal.get()), is(PRINCIPAL_STRING));
+        assertEquals(aeronCluster.clusterSessionId(), authenticatorSessionId.value);
+        assertEquals(aeronCluster.clusterSessionId(), serviceSessionId.value);
+        assertEquals(PRINCIPAL_STRING, new String(encodedPrincipal.get()));
+
+        ClusterTests.failOnClusterError();
     }
 
-    @Test(timeout = 10_000)
+    @Test
+    @Timeout(10)
     public void shouldRejectOnConnectRequest()
     {
         final AtomicLong serviceMsgCounter = new AtomicLong(0L);
@@ -283,46 +277,44 @@ public class AuthenticationTest
         final MutableLong authenticatorSessionId = new MutableLong(-1L);
         final MutableReference<byte[]> encodedPrincipal = new MutableReference<>();
 
-        final CredentialsSupplier credentialsSupplier =
-            spy(new CredentialsSupplier()
+        final CredentialsSupplier credentialsSupplier = spy(new CredentialsSupplier()
+        {
+            public byte[] encodedCredentials()
             {
-                public byte[] encodedCredentials()
-                {
-                    return NULL_CREDENTIAL;
-                }
+                return NULL_CREDENTIAL;
+            }
 
-                public byte[] onChallenge(final byte[] encodedChallenge)
-                {
-                    assertThat(new String(encodedChallenge), is(CHALLENGE_STRING));
-                    return encodedCredentials;
-                }
-            });
-
-        final Authenticator authenticator =
-            spy(new Authenticator()
+            public byte[] onChallenge(final byte[] encodedChallenge)
             {
-                public void onConnectRequest(final long sessionId, final byte[] encodedCredentials, final long nowMs)
-                {
-                    authenticatorSessionId.value = sessionId;
-                    assertThat(encodedCredentials.length, is(0));
-                }
+                assertEquals(CHALLENGE_STRING, new String(encodedChallenge));
+                return encodedCredentials;
+            }
+        });
 
-                public void onChallengeResponse(final long sessionId, final byte[] encodedCredentials, final long nowMs)
-                {
-                    fail();
-                }
+        final Authenticator authenticator = spy(new Authenticator()
+        {
+            public void onConnectRequest(final long sessionId, final byte[] encodedCredentials, final long nowMs)
+            {
+                authenticatorSessionId.value = sessionId;
+                assertEquals(0, encodedCredentials.length);
+            }
 
-                public void onConnectedSession(final SessionProxy sessionProxy, final long nowMs)
-                {
-                    assertThat(authenticatorSessionId.value, is(sessionProxy.sessionId()));
-                    sessionProxy.reject();
-                }
+            public void onChallengeResponse(final long sessionId, final byte[] encodedCredentials, final long nowMs)
+            {
+                fail();
+            }
 
-                public void onChallengedSession(final SessionProxy sessionProxy, final long nowMs)
-                {
-                    fail();
-                }
-            });
+            public void onConnectedSession(final SessionProxy sessionProxy, final long nowMs)
+            {
+                assertEquals(sessionProxy.sessionId(), authenticatorSessionId.value);
+                sessionProxy.reject();
+            }
+
+            public void onChallengedSession(final SessionProxy sessionProxy, final long nowMs)
+            {
+                fail();
+            }
+        });
 
         launchClusteredMediaDriver(() -> authenticator);
         launchService(serviceSessionId, encodedPrincipal, serviceMsgCounter);
@@ -333,14 +325,17 @@ public class AuthenticationTest
         }
         catch (final AuthenticationException ex)
         {
-            assertThat(serviceSessionId.value, is(-1L));
+            assertEquals(-1L, serviceSessionId.value);
+
+            ClusterTests.failOnClusterError();
             return;
         }
 
         fail("should have seen exception");
     }
 
-    @Test(timeout = 10_000)
+    @Test
+    @Timeout(10)
     public void shouldRejectOnChallengeResponse()
     {
         final AtomicLong serviceMsgCounter = new AtomicLong(0L);
@@ -348,54 +343,52 @@ public class AuthenticationTest
         final MutableLong authenticatorSessionId = new MutableLong(-1L);
         final MutableReference<byte[]> encodedPrincipal = new MutableReference<>();
 
-        final CredentialsSupplier credentialsSupplier =
-            spy(new CredentialsSupplier()
+        final CredentialsSupplier credentialsSupplier = spy(new CredentialsSupplier()
+        {
+            public byte[] encodedCredentials()
             {
-                public byte[] encodedCredentials()
-                {
-                    return NULL_CREDENTIAL;
-                }
+                return NULL_CREDENTIAL;
+            }
 
-                public byte[] onChallenge(final byte[] encodedChallenge)
-                {
-                    assertThat(new String(encodedChallenge), is(CHALLENGE_STRING));
-                    return encodedCredentials;
-                }
-            });
-
-        final Authenticator authenticator =
-            spy(new Authenticator()
+            public byte[] onChallenge(final byte[] encodedChallenge)
             {
-                boolean challengeRespondedTo = false;
+                assertEquals(CHALLENGE_STRING, new String(encodedChallenge));
+                return encodedCredentials;
+            }
+        });
 
-                public void onConnectRequest(final long sessionId, final byte[] encodedCredentials, final long nowMs)
-                {
-                    authenticatorSessionId.value = sessionId;
-                    assertThat(encodedCredentials.length, is(0));
-                }
+        final Authenticator authenticator = spy(new Authenticator()
+        {
+            boolean challengeRespondedTo = false;
 
-                public void onChallengeResponse(final long sessionId, final byte[] encodedCredentials, final long nowMs)
-                {
-                    assertThat(authenticatorSessionId.value, is(sessionId));
-                    assertThat(new String(encodedCredentials), is(CREDENTIALS_STRING));
-                    challengeRespondedTo = true;
-                }
+            public void onConnectRequest(final long sessionId, final byte[] encodedCredentials, final long nowMs)
+            {
+                authenticatorSessionId.value = sessionId;
+                assertEquals(0, encodedCredentials.length);
+            }
 
-                public void onConnectedSession(final SessionProxy sessionProxy, final long nowMs)
-                {
-                    assertThat(authenticatorSessionId.value, is(sessionProxy.sessionId()));
-                    sessionProxy.challenge(encodedChallenge);
-                }
+            public void onChallengeResponse(final long sessionId, final byte[] encodedCredentials, final long nowMs)
+            {
+                assertEquals(sessionId, authenticatorSessionId.value);
+                assertEquals(CREDENTIALS_STRING, new String(encodedCredentials));
+                challengeRespondedTo = true;
+            }
 
-                public void onChallengedSession(final SessionProxy sessionProxy, final long nowMs)
+            public void onConnectedSession(final SessionProxy sessionProxy, final long nowMs)
+            {
+                assertEquals(sessionProxy.sessionId(), authenticatorSessionId.value);
+                sessionProxy.challenge(encodedChallenge);
+            }
+
+            public void onChallengedSession(final SessionProxy sessionProxy, final long nowMs)
+            {
+                if (challengeRespondedTo)
                 {
-                    if (challengeRespondedTo)
-                    {
-                        assertThat(authenticatorSessionId.value, is(sessionProxy.sessionId()));
-                        sessionProxy.reject();
-                    }
+                    assertEquals(sessionProxy.sessionId(), authenticatorSessionId.value);
+                    sessionProxy.reject();
                 }
-            });
+            }
+        });
 
         launchClusteredMediaDriver(() -> authenticator);
         launchService(serviceSessionId, encodedPrincipal, serviceMsgCounter);
@@ -406,7 +399,9 @@ public class AuthenticationTest
         }
         catch (final AuthenticationException ex)
         {
-            assertThat(serviceSessionId.value, is(-1L));
+            assertEquals(-1L, serviceSessionId.value);
+
+            ClusterTests.failOnClusterError();
             return;
         }
 
@@ -419,46 +414,45 @@ public class AuthenticationTest
 
         while (aeronCluster.offer(msgBuffer, 0, SIZE_OF_INT) < 0)
         {
-            TestUtil.checkInterruptedStatus();
             Thread.yield();
+            Tests.checkInterruptStatus();
         }
     }
 
     private void launchService(
         final MutableLong sessionId, final MutableReference<byte[]> encodedPrincipal, final AtomicLong msgCounter)
     {
-        final ClusteredService service =
-            new StubClusteredService()
+        final ClusteredService service = new StubClusteredService()
+        {
+            private int counterValue = 0;
+
+            public void onSessionOpen(final ClientSession session, final long timestamp)
             {
-                private int counterValue = 0;
+                sessionId.value = session.id();
+                encodedPrincipal.set(session.encodedPrincipal());
+            }
 
-                public void onSessionOpen(final ClientSession session, final long timestamp)
-                {
-                    sessionId.value = session.id();
-                    encodedPrincipal.set(session.encodedPrincipal());
-                }
-
-                public void onSessionMessage(
-                    final ClientSession session,
-                    final long timestamp,
-                    final DirectBuffer buffer,
-                    final int offset,
-                    final int length,
-                    final Header header)
-                {
-                    assertThat(buffer.getInt(offset), is(counterValue));
-                    msgCounter.getAndIncrement();
-                    counterValue++;
-                }
-            };
+            public void onSessionMessage(
+                final ClientSession session,
+                final long timestamp,
+                final DirectBuffer buffer,
+                final int offset,
+                final int length,
+                final Header header)
+            {
+                assertEquals(counterValue, buffer.getInt(offset));
+                msgCounter.getAndIncrement();
+                counterValue++;
+            }
+        };
 
         container = null;
 
         container = ClusteredServiceContainer.launch(
             new ClusteredServiceContainer.Context()
                 .clusteredService(service)
-                .terminationHook(TestUtil.TERMINATION_HOOK)
-                .errorHandler(TestUtil.errorHandler(0)));
+                .terminationHook(ClusterTests.TERMINATION_HOOK)
+                .errorHandler(ClusterTests.errorHandler(0)));
     }
 
     private AeronCluster connectToCluster(final CredentialsSupplier credentialsSupplier)
@@ -482,17 +476,18 @@ public class AuthenticationTest
             new MediaDriver.Context()
                 .warnIfDirectoryExists(true)
                 .threadingMode(ThreadingMode.SHARED)
-                .errorHandler(TestUtil.errorHandler(0))
+                .errorHandler(ClusterTests.errorHandler(0))
                 .dirDeleteOnStart(true)
-                .dirDeleteOnShutdown(true),
+                .dirDeleteOnShutdown(false),
             new Archive.Context()
                 .maxCatalogEntries(MAX_CATALOG_ENTRIES)
                 .threadingMode(ArchiveThreadingMode.SHARED)
+                .recordingEventsEnabled(false)
                 .deleteArchiveOnStart(true),
             new ConsensusModule.Context()
                 .errorHandler(Throwable::printStackTrace)
                 .authenticatorSupplier(authenticatorSupplier)
-                .terminationHook(TestUtil.TERMINATION_HOOK)
+                .terminationHook(ClusterTests.TERMINATION_HOOK)
                 .deleteDirOnStart(true));
     }
 }

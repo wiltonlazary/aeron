@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,12 +20,6 @@
 #include <util/aeron_platform.h>
 #include <stdint.h>
 
-typedef int aeron_fd_t;
-int set_socket_non_blocking(aeron_fd_t fd);
-int aeron_socket(int domain, int type, int protocol);
-void aeron_close_socket(int socket);
-void aeron_net_init();
-
 #if defined(AERON_COMPILER_GCC)
     #include <netinet/in.h>
     #include <sys/socket.h>
@@ -35,6 +29,8 @@ void aeron_net_init();
     #include <netdb.h>
     #include <ifaddrs.h>
 
+    typedef int aeron_socket_t;
+
 #elif defined(AERON_COMPILER_MSVC) && defined(AERON_CPU_X64)
     #include <WinSock2.h>
     #include <windows.h>
@@ -42,35 +38,37 @@ void aeron_net_init();
     #include <WS2tcpip.h>
     #include <Iphlpapi.h>
 
+    // SOCKET is uint64_t but we need a signed type to match the Linux version
+    typedef int64_t aeron_socket_t;
+
     struct iovec
     {
         ULONG iov_len;
         void* iov_base;
     };
 
-    // must match _WSAMSG 
+    // must match _WSAMSG
     struct msghdr {
         void* msg_name;
-        INT msg_namelen;		
-        struct iovec *msg_iov;	
-        ULONG msg_iovlen;		
+        INT msg_namelen;
+        struct iovec *msg_iov;
+        ULONG msg_iovlen;
         ULONG msg_controllen;
         void* msg_control;
-        ULONG msg_flags;		
+        ULONG msg_flags;
     };
 
     struct ifaddrs
     {
-        struct ifaddrs *ifa_next; 
-        char *ifa_name; 
+        struct ifaddrs *ifa_next;
+        char *ifa_name;
         unsigned int ifa_flags;
 
-        struct sockaddr *ifa_addr; 
-        struct sockaddr *ifa_netmask; 
+        struct sockaddr *ifa_addr;
+        struct sockaddr *ifa_netmask;
         union
         {
-         
-            struct sockaddr *ifu_broadaddr; 
+            struct sockaddr *ifu_broadaddr;
             struct sockaddr *ifu_dstaddr;
         } ifa_ifu;
 
@@ -81,15 +79,29 @@ void aeron_net_init();
         #  define ifa_dstaddr        ifa_ifu.ifu_dstaddr
         # endif
 
-        void *ifa_data;             
+        void *ifa_data;
     };
 
-    int getifaddrs(struct ifaddrs **__ifap);
-    void freeifaddrs(struct ifaddrs *__ifa);
+    int getifaddrs(struct ifaddrs **ifap);
+    void freeifaddrs(struct ifaddrs *ifa);
 
+    typedef unsigned long int nfds_t;
+    typedef SSIZE_T ssize_t;
+
+    ssize_t recvmsg(aeron_socket_t fd, struct msghdr* msghdr, int flags);
+    ssize_t sendmsg(aeron_socket_t fd, struct msghdr* msghdr, int flags);
+    int poll(struct pollfd* fds, nfds_t nfds, int timeout);
 
 #else
 #error Unsupported platform!
 #endif
+
+int set_socket_non_blocking(aeron_socket_t fd);
+aeron_socket_t aeron_socket(int domain, int type, int protocol);
+void aeron_close_socket(aeron_socket_t socket);
+void aeron_net_init();
+
+int aeron_getsockopt(aeron_socket_t fd, int level, int optname, void* optval, socklen_t* optlen);
+int aeron_setsockopt(aeron_socket_t fd, int level, int optname, const void* optval, socklen_t optlen);
 
 #endif //AERON_SOCKET_H

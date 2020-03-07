@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -47,17 +47,22 @@ typedef struct aeron_receive_channel_endpoint_stct
     }
     conductor_fields;
 
-    /* uint8_t conductor_fields_pad[(2 * AERON_CACHE_LINE_LENGTH) - sizeof(struct conductor_fields_stct)]; */
-
     aeron_udp_channel_transport_t transport;
     aeron_data_packet_dispatcher_t dispatcher;
     aeron_int64_to_ptr_hash_map_t stream_id_to_refcnt_map;
     aeron_counter_t channel_status;
     aeron_driver_receiver_proxy_t *receiver_proxy;
     aeron_udp_channel_transport_bindings_t *transport_bindings;
+    aeron_udp_channel_data_paths_t *data_paths;
     int64_t receiver_id;
     size_t so_rcvbuf;
     bool has_receiver_released;
+    struct
+    {
+        bool is_present;
+        int64_t value;
+    }
+    group_tag;
 
     int64_t *short_sends_counter;
     int64_t *possible_ttl_asymmetry_counter;
@@ -105,7 +110,12 @@ int aeron_receive_channel_endpoint_send_rttm(
     bool is_reply);
 
 void aeron_receive_channel_endpoint_dispatch(
-    void *receiver_clientd, void *endpoint_clientd, uint8_t *buffer, size_t length, struct sockaddr_storage *addr);
+    aeron_udp_channel_data_paths_t *data_paths,
+    void *receiver_clientd,
+    void *endpoint_clientd,
+    uint8_t *buffer,
+    size_t length,
+    struct sockaddr_storage *addr);
 
 int aeron_receive_channel_endpoint_on_data(
     aeron_receive_channel_endpoint_t *endpoint, uint8_t *buffer, size_t length, struct sockaddr_storage *addr);
@@ -159,6 +169,12 @@ inline bool aeron_receive_channel_endpoint_has_receiver_released(aeron_receive_c
 inline bool aeron_receive_channel_endpoint_should_elicit_setup_message(aeron_receive_channel_endpoint_t *endpoint)
 {
     return aeron_data_packet_dispatcher_should_elicit_setup_message(&endpoint->dispatcher);
+}
+
+inline int aeron_receive_channel_endpoint_bind_addr_and_port(
+    aeron_receive_channel_endpoint_t *endpoint, char *buffer, size_t length)
+{
+    return endpoint->transport_bindings->bind_addr_and_port_func(&endpoint->transport, buffer, length);
 }
 
 #endif //AERON_RECEIVE_CHANNEL_ENDPOINT_H

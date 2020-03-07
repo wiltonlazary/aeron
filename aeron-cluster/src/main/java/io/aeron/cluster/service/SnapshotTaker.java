@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,6 +15,7 @@
  */
 package io.aeron.cluster.service;
 
+import io.aeron.ExclusivePublication;
 import io.aeron.Publication;
 import io.aeron.cluster.client.ClusterClock;
 import io.aeron.cluster.codecs.MessageHeaderEncoder;
@@ -37,13 +38,13 @@ public class SnapshotTaker
         MessageHeaderEncoder.ENCODED_LENGTH + SnapshotMarkerEncoder.BLOCK_LENGTH;
     protected final BufferClaim bufferClaim = new BufferClaim();
     protected final MessageHeaderEncoder messageHeaderEncoder = new MessageHeaderEncoder();
-    protected final Publication publication;
+    protected final ExclusivePublication publication;
     protected final IdleStrategy idleStrategy;
     protected final AgentInvoker aeronAgentInvoker;
     private final SnapshotMarkerEncoder snapshotMarkerEncoder = new SnapshotMarkerEncoder();
 
     public SnapshotTaker(
-        final Publication publication, final IdleStrategy idleStrategy, final AgentInvoker aeronAgentInvoker)
+        final ExclusivePublication publication, final IdleStrategy idleStrategy, final AgentInvoker aeronAgentInvoker)
     {
         this.publication = publication;
         this.idleStrategy = idleStrategy;
@@ -107,9 +108,9 @@ public class SnapshotTaker
         }
     }
 
-    protected static void checkInterruptedStatus()
+    protected static void checkInterruptStatus()
     {
-        if (Thread.currentThread().isInterrupted())
+        if (Thread.interrupted())
         {
             throw new AgentTerminationException("unexpected interrupt during operation");
         }
@@ -128,7 +129,7 @@ public class SnapshotTaker
     protected void checkResultAndIdle(final long result)
     {
         checkResult(result);
-        checkInterruptedStatus();
+        checkInterruptStatus();
         invokeAgentClient();
         idleStrategy.idle();
     }

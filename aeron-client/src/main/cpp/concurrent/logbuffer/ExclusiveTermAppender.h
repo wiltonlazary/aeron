@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -188,7 +188,7 @@ public:
         {
             std::uint8_t flags = FrameDescriptor::BEGIN_FRAG;
             util::index_t remaining = length;
-            std::int32_t offset = static_cast<std::int32_t>(termOffset);
+            auto offset = static_cast<std::int32_t>(termOffset);
 
             do
             {
@@ -254,7 +254,7 @@ public:
         {
             std::uint8_t flags = FrameDescriptor::BEGIN_FRAG;
             util::index_t remaining = length;
-            std::int32_t offset = static_cast<std::int32_t>(termOffset);
+            auto offset = static_cast<std::int32_t>(termOffset);
             util::index_t currentBufferOffset = 0;
 
             do

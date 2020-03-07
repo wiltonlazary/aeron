@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,20 +15,36 @@
  */
 package io.aeron.driver;
 
+import io.aeron.CommonContext;
 import io.aeron.driver.media.UdpChannel;
 import org.agrona.LangUtil;
 
+import static io.aeron.driver.Configuration.UNICAST_FLOW_CONTROL_STRATEGY;
+
 /**
- * Supplier of {@link UnicastFlowControl} implementations.
+ * Default supplier of {@link FlowControl} strategies for unicast streams via
+ * {@link Configuration#UNICAST_FLOW_CONTROL_STRATEGY_PROP_NAME}.
  */
 public class DefaultUnicastFlowControlSupplier implements FlowControlSupplier
 {
     public FlowControl newInstance(final UdpChannel udpChannel, final int streamId, final long registrationId)
     {
+        final String fcStr = udpChannel.channelUri().get(CommonContext.FLOW_CONTROL_PARAM_NAME);
         FlowControl flowControl = null;
+
+        if (null != fcStr)
+        {
+            throw new IllegalArgumentException("unsupported unicast flow control strategy : fc=" + fcStr);
+        }
+
+        if (UnicastFlowControl.class.getName().equals(UNICAST_FLOW_CONTROL_STRATEGY))
+        {
+            return UnicastFlowControl.INSTANCE;
+        }
+
         try
         {
-            flowControl = (FlowControl)Class.forName(Configuration.UNICAST_FLOW_CONTROL_STRATEGY)
+            flowControl = (FlowControl)Class.forName(UNICAST_FLOW_CONTROL_STRATEGY)
                 .getConstructor()
                 .newInstance();
         }
@@ -43,6 +59,6 @@ public class DefaultUnicastFlowControlSupplier implements FlowControlSupplier
     public String toString()
     {
         return "DefaultUnicastFlowControlSupplier{flowControlClass=" +
-            Configuration.UNICAST_FLOW_CONTROL_STRATEGY + "}";
+            UNICAST_FLOW_CONTROL_STRATEGY + "}";
     }
 }

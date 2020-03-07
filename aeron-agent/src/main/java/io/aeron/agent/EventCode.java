@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,19 +26,4 @@ public interface EventCode
      * @return the unique event identifier withing an {@link EventCodeType}.
      */
     int id();
-
-    /**
-     * Get the event code's tag bit. Each tag bit is a unique identifier for the event code used
-     * when checking that the event code is enabled or not. Each EventCode has a unique tag bit within the long word.
-     *
-     * @return the value with one bit set for the tag.
-     */
-    long tagBit();
-
-    /**
-     * Get the type of event code for classification.
-     *
-     * @return the type of event code for classification.
-     */
-    EventCodeType eventCodeType();
 }

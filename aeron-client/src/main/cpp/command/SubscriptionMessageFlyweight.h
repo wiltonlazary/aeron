@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,7 +18,7 @@
 
 #include <cstdint>
 #include <string>
-#include <stddef.h>
+#include <cstddef>
 #include "CorrelatedMessageFlyweight.h"
 
 namespace aeron { namespace command {

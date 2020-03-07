@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,11 +22,12 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 
 import static java.nio.ByteOrder.LITTLE_ENDIAN;
+import static org.agrona.BitUtil.SIZE_OF_LONG;
 
 /**
  * Flyweight for a Status Message Frame.
  * <p>
- * <a target="_blank" href="https://github.com/real-logic/aeron/wiki/Protocol-Specification#status-messages">
+ * <a target="_blank" href="https://github.com/real-logic/aeron/wiki/Transport-Protocol-Specification#status-messages">
  *     Status Message</a> wiki page.
  */
 public class StatusMessageFlyweight extends HeaderFlyweight
@@ -48,6 +49,7 @@ public class StatusMessageFlyweight extends HeaderFlyweight
     private static final int RECEIVER_WINDOW_FIELD_OFFSET = 24;
     private static final int RECEIVER_ID_FIELD_OFFSET = 28;
     private static final int APP_SPECIFIC_FEEDBACK_FIELD_OFFSET = 36;
+    private static final int GROUP_TAG_FIELD_OFFSET = APP_SPECIFIC_FEEDBACK_FIELD_OFFSET;
 
     public StatusMessageFlyweight()
     {
@@ -64,9 +66,9 @@ public class StatusMessageFlyweight extends HeaderFlyweight
     }
 
     /**
-     * return session id field
+     * The session-id for the stream.
      *
-     * @return session id field
+     * @return session-id for the stream.
      */
     public int sessionId()
     {
@@ -74,7 +76,7 @@ public class StatusMessageFlyweight extends HeaderFlyweight
     }
 
     /**
-     * set session id field
+     * Set the session-id of the stream.
      *
      * @param sessionId field value
      * @return flyweight
@@ -87,9 +89,9 @@ public class StatusMessageFlyweight extends HeaderFlyweight
     }
 
     /**
-     * return stream id field
+     * The stream-id for the stream.
      *
-     * @return stream id field
+     * @return the session-id for the stream.
      */
     public int streamId()
     {
@@ -97,7 +99,7 @@ public class StatusMessageFlyweight extends HeaderFlyweight
     }
 
     /**
-     * set stream id field
+     * Set the session-id for the stream.
      *
      * @param streamId field value
      * @return flyweight
@@ -110,9 +112,9 @@ public class StatusMessageFlyweight extends HeaderFlyweight
     }
 
     /**
-     * return highest consumption term offset field
+     * The highest consumption offset within the term.
      *
-     * @return highest consumption term offset field
+     * @return the highest consumption offset within the term.
      */
     public int consumptionTermOffset()
     {
@@ -120,7 +122,7 @@ public class StatusMessageFlyweight extends HeaderFlyweight
     }
 
     /**
-     * set highest consumption term offset field
+     * Set the highest consumption offset within the term.
      *
      * @param termOffset field value
      * @return flyweight
@@ -133,9 +135,9 @@ public class StatusMessageFlyweight extends HeaderFlyweight
     }
 
     /**
-     * return highest consumption term id field
+     * The highest consumption term-id.
      *
-     * @return highest consumption term id field
+     * @return highest consumption term-id.
      */
     public int consumptionTermId()
     {
@@ -143,7 +145,7 @@ public class StatusMessageFlyweight extends HeaderFlyweight
     }
 
     /**
-     * set highest consumption term id field
+     * Set the highest consumption term-id.
      *
      * @param termId field value
      * @return flyweight
@@ -156,9 +158,9 @@ public class StatusMessageFlyweight extends HeaderFlyweight
     }
 
     /**
-     * return receiver window field
+     * The receiver window length they will accept.
      *
-     * @return receiver window field
+     * @return receiver window length they will accept.
      */
     public int receiverWindowLength()
     {
@@ -166,7 +168,7 @@ public class StatusMessageFlyweight extends HeaderFlyweight
     }
 
     /**
-     * set receiver window field
+     * Set the receiver window length they will accept.
      *
      * @param receiverWindowLength field value
      * @return flyweight
@@ -185,37 +187,7 @@ public class StatusMessageFlyweight extends HeaderFlyweight
      */
     public long receiverId()
     {
-        final long value;
-        if (ByteOrder.nativeOrder() == LITTLE_ENDIAN)
-        {
-            value =
-                (
-                    (((long)getByte(RECEIVER_ID_FIELD_OFFSET + 7)) << 56) |
-                    (((long)getByte(RECEIVER_ID_FIELD_OFFSET + 6) & 0xFF) << 48) |
-                    (((long)getByte(RECEIVER_ID_FIELD_OFFSET + 5) & 0xFF) << 40) |
-                    (((long)getByte(RECEIVER_ID_FIELD_OFFSET + 4) & 0xFF) << 32) |
-                    (((long)getByte(RECEIVER_ID_FIELD_OFFSET + 3) & 0xFF) << 24) |
-                    (((long)getByte(RECEIVER_ID_FIELD_OFFSET + 2) & 0xFF) << 16) |
-                    (((long)getByte(RECEIVER_ID_FIELD_OFFSET + 1) & 0xFF) << 8) |
-                    (((long)getByte(RECEIVER_ID_FIELD_OFFSET + 0) & 0xFF))
-                );
-        }
-        else
-        {
-            value =
-                (
-                    (((long)getByte(RECEIVER_ID_FIELD_OFFSET + 0)) << 56) |
-                    (((long)getByte(RECEIVER_ID_FIELD_OFFSET + 1) & 0xFF) << 48) |
-                    (((long)getByte(RECEIVER_ID_FIELD_OFFSET + 2) & 0xFF) << 40) |
-                    (((long)getByte(RECEIVER_ID_FIELD_OFFSET + 3) & 0xFF) << 32) |
-                    (((long)getByte(RECEIVER_ID_FIELD_OFFSET + 4) & 0xFF) << 24) |
-                    (((long)getByte(RECEIVER_ID_FIELD_OFFSET + 5) & 0xFF) << 16) |
-                    (((long)getByte(RECEIVER_ID_FIELD_OFFSET + 6) & 0xFF) << 8) |
-                    (((long)getByte(RECEIVER_ID_FIELD_OFFSET + 7) & 0xFF))
-                );
-        }
-
-        return value;
+        return getLongUnaligned(RECEIVER_ID_FIELD_OFFSET);
     }
 
     /**
@@ -226,72 +198,137 @@ public class StatusMessageFlyweight extends HeaderFlyweight
      */
     public StatusMessageFlyweight receiverId(final long id)
     {
-        if (ByteOrder.nativeOrder() == LITTLE_ENDIAN)
+        return putLongUnaligned(RECEIVER_ID_FIELD_OFFSET, id);
+    }
+
+    /**
+     * The length of the Application Specific Feedback (or gtag).
+     *
+     * @return length, in bytes, of the Application Specific Feedback (or gtag).
+     */
+    public int asfLength()
+    {
+        return (frameLength() - HEADER_LENGTH);
+    }
+
+    /**
+     * The group tag (if present) from the Status Message.
+     *
+     * @return the group tag value or 0 if not present.
+     */
+    public long groupTag()
+    {
+        final int frameLength = frameLength();
+
+        if (frameLength > HEADER_LENGTH)
         {
-            putByte(RECEIVER_ID_FIELD_OFFSET + 7, (byte)(id >> 56));
-            putByte(RECEIVER_ID_FIELD_OFFSET + 6, (byte)(id >> 48));
-            putByte(RECEIVER_ID_FIELD_OFFSET + 5, (byte)(id >> 40));
-            putByte(RECEIVER_ID_FIELD_OFFSET + 4, (byte)(id >> 32));
-            putByte(RECEIVER_ID_FIELD_OFFSET + 3, (byte)(id >> 24));
-            putByte(RECEIVER_ID_FIELD_OFFSET + 2, (byte)(id >> 16));
-            putByte(RECEIVER_ID_FIELD_OFFSET + 1, (byte)(id >> 8));
-            putByte(RECEIVER_ID_FIELD_OFFSET + 0, (byte)(id));
+            if (frameLength > (HEADER_LENGTH + SIZE_OF_LONG))
+            {
+                throw new AeronException(
+                    "SM has longer application specific feedback (" + (frameLength - HEADER_LENGTH) + ") than gtag");
+            }
+
+            return getLongUnaligned(GROUP_TAG_FIELD_OFFSET);
         }
-        else
+
+        return 0;
+    }
+
+    /**
+     * Set the Receiver Group Tag for the Status Message.
+     *
+     * @param groupTag value to set if not null
+     * @return flyweight
+     */
+    public StatusMessageFlyweight groupTag(final Long groupTag)
+    {
+        if (null != groupTag)
         {
-            putByte(RECEIVER_ID_FIELD_OFFSET + 0, (byte)(id >> 56));
-            putByte(RECEIVER_ID_FIELD_OFFSET + 1, (byte)(id >> 48));
-            putByte(RECEIVER_ID_FIELD_OFFSET + 2, (byte)(id >> 40));
-            putByte(RECEIVER_ID_FIELD_OFFSET + 3, (byte)(id >> 32));
-            putByte(RECEIVER_ID_FIELD_OFFSET + 4, (byte)(id >> 24));
-            putByte(RECEIVER_ID_FIELD_OFFSET + 5, (byte)(id >> 16));
-            putByte(RECEIVER_ID_FIELD_OFFSET + 6, (byte)(id >> 8));
-            putByte(RECEIVER_ID_FIELD_OFFSET + 7, (byte)(id));
+            frameLength(HEADER_LENGTH + SIZE_OF_LONG);
+            putLongUnaligned(GROUP_TAG_FIELD_OFFSET, groupTag);
         }
 
         return this;
     }
 
     /**
-     * Retrieve the Application Specific Feedback (if present) from the Status Message.
+     * Return the field offset within the flyweight for the group tag field.
      *
-     * @param destination to store the feedback
-     * @return the number of bytes in the feedback copied into the destination
+     * @return offset of group tag field
      */
-    public int applicationSpecificFeedback(final byte[] destination)
+    public static int groupTagFieldOffset()
     {
-        final int frameLength = frameLength();
-        int result = 0;
-
-        if (frameLength > HEADER_LENGTH)
-        {
-            if (frameLength > capacity())
-            {
-                throw new AeronException(
-                    "SM application specific feedback (" + (frameLength - HEADER_LENGTH) + ") is truncated (" +
-                    (capacity() - HEADER_LENGTH) + ")");
-            }
-
-            final int copyLength = Math.min(destination.length, frameLength - HEADER_LENGTH);
-            getBytes(APP_SPECIFIC_FEEDBACK_FIELD_OFFSET, destination, 0, copyLength);
-            result = copyLength;
-        }
-
-        return result;
+        return GROUP_TAG_FIELD_OFFSET;
     }
 
     /**
-     * Set the Application Specific Feedback for the Status Message.
+     * Get long value from a field that is not aligned on an 8 byte boundary.
      *
-     * @param source of the feedback to set
-     * @param offset of the feedback in the source
-     * @param length of the feedback in bytes
-     * @return flyweight
+     * @param offset of the field to get.
+     * @return value of field.
      */
-    public StatusMessageFlyweight applicationSpecificFeedback(final byte[] source, final int offset, final int length)
+    public long getLongUnaligned(final int offset)
     {
-        frameLength(HEADER_LENGTH + length);
-        putBytes(APP_SPECIFIC_FEEDBACK_FIELD_OFFSET, source, offset, length);
+        final long value;
+        if (ByteOrder.nativeOrder() == LITTLE_ENDIAN)
+        {
+            value =
+                (((long)getByte(offset + 7)) << 56) |
+                (((long)getByte(offset + 6) & 0xFF) << 48) |
+                (((long)getByte(offset + 5) & 0xFF) << 40) |
+                (((long)getByte(offset + 4) & 0xFF) << 32) |
+                (((long)getByte(offset + 3) & 0xFF) << 24) |
+                (((long)getByte(offset + 2) & 0xFF) << 16) |
+                (((long)getByte(offset + 1) & 0xFF) << 8) |
+                (((long)getByte(offset) & 0xFF));
+        }
+        else
+        {
+            value =
+                (((long)getByte(offset)) << 56) |
+                (((long)getByte(offset + 1) & 0xFF) << 48) |
+                (((long)getByte(offset + 2) & 0xFF) << 40) |
+                (((long)getByte(offset + 3) & 0xFF) << 32) |
+                (((long)getByte(offset + 4) & 0xFF) << 24) |
+                (((long)getByte(offset + 5) & 0xFF) << 16) |
+                (((long)getByte(offset + 6) & 0xFF) << 8) |
+                (((long)getByte(offset + 7) & 0xFF));
+        }
+
+        return value;
+    }
+
+    /**
+     * Set long value into a field that is not aligned on an 8 byte boundary.
+     *
+     * @param offset of the field to put.
+     * @param value of the field to pu.
+     * @return this for fluent API.
+     */
+    public StatusMessageFlyweight putLongUnaligned(final int offset, final long value)
+    {
+        if (ByteOrder.nativeOrder() == LITTLE_ENDIAN)
+        {
+            putByte(offset + 7, (byte)(value >> 56));
+            putByte(offset + 6, (byte)(value >> 48));
+            putByte(offset + 5, (byte)(value >> 40));
+            putByte(offset + 4, (byte)(value >> 32));
+            putByte(offset + 3, (byte)(value >> 24));
+            putByte(offset + 2, (byte)(value >> 16));
+            putByte(offset + 1, (byte)(value >> 8));
+            putByte(offset, (byte)(value));
+        }
+        else
+        {
+            putByte(offset, (byte)(value >> 56));
+            putByte(offset + 1, (byte)(value >> 48));
+            putByte(offset + 2, (byte)(value >> 40));
+            putByte(offset + 3, (byte)(value >> 32));
+            putByte(offset + 4, (byte)(value >> 24));
+            putByte(offset + 5, (byte)(value >> 16));
+            putByte(offset + 6, (byte)(value >> 8));
+            putByte(offset + 7, (byte)(value));
+        }
 
         return this;
     }

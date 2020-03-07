@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,7 +33,8 @@
 #include "aeron_publication_image.h"
 #include "reports/aeron_loss_reporter.h"
 
-#define AERON_DRIVER_CONDUCTOR_LINGER_RESOURCE_TIMEOUT_NS (5 * 1000 * 1000 * 1000L)
+#define AERON_DRIVER_CONDUCTOR_LINGER_RESOURCE_TIMEOUT_NS (5 * 1000 * 1000 * 1000LL)
+#define AERON_DRIVER_CONDUCTOR_CLOCK_UPDATE_DURATION_NS (1000 * 1000LL)
 
 typedef struct aeron_publication_link_stct
 {
@@ -268,13 +269,16 @@ typedef struct aeron_driver_conductor_stct
     int64_t *unblocked_commands_counter;
     int64_t *client_timeouts_counter;
 
-    aeron_clock_func_t nano_clock;
-    aeron_clock_func_t epoch_clock;
+    int64_t clock_update_deadline_ns;
 
     int32_t next_session_id;
+    int32_t publication_reserved_session_id_low;
+    int32_t publication_reserved_session_id_high;
     int64_t time_of_last_timeout_check_ns;
     int64_t time_of_last_to_driver_position_change_ns;
     int64_t last_consumer_command_position;
+
+    uint8_t padding[AERON_CACHE_LINE_LENGTH];
 }
 aeron_driver_conductor_t;
 

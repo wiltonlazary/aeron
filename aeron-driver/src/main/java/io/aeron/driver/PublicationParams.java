@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -34,7 +34,7 @@ final class PublicationParams
     int termId = 0;
     int termOffset = 0;
     int sessionId = 0;
-    boolean isReplay = false;
+    boolean hasPosition = false;
     boolean hasSessionId = false;
     boolean isSessionIdTagged = false;
     boolean isSparse;
@@ -61,60 +61,61 @@ final class PublicationParams
         params.getSparse(channelUri);
         params.getEos(channelUri);
 
-        if (isExclusive)
+        int count = 0;
+
+        final String initialTermIdStr = channelUri.get(INITIAL_TERM_ID_PARAM_NAME);
+        count = initialTermIdStr != null ? count + 1 : count;
+
+        final String termIdStr = channelUri.get(TERM_ID_PARAM_NAME);
+        count = termIdStr != null ? count + 1 : count;
+
+        final String termOffsetStr = channelUri.get(TERM_OFFSET_PARAM_NAME);
+        count = termOffsetStr != null ? count + 1 : count;
+
+        if (count > 0)
         {
-            int count = 0;
-
-            final String initialTermIdStr = channelUri.get(INITIAL_TERM_ID_PARAM_NAME);
-            count = initialTermIdStr != null ? count + 1 : count;
-
-            final String termIdStr = channelUri.get(TERM_ID_PARAM_NAME);
-            count = termIdStr != null ? count + 1 : count;
-
-            final String termOffsetStr = channelUri.get(TERM_OFFSET_PARAM_NAME);
-            count = termOffsetStr != null ? count + 1 : count;
-
-            if (count > 0)
+            if (!isExclusive)
             {
-                if (count < 3)
-                {
-                    throw new IllegalArgumentException("params must be used as a complete set: " +
-                        INITIAL_TERM_ID_PARAM_NAME + " " + TERM_ID_PARAM_NAME + " " + TERM_OFFSET_PARAM_NAME);
-                }
-
-                params.initialTermId = Integer.parseInt(initialTermIdStr);
-                params.termId = Integer.parseInt(termIdStr);
-                params.termOffset = Integer.parseInt(termOffsetStr);
-
-                if (params.termOffset > params.termLength)
-                {
-                    throw new IllegalArgumentException(
-                        TERM_OFFSET_PARAM_NAME + "=" + params.termOffset + " > " +
-                            TERM_LENGTH_PARAM_NAME + "=" + params.termLength);
-                }
-
-                if (params.termOffset < 0 || params.termOffset > LogBufferDescriptor.TERM_MAX_LENGTH)
-                {
-                    throw new IllegalArgumentException(
-                        TERM_OFFSET_PARAM_NAME + "=" + params.termOffset + " out of range");
-                }
-
-                if ((params.termOffset & (FrameDescriptor.FRAME_ALIGNMENT - 1)) != 0)
-                {
-                    throw new IllegalArgumentException(
-                        TERM_OFFSET_PARAM_NAME + "=" + params.termOffset + " must be a multiple of FRAME_ALIGNMENT");
-                }
-
-                if (params.termId - params.initialTermId < 0)
-                {
-                    throw new IllegalStateException(
-                        "difference greater than 2^31 - 1: " + INITIAL_TERM_ID_PARAM_NAME + "=" +
-                        params.initialTermId + " when " + TERM_ID_PARAM_NAME + "=" + params.termId);
-
-                }
-
-                params.isReplay = true;
+                throw new IllegalArgumentException("params: " + INITIAL_TERM_ID_PARAM_NAME + " " + TERM_ID_PARAM_NAME +
+                    " " + TERM_OFFSET_PARAM_NAME + " are not supported for concurrent publications");
             }
+            if (count < 3)
+            {
+                throw new IllegalArgumentException("params must be used as a complete set: " +
+                    INITIAL_TERM_ID_PARAM_NAME + " " + TERM_ID_PARAM_NAME + " " + TERM_OFFSET_PARAM_NAME);
+            }
+
+            params.initialTermId = Integer.parseInt(initialTermIdStr);
+            params.termId = Integer.parseInt(termIdStr);
+            params.termOffset = Integer.parseInt(termOffsetStr);
+
+            if (params.termOffset > params.termLength)
+            {
+                throw new IllegalArgumentException(
+                    TERM_OFFSET_PARAM_NAME + "=" + params.termOffset + " > " +
+                    TERM_LENGTH_PARAM_NAME + "=" + params.termLength);
+            }
+
+            if (params.termOffset < 0 || params.termOffset > LogBufferDescriptor.TERM_MAX_LENGTH)
+            {
+                throw new IllegalArgumentException(
+                    TERM_OFFSET_PARAM_NAME + "=" + params.termOffset + " out of range");
+            }
+
+            if ((params.termOffset & (FrameDescriptor.FRAME_ALIGNMENT - 1)) != 0)
+            {
+                throw new IllegalArgumentException(
+                    TERM_OFFSET_PARAM_NAME + "=" + params.termOffset + " must be a multiple of FRAME_ALIGNMENT");
+            }
+
+            if (params.termId - params.initialTermId < 0)
+            {
+                throw new IllegalStateException(
+                    "difference greater than 2^31 - 1: " + INITIAL_TERM_ID_PARAM_NAME + "=" +
+                    params.initialTermId + " when " + TERM_ID_PARAM_NAME + "=" + params.termId);
+            }
+
+            params.hasPosition = true;
         }
 
         return params;
@@ -194,22 +195,25 @@ final class PublicationParams
     }
 
     static void confirmMatch(
-        final ChannelUri uri, final PublicationParams params, final RawLog rawLog, final int existingSessionId)
+        final ChannelUri channelUri,
+        final PublicationParams params,
+        final RawLog rawLog,
+        final int existingSessionId)
     {
         final int mtuLength = LogBufferDescriptor.mtuLength(rawLog.metaData());
-        if (uri.containsKey(MTU_LENGTH_PARAM_NAME) && mtuLength != params.mtuLength)
+        if (channelUri.containsKey(MTU_LENGTH_PARAM_NAME) && mtuLength != params.mtuLength)
         {
             throw new IllegalStateException("existing publication has different MTU length: existing=" +
                 mtuLength + " requested=" + params.mtuLength);
         }
 
-        if (uri.containsKey(TERM_LENGTH_PARAM_NAME) && rawLog.termLength() != params.termLength)
+        if (channelUri.containsKey(TERM_LENGTH_PARAM_NAME) && rawLog.termLength() != params.termLength)
         {
             throw new IllegalStateException("existing publication has different term length: existing=" +
                 rawLog.termLength() + " requested=" + params.termLength);
         }
 
-        if (uri.containsKey(SESSION_ID_PARAM_NAME) && params.sessionId != existingSessionId)
+        if (channelUri.containsKey(SESSION_ID_PARAM_NAME) && params.sessionId != existingSessionId)
         {
             throw new IllegalStateException("existing publication has different session id: existing=" +
                 existingSessionId + " requested=" + params.sessionId);
@@ -299,7 +303,7 @@ final class PublicationParams
             ", termId=" + termId +
             ", termOffset=" + termOffset +
             ", sessionId=" + sessionId +
-            ", isReplay=" + isReplay +
+            ", hasPosition=" + hasPosition +
             ", hasSessionId=" + hasSessionId +
             ", isSessionIdTagged=" + isSessionIdTagged +
             ", isSparse=" + isSparse +

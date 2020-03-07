@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,13 +17,12 @@ package io.aeron.driver.reports;
 
 import org.agrona.concurrent.AtomicBuffer;
 import org.agrona.concurrent.UnsafeBuffer;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
 
 import java.nio.ByteBuffer;
 
-import static org.hamcrest.Matchers.is;
-import static org.junit.Assert.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.Mockito.*;
 
 public class LossReportReaderTest
@@ -36,7 +35,7 @@ public class LossReportReaderTest
     @Test
     public void shouldReadNoEntriesInEmptyReport()
     {
-        assertThat(LossReportReader.read(buffer, entryConsumer), is(0));
+        assertEquals(0, LossReportReader.read(buffer, entryConsumer));
 
         verifyNoInteractions(entryConsumer);
     }
@@ -53,7 +52,7 @@ public class LossReportReaderTest
 
         lossReport.createEntry(initialBytesLost, timestampMs, sessionId, streamId, channel, source);
 
-        assertThat(LossReportReader.read(buffer, entryConsumer), is(1));
+        assertEquals(1, LossReportReader.read(buffer, entryConsumer));
 
         verify(entryConsumer).accept(
             1L, initialBytesLost, timestampMs, timestampMs, sessionId, streamId, channel, source);
@@ -81,7 +80,7 @@ public class LossReportReaderTest
         lossReport.createEntry(initialBytesLostOne, timestampMsOne, sessionIdOne, streamIdOne, channelOne, sourceOne);
         lossReport.createEntry(initialBytesLostTwo, timestampMsTwo, sessionIdTwo, streamIdTwo, channelTwo, sourceTwo);
 
-        assertThat(LossReportReader.read(buffer, entryConsumer), is(2));
+        assertEquals(2, LossReportReader.read(buffer, entryConsumer));
 
         final InOrder inOrder = inOrder(entryConsumer);
         inOrder.verify(entryConsumer).accept(

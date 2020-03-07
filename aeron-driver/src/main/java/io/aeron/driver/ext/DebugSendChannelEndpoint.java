@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -34,7 +34,7 @@ public class DebugSendChannelEndpoint extends SendChannelEndpoint
 {
     private final LossGenerator dataLossGenerator;
     private final LossGenerator controlLossGenerator;
-    private final UnsafeBuffer dataBuffer = new UnsafeBuffer(ByteBuffer.allocate(0));
+    private final UnsafeBuffer dataBuffer = new UnsafeBuffer();
 
     public DebugSendChannelEndpoint(
         final UdpChannel udpChannel, final AtomicCounter statusIndicator, final MediaDriver.Context context)
@@ -62,15 +62,15 @@ public class DebugSendChannelEndpoint extends SendChannelEndpoint
 
     public int send(final ByteBuffer buffer)
     {
-        int result = buffer.remaining();
+        int count = buffer.remaining();
 
-        dataBuffer.wrap(buffer, buffer.position(), buffer.remaining());
-        if (!dataLossGenerator.shouldDropFrame(connectAddress, dataBuffer, buffer.remaining()))
+        dataBuffer.wrap(buffer, buffer.position(), count);
+        if (!dataLossGenerator.shouldDropFrame(connectAddress, dataBuffer, count))
         {
-            result = super.send(buffer);
+            count = super.send(buffer);
         }
 
-        return result;
+        return count;
     }
 
     public void onStatusMessage(

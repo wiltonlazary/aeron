@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,7 +15,7 @@
  */
 package io.aeron.cluster;
 
-import io.aeron.Publication;
+import io.aeron.ExclusivePublication;
 import io.aeron.cluster.codecs.*;
 import io.aeron.cluster.service.SnapshotTaker;
 import org.agrona.ExpandableRingBuffer;
@@ -33,7 +33,7 @@ class ConsensusModuleSnapshotTaker extends SnapshotTaker implements ExpandableRi
     private final ClusterMembersEncoder clusterMembersEncoder = new ClusterMembersEncoder();
 
     ConsensusModuleSnapshotTaker(
-        final Publication publication, final IdleStrategy idleStrategy, final AgentInvoker aeronClientInvoker)
+        final ExclusivePublication publication, final IdleStrategy idleStrategy, final AgentInvoker aeronClientInvoker)
     {
         super(publication, idleStrategy, aeronClientInvoker);
     }

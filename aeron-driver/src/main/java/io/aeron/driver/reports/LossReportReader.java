@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,10 @@ package io.aeron.driver.reports;
 import org.agrona.BitUtil;
 import org.agrona.concurrent.AtomicBuffer;
 
+import java.io.PrintStream;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+
 import static io.aeron.driver.reports.LossReport.*;
 import static org.agrona.BitUtil.SIZE_OF_INT;
 
@@ -26,6 +30,56 @@ import static org.agrona.BitUtil.SIZE_OF_INT;
  */
 public class LossReportReader
 {
+    /**
+     * CSV style header for using with {@link #defaultEntryConsumer(PrintStream)}.
+     */
+    public static final String LOSS_REPORT_CSV_HEADER =
+        "#OBSERVATION_COUNT,TOTAL_BYTES_LOST,FIRST_OBSERVATION,LAST_OBSERVATION,SESSION_ID,STREAM_ID,CHANNEL,SOURCE";
+
+    /**
+     * Consumer function to be implemented by caller of the read method.
+     */
+    @FunctionalInterface
+    public interface EntryConsumer
+    {
+        void accept(
+            long observationCount,
+            long totalBytesLost,
+            long firstObservationTimestamp,
+            long lastObservationTimestamp,
+            int sessionId,
+            int streamId,
+            String channel,
+            String source);
+    }
+
+    public static EntryConsumer defaultEntryConsumer(final PrintStream out)
+    {
+        final SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSSZ");
+
+        return
+            (observationCount,
+            totalBytesLost,
+            firstObservationTimestamp,
+            lastObservationTimestamp,
+            sessionId,
+            streamId,
+            channel,
+            source) ->
+            {
+                out.format(
+                    "%d,%d,%s,%s,%d,%d,%s,%s%n",
+                    observationCount,
+                    totalBytesLost,
+                    dateFormat.format(new Date(firstObservationTimestamp)),
+                    dateFormat.format(new Date(lastObservationTimestamp)),
+                    sessionId,
+                    streamId,
+                    channel,
+                    source);
+            };
+    }
+
     /**
      * Read a {@link LossReport} contained in the buffer. This can be done concurrently.
      *
@@ -51,7 +105,8 @@ public class LossReportReader
             ++recordsRead;
 
             final String channel = buffer.getStringAscii(offset + CHANNEL_OFFSET);
-            final String source = buffer.getStringAscii(offset + CHANNEL_OFFSET + SIZE_OF_INT + channel.length());
+            final String source = buffer.getStringAscii(
+                offset + CHANNEL_OFFSET + BitUtil.align(SIZE_OF_INT + channel.length(), SIZE_OF_INT));
 
             entryConsumer.accept(
                 observationCount,
@@ -63,27 +118,13 @@ public class LossReportReader
                 channel,
                 source);
 
-            final int recordLength = CHANNEL_OFFSET + (SIZE_OF_INT * 2) + channel.length() + source.length();
+            final int recordLength =
+                CHANNEL_OFFSET +
+                BitUtil.align(SIZE_OF_INT + channel.length(), SIZE_OF_INT) +
+                SIZE_OF_INT + source.length();
             offset += BitUtil.align(recordLength, ENTRY_ALIGNMENT);
         }
 
         return recordsRead;
-    }
-
-    /**
-     * Consumer function to be implemented by caller of the read method.
-     */
-    @FunctionalInterface
-    public interface EntryConsumer
-    {
-        void accept(
-            long observationCount,
-            long totalBytesLost,
-            long firstObservationTimestamp,
-            long lastObservationTimestamp,
-            int sessionId,
-            int streamId,
-            String channel,
-            String source);
     }
 }

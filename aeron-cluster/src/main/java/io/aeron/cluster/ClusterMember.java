@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,11 +15,10 @@
  */
 package io.aeron.cluster;
 
-import io.aeron.Aeron;
-import io.aeron.ChannelUri;
-import io.aeron.Publication;
+import io.aeron.*;
 import io.aeron.cluster.client.ClusterException;
 import org.agrona.CloseHelper;
+import org.agrona.ErrorHandler;
 import org.agrona.collections.ArrayUtil;
 import org.agrona.collections.Int2ObjectHashMap;
 
@@ -38,12 +37,13 @@ public final class ClusterMember
     private boolean isBallotSent;
     private boolean isLeader;
     private boolean hasRequestedJoin;
-    private boolean hasSentTerminationAck;
+    private boolean hasTerminated;
     private int id;
     private long leadershipTermId = Aeron.NULL_VALUE;
     private long logPosition = NULL_POSITION;
     private long candidateTermId = Aeron.NULL_VALUE;
     private long catchupReplaySessionId = Aeron.NULL_VALUE;
+    private long catchupReplayCorrelationId = Aeron.NULL_VALUE;
     private long changeCorrelationId = Aeron.NULL_VALUE;
     private long removalPosition = NULL_POSITION;
     private long timeOfLastAppendPositionNs = Aeron.NULL_VALUE;
@@ -53,7 +53,7 @@ public final class ClusterMember
     private final String transferEndpoint;
     private final String archiveEndpoint;
     private final String endpointsDetail;
-    private Publication publication;
+    private ExclusivePublication publication;
     private Boolean vote = null;
 
     /**
@@ -93,7 +93,7 @@ public final class ClusterMember
         isBallotSent = false;
         isLeader = false;
         hasRequestedJoin = false;
-        hasSentTerminationAck = false;
+        hasTerminated = false;
         vote = null;
         candidateTermId = Aeron.NULL_VALUE;
         leadershipTermId = Aeron.NULL_VALUE;
@@ -167,25 +167,25 @@ public final class ClusterMember
     }
 
     /**
-     * Set if this member has sent a termination ack.
+     * Set if this member has terminated.
      *
-     * @param hasSentTerminationAck to the leader.
+     * @param hasTerminated in notification to the leader.
      * @return this for a fluent API.
      */
-    public ClusterMember hasSentTerminationAck(final boolean hasSentTerminationAck)
+    public ClusterMember hasTerminated(final boolean hasTerminated)
     {
-        this.hasSentTerminationAck = hasSentTerminationAck;
+        this.hasTerminated = hasTerminated;
         return this;
     }
 
     /**
-     * Has this member sent a termination ack?
+     * Has this member notified that it has terminated?
      *
-     * @return has this member sent a termination ack?
+     * @return has this member notified that it has terminated?
      */
-    public boolean hasSentTerminationAck()
+    public boolean hasTerminated()
     {
-        return hasSentTerminationAck;
+        return hasTerminated;
     }
 
     /**
@@ -356,6 +356,28 @@ public final class ClusterMember
     }
 
     /**
+     * The correlation id for the replay when catching up to the leader.
+     *
+     * @param correlationId for the replay when catching up to the leader.
+     * @return this for a fluent API.
+     */
+    public ClusterMember catchupReplayCorrelationId(final long correlationId)
+    {
+        this.catchupReplayCorrelationId = correlationId;
+        return this;
+    }
+
+    /**
+     * The correlation id for the replay when catching up to the leader.
+     *
+     * @return the correlation id for the replay when catching up to the leader.
+     */
+    public long catchupReplayCorrelationId()
+    {
+        return catchupReplayCorrelationId;
+    }
+
+    /**
      * Correlation id assigned to the current action undertaken by the cluster member.
      *
      * @param correlationId assigned to the current action undertaken by the cluster member.
@@ -465,7 +487,7 @@ public final class ClusterMember
      *
      * @return {@link Publication} used for send status updates to the member.
      */
-    public Publication publication()
+    public ExclusivePublication publication()
     {
         return publication;
     }
@@ -475,17 +497,19 @@ public final class ClusterMember
      *
      * @param publication used for send status updates to the member.
      */
-    public void publication(final Publication publication)
+    public void publication(final ExclusivePublication publication)
     {
         this.publication = publication;
     }
 
     /**
      * Close member status publication and null out reference.
+     *
+     * @param errorHandler to capture errors during close.
      */
-    public void closePublication()
+    public void closePublication(final ErrorHandler errorHandler)
     {
-        CloseHelper.close(publication);
+        CloseHelper.close(errorHandler, publication);
         publication = null;
     }
 
@@ -566,6 +590,11 @@ public final class ClusterMember
      */
     public static String encodeAsString(final ClusterMember[] clusterMembers)
     {
+        if (0 == clusterMembers.length)
+        {
+            return "";
+        }
+
         final StringBuilder builder = new StringBuilder();
 
         for (int i = 0, length = clusterMembers.length; i < length; i++)
@@ -615,13 +644,14 @@ public final class ClusterMember
     /**
      * Close the publications associated with members of the cluster.
      *
+     * @param errorHandler   to capture errors during close.
      * @param clusterMembers to close the publications for.
      */
-    public static void closeMemberPublications(final ClusterMember[] clusterMembers)
+    public static void closeMemberPublications(final ErrorHandler errorHandler, final ClusterMember[] clusterMembers)
     {
         for (final ClusterMember member : clusterMembers)
         {
-            CloseHelper.close(member.publication);
+            CloseHelper.close(errorHandler, member.publication);
         }
     }
 
@@ -908,10 +938,10 @@ public final class ClusterMember
     }
 
     /**
-     * Check the member with the memberEndpoints
+     * Check the member with the memberEndpoints.
      *
-     * @param member          to check memberEndpoints against
-     * @param memberEndpoints to check member against
+     * @param member          to check memberEndpoints against.
+     * @param memberEndpoints to check member against.
      * @see ConsensusModule.Context#memberEndpoints()
      * @see ConsensusModule.Context#clusterMembers()
      */
@@ -929,8 +959,8 @@ public final class ClusterMember
     /**
      * Are two cluster members using the same endpoints?
      *
-     * @param lhs to check
-     * @param rhs to check
+     * @param lhs to compare for equality.
+     * @param rhs to compare for equality.
      * @return true if both are using the same endpoints or false if not.
      */
     public static boolean areSameEndpoints(final ClusterMember lhs, final ClusterMember rhs)
@@ -1145,7 +1175,7 @@ public final class ClusterMember
      * Create a string of member facing endpoints by id in format {@code id=endpoint,id=endpoint, ...}.
      *
      * @param members for which the endpoints string will be generated.
-     * @return  a string of member facing endpoints by id.
+     * @return a string of member facing endpoints by id.
      */
     public static String clientFacingEndpoints(final ClusterMember[] members)
     {

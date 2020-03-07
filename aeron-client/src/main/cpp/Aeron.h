@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -31,6 +31,7 @@
 #include "Publication.h"
 #include "Subscription.h"
 #include "Context.h"
+#include "util/Export.h"
 
 /// Top namespace for Aeron C++ API
 namespace aeron {
@@ -53,7 +54,7 @@ using namespace aeron::concurrent::broadcast;
  * <p>
  * A client application requires only one Aeron object per Media Driver.
  */
-class Aeron
+class CLIENT_EXPORT Aeron
 {
 public:
     /**
@@ -63,7 +64,7 @@ public:
      *
      * @param context for configuration of the client.
      */
-    Aeron(Context& context);
+    explicit Aeron(Context& context);
 
     ~Aeron();
 
@@ -395,6 +396,11 @@ public:
      * @return Context instance in use.
      */
     inline Context& context()
+    {
+        return m_context;
+    }
+
+    inline const Context& context() const
     {
         return m_context;
     }

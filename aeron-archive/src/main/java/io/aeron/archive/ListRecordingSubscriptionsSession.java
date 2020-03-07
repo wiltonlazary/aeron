@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Real Logic Ltd.
+ * Copyright 2019 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,7 +26,7 @@ class ListRecordingSubscriptionsSession implements Session
     private int pseudoIndex;
     private int sent;
     private final int streamId;
-    private boolean applyStreamId;
+    private final boolean applyStreamId;
     private boolean isDone = false;
     private final String channelFragment;
     private final Object2ObjectHashMap<String, Subscription> subscriptionByKeyMap;

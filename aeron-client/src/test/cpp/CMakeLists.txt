@@ -1,5 +1,5 @@
 #
-# Copyright 2014-2019 Real Logic Ltd.
+# Copyright 2014-2020 Real Logic Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -29,6 +29,10 @@ target_include_directories(aeron_client_test
 target_link_libraries(aeron_client_test aeron_client)
 target_compile_definitions(aeron_client_test PUBLIC "_SILENCE_TR1_NAMESPACE_DEPRECATION_WARNING")
 add_dependencies(aeron_client_test gmock)
+
+if (MSVC AND ${CMAKE_VERSION} VERSION_LESS "3.13.0")
+    target_compile_definitions(aeron_client_test PUBLIC "MSVC_FILE_IS_LOWER_CASE")
+endif ()
 
 function(aeron_client_test name file)
     add_executable(${name} ${file})

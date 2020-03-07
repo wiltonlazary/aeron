@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,7 +18,7 @@ package io.aeron.agent;
 /**
  * Specifies the type of EventCode that can be handled by the logging agent.
  */
-public enum EventCodeType
+enum EventCodeType
 {
     /**
      * Events related to media driver operation.

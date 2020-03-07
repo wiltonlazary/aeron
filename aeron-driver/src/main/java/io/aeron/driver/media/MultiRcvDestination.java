@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,7 +15,10 @@
  */
 package io.aeron.driver.media;
 
+import io.aeron.CommonContext;
+import io.aeron.driver.DriverConductorProxy;
 import org.agrona.CloseHelper;
+import org.agrona.ErrorHandler;
 import org.agrona.collections.ArrayUtil;
 import org.agrona.concurrent.NanoClock;
 
@@ -25,34 +28,36 @@ import java.nio.ByteBuffer;
 
 import static io.aeron.driver.media.UdpChannelTransport.sendError;
 
-class MultiRcvDestination
+final class MultiRcvDestination
 {
-    private static final ReceiveDestinationUdpTransport[] EMPTY_TRANSPORTS = new ReceiveDestinationUdpTransport[0];
+    private static final ReceiveDestinationTransport[] EMPTY_TRANSPORTS = new ReceiveDestinationTransport[0];
 
     private final long destinationEndpointTimeoutNs;
+    private final ErrorHandler errorHandler;
     private final NanoClock nanoClock;
-    private ReceiveDestinationUdpTransport[] transports = EMPTY_TRANSPORTS;
+    private ReceiveDestinationTransport[] transports = EMPTY_TRANSPORTS;
     private int numDestinations = 0;
 
-    MultiRcvDestination(final NanoClock nanoClock, final long timeoutNs)
+    MultiRcvDestination(final NanoClock nanoClock, final long timeoutNs, final ErrorHandler errorHandler)
     {
         this.nanoClock = nanoClock;
         this.destinationEndpointTimeoutNs = timeoutNs;
+        this.errorHandler = errorHandler;
     }
 
-    public void close(final DataTransportPoller poller)
+    void close(final DataTransportPoller poller)
     {
-        for (final ReceiveDestinationUdpTransport transport : transports)
+        for (final ReceiveDestinationTransport transport : transports)
         {
-            CloseHelper.close(transport);
+            CloseHelper.close(errorHandler, transport);
             if (null != poller)
             {
-                poller.selectNowWithoutProcessing();
+                CloseHelper.close(errorHandler, poller::selectNowWithoutProcessing);
             }
         }
     }
 
-    public int addDestination(final ReceiveDestinationUdpTransport transport)
+    int addDestination(final ReceiveDestinationTransport transport)
     {
         int index = transports.length;
 
@@ -72,30 +77,30 @@ class MultiRcvDestination
         return index;
     }
 
-    public void removeDestination(final int transportIndex)
+    void removeDestination(final int transportIndex)
     {
         transports[transportIndex] = null;
         numDestinations--;
     }
 
-    public boolean hasDestination(final int transportIndex)
+    boolean hasDestination(final int transportIndex)
     {
         return numDestinations > transportIndex && null != transports[transportIndex];
     }
 
-    public ReceiveDestinationUdpTransport transport(final int transportIndex)
+    ReceiveDestinationTransport transport(final int transportIndex)
     {
         return transports[transportIndex];
     }
 
-    public int transport(final UdpChannel udpChannel)
+    int transport(final UdpChannel udpChannel)
     {
-        final ReceiveDestinationUdpTransport[] transports = this.transports;
+        final ReceiveDestinationTransport[] transports = this.transports;
         int index = ArrayUtil.UNKNOWN_INDEX;
 
         for (int i = 0, length = transports.length; i < length; i++)
         {
-            final ReceiveDestinationUdpTransport transport = transports[i];
+            final ReceiveDestinationTransport transport = transports[i];
 
             if (null != transport && transport.udpChannel().equals(udpChannel))
             {
@@ -107,13 +112,49 @@ class MultiRcvDestination
         return index;
     }
 
-    public int sendToAll(
+    void checkForReResolution(
+        final ReceiveChannelEndpoint channelEndpoint, final long nowNs, final DriverConductorProxy conductorProxy)
+    {
+        for (final ReceiveDestinationTransport transport : transports)
+        {
+            if (null != transport)
+            {
+                final UdpChannel udpChannel = transport.udpChannel();
+
+                if (udpChannel.hasExplicitControl() &&
+                    (transport.timeOfLastActivityNs() + destinationEndpointTimeoutNs) < nowNs)
+                {
+                    conductorProxy.reResolveControl(
+                        udpChannel.channelUri().get(CommonContext.MDC_CONTROL_PARAM_NAME),
+                        udpChannel,
+                        channelEndpoint,
+                        transport.currentControlAddress());
+                    transport.timeOfLastActivityNs(nowNs);
+                }
+            }
+        }
+    }
+
+    void updateControlAddress(final int transportIndex, final InetSocketAddress newAddress)
+    {
+        if (ArrayUtil.UNKNOWN_INDEX != transportIndex)
+        {
+            final ReceiveDestinationTransport transport = transports[transportIndex];
+
+            if (null != transport)
+            {
+                transport.currentControlAddress(newAddress);
+            }
+        }
+    }
+
+    int sendToAll(
         final ImageConnection[] imageConnections,
         final ByteBuffer buffer,
-        final int position,
+        final int bufferPosition,
         final int bytesToSend)
     {
-        final ReceiveDestinationUdpTransport[] transports = this.transports;
+        final ReceiveDestinationTransport[] transports = this.transports;
         final long nowNs = nanoClock.nanoTime();
         int minBytesSent = bytesToSend;
 
@@ -126,7 +167,7 @@ class MultiRcvDestination
                 final UdpChannelTransport transport = transports[i];
                 if (null != transport && ((connection.timeOfLastActivityNs + destinationEndpointTimeoutNs) - nowNs > 0))
                 {
-                    buffer.position(position);
+                    buffer.position(bufferPosition);
                     minBytesSent = Math.min(minBytesSent, sendTo(transport, buffer, connection.controlAddress));
                 }
             }
@@ -135,7 +176,7 @@ class MultiRcvDestination
         return minBytesSent;
     }
 
-    public static int sendTo(
+    static int sendTo(
         final UdpChannelTransport transport, final ByteBuffer buffer, final InetSocketAddress remoteAddress)
     {
         final int remaining = buffer.remaining();

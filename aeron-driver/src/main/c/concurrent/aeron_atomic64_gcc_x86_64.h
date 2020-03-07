@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -61,16 +61,6 @@ do \
         "lock; xaddl %0, %1" \
         : "=r"(original), "+m"(dst) \
         : "0"(value)); \
-} \
-while (false)
-
-#define AERON_CMPXCHG64(original, dst, expected, desired) \
-do \
-{ \
-    asm volatile( \
-        "lock; cmpxchgq %2, %1" \
-        : "=a"(original), "+m"(dst) \
-        : "q"(desired), "0"(expected)); \
 } \
 while (false)
 

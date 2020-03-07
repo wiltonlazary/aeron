@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,12 +14,12 @@
  * limitations under the License.
  */
 
-#include <memory.h>
 #include <stdlib.h>
 #include <errno.h>
 #include <limits.h>
 #include <ctype.h>
 #include <inttypes.h>
+#include <string.h>
 #include "util/aeron_parse_util.h"
 #include "util/aeron_error.h"
 
@@ -453,7 +453,7 @@ int aeron_parse_get_line(char *str, size_t max_length, const char *buffer)
         if ('\n' == buffer[i])
         {
             str[i + 1] = '\0';
-            return i + 1;
+            return (int)(i + 1);
         }
     }
 

@@ -1,5 +1,5 @@
 /*
- *  Copyright 2014-2019 Real Logic Ltd.
+ *  Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,36 +15,32 @@
  */
 package io.aeron;
 
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
-import static org.hamcrest.core.Is.is;
-import static org.junit.Assert.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 public class ChannelUriStringBuilderTest
 {
-    @Test(expected = IllegalStateException.class)
+    @Test
     public void shouldValidateMedia()
     {
-        new ChannelUriStringBuilder()
-            .validate();
+        assertThrows(IllegalStateException.class,
+            () -> new ChannelUriStringBuilder().validate());
     }
 
-    @Test(expected = IllegalStateException.class)
+    @Test
     public void shouldValidateEndpointOrControl()
     {
-        new ChannelUriStringBuilder()
-            .media("udp")
-            .validate();
+        assertThrows(IllegalStateException.class,
+            () -> new ChannelUriStringBuilder().media("udp").validate());
     }
 
-    @Test(expected = IllegalStateException.class)
+    @Test
     public void shouldValidateInitialPosition()
     {
-        new ChannelUriStringBuilder()
-            .media("udp")
-            .endpoint("address:port")
-            .termId(999)
-            .validate();
+        assertThrows(IllegalStateException.class,
+            () -> new ChannelUriStringBuilder().media("udp").endpoint("address:port").termId(999).validate());
     }
 
     @Test
@@ -53,7 +49,7 @@ public class ChannelUriStringBuilderTest
         final ChannelUriStringBuilder builder = new ChannelUriStringBuilder()
             .media("ipc");
 
-        assertThat(builder.build(), is("aeron:ipc"));
+        assertEquals("aeron:ipc", builder.build());
     }
 
     @Test
@@ -63,7 +59,7 @@ public class ChannelUriStringBuilderTest
             .media("udp")
             .endpoint("localhost:9999");
 
-        assertThat(builder.build(), is("aeron:udp?endpoint=localhost:9999"));
+        assertEquals("aeron:udp?endpoint=localhost:9999", builder.build());
     }
 
     @Test
@@ -74,7 +70,7 @@ public class ChannelUriStringBuilderTest
             .media("udp")
             .endpoint("localhost:9999");
 
-        assertThat(builder.build(), is("aeron-spy:aeron:udp?endpoint=localhost:9999"));
+        assertEquals("aeron-spy:aeron:udp?endpoint=localhost:9999", builder.build());
     }
 
     @Test
@@ -86,7 +82,7 @@ public class ChannelUriStringBuilderTest
             .ttl(9)
             .termLength(1024 * 128);
 
-        assertThat(builder.build(), is("aeron:udp?endpoint=localhost:9999|term-length=131072|ttl=9"));
+        assertEquals("aeron:udp?endpoint=localhost:9999|term-length=131072|ttl=9", builder.build());
     }
 
     @Test
@@ -100,8 +96,8 @@ public class ChannelUriStringBuilderTest
             .termId(999)
             .termOffset(64);
 
-        assertThat(
-            builder.build(),
-            is("aeron:udp?endpoint=address:9999|term-length=131072|init-term-id=777|term-id=999|term-offset=64"));
+        assertEquals(
+            "aeron:udp?endpoint=address:9999|term-length=131072|init-term-id=777|term-id=999|term-offset=64",
+            builder.build());
     }
 }

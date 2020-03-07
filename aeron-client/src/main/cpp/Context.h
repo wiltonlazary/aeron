@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -150,7 +150,7 @@ inline void defaultErrorHandler(const std::exception& exception)
 
     try
     {
-        const SourcedException& sourcedException = dynamic_cast<const SourcedException&>(exception);
+        const auto& sourcedException = dynamic_cast<const SourcedException&>(exception);
         std::cerr << " : " << sourcedException.where();
     }
     catch (const std::bad_cast&)
@@ -232,7 +232,7 @@ public:
      *
      * @return path of the CnC file
      */
-    inline const std::string cncFileName()
+    inline std::string cncFileName()
     {
         return m_dirName + "/" + CncFileDescriptor::CNC_FILE;
     }

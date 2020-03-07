@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,7 +15,8 @@
  */
 package io.aeron;
 
-import io.aeron.exceptions.*;
+import io.aeron.exceptions.ConcurrentConcludeException;
+import io.aeron.exceptions.DriverTimeoutException;
 import org.agrona.DirectBuffer;
 import org.agrona.IoUtil;
 import org.agrona.SystemUtil;
@@ -31,12 +32,15 @@ import java.nio.ByteBuffer;
 import java.nio.MappedByteBuffer;
 import java.text.SimpleDateFormat;
 import java.util.Date;
+import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
 import java.util.function.Consumer;
 
 import static io.aeron.Aeron.sleep;
-import static io.aeron.CncFileDescriptor.*;
+import static io.aeron.CncFileDescriptor.cncVersionOffset;
 import static java.lang.Long.getLong;
 import static java.lang.System.getProperty;
 import static java.util.concurrent.atomic.AtomicIntegerFieldUpdater.newUpdater;
@@ -79,6 +83,12 @@ public class CommonContext implements Cloneable
      * Property name for driver timeout after which the driver is considered inactive.
      */
     public static final String DRIVER_TIMEOUT_PROP_NAME = "aeron.driver.timeout";
+
+    /**
+     * Property name for the timeout to use in debug mode. By default this is not set and the configured
+     * timeouts will be used. Setting this value adjusts timeouts to make debugging easier.
+     */
+    public static final String DEBUG_TIMEOUT_PROP_NAME = "aeron.debug.timeout";
 
     /**
      * Default timeout in which the driver is expected to respond or heartbeat.
@@ -243,6 +253,7 @@ public class CommonContext implements Cloneable
      * from the perspective of message reception. This can inform loss handling and similar semantics.
      * <p>
      * When configuring an subscription for an MDC publication then should be added as this is effective multicast.
+     *
      * @see CommonContext#MDC_CONTROL_MODE_PARAM_NAME
      * @see CommonContext#MDC_CONTROL_PARAM_NAME
      */
@@ -259,6 +270,17 @@ public class CommonContext implements Cloneable
      * Options include {@code static} and {@code cubic}.
      */
     public static final String CONGESTION_CONTROL_PARAM_NAME = "cc";
+
+    /**
+     * Parameter name for Publication URI param to indicate the flow control strategy to be used.
+     * Options include {@code min}, {@code max}, and {@code pref}.
+     */
+    public static final String FLOW_CONTROL_PARAM_NAME = "fc";
+
+    /**
+     * Parameter name for Subscription URI param to indicate the receiver tag to be sent in SMs.
+     */
+    public static final String GROUP_TAG_PARAM_NAME = "gtag";
 
     /**
      * Using an integer because there is no support for boolean. 1 is concluded, 0 is not concluded.
@@ -278,10 +300,9 @@ public class CommonContext implements Cloneable
     {
         String baseDirName = null;
 
-        if (SystemUtil.osName().contains("linux"))
+        if (SystemUtil.isLinux())
         {
             final File devShmDir = new File("/dev/shm");
-
             if (devShmDir.exists())
             {
                 baseDirName = "/dev/shm/aeron";
@@ -489,7 +510,48 @@ public class CommonContext implements Cloneable
      */
     public long driverTimeoutMs()
     {
-        return driverTimeoutMs;
+        return checkDebugTimeout(driverTimeoutMs, TimeUnit.MILLISECONDS);
+    }
+
+    private static final Map<String, Boolean> DEBUG_FIELDS_SEEN = new ConcurrentHashMap<>();
+    /**
+     * Override the supplied timeout with the debug value if it has been set and we are in debug mode.
+     *
+     * @param timeout  The timeout value currently in use.
+     * @param timeUnit The units of the timeout value. Debug timeout is specified in ns, so will be converted to this
+     *                 unit.
+     * @return The debug timeout if specified and we are being debugged or the supplied value if not. Will be in
+     * timeUnit units.
+     */
+    public static long checkDebugTimeout(final long timeout, final TimeUnit timeUnit)
+    {
+        final String debugTimeoutString = getProperty(DEBUG_TIMEOUT_PROP_NAME);
+        if (null == debugTimeoutString || !SystemUtil.isDebuggerAttached())
+        {
+            return timeout;
+        }
+
+        try
+        {
+            final long debugTimeoutNs = SystemUtil.parseDuration(DEBUG_TIMEOUT_PROP_NAME, debugTimeoutString);
+            final long debugTimeout = timeUnit.convert(debugTimeoutNs, TimeUnit.NANOSECONDS);
+            final StackTraceElement[] stackTrace = Thread.currentThread().getStackTrace();
+            final String methodName = stackTrace[2].getMethodName();
+            final String className = stackTrace[2].getClassName();
+            final String debugFieldName = className + "." + methodName;
+            if (null == DEBUG_FIELDS_SEEN.putIfAbsent(debugFieldName, true))
+            {
+                final String message = "Using debug timeout [" + debugTimeout + "] for " + debugFieldName +
+                    " replacing [" + timeout + "]";
+                System.out.println(message);
+            }
+
+            return debugTimeout;
+        }
+        catch (final NumberFormatException ignore)
+        {
+            return timeout;
+        }
     }
 
     /**
@@ -622,7 +684,7 @@ public class CommonContext implements Cloneable
     /**
      * Request a driver to run its termination hook.
      *
-     * @param directory for the driver.
+     * @param directory   for the driver.
      * @param tokenBuffer containing the optional token for the request.
      * @param tokenOffset within the tokenBuffer at which the token begins.
      * @param tokenLength of the token in the tokenBuffer.
@@ -701,21 +763,7 @@ public class CommonContext implements Cloneable
 
         CncFileDescriptor.checkVersion(cncVersion);
 
-        int distinctErrorCount = 0;
-        final AtomicBuffer buffer = CncFileDescriptor.createErrorLogBuffer(cncByteBuffer, cncMetaDataBuffer);
-        if (ErrorLogReader.hasErrors(buffer))
-        {
-            final SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSSZ");
-            final ErrorConsumer errorConsumer = (count, firstTimestamp, lastTimestamp, ex) ->
-                formatError(out, dateFormat, count, firstTimestamp, lastTimestamp, ex);
-
-            distinctErrorCount = ErrorLogReader.read(buffer, errorConsumer);
-        }
-
-        out.println();
-        out.println(distinctErrorCount + " distinct errors observed.");
-
-        return distinctErrorCount;
+        return printErrorLog(CncFileDescriptor.createErrorLogBuffer(cncByteBuffer, cncMetaDataBuffer), out);
     }
 
     /**
@@ -725,19 +773,32 @@ public class CommonContext implements Cloneable
     {
     }
 
-    public static void formatError(
-        final PrintStream out,
-        final SimpleDateFormat dateFormat,
-        final int observationCount,
-        final long firstObservationTimestamp,
-        final long lastObservationTimestamp,
-        final String encodedException)
+    /**
+     * Print the contents of an error log to a {@link PrintStream} in human readable format.
+     *
+     * @param errorBuffer to read errors from.
+     * @param out         print the errors to.
+     * @return number of distinct errors observed.
+     */
+    public static int printErrorLog(final AtomicBuffer errorBuffer, final PrintStream out)
     {
-        out.format(
-            "***%n%d observations from %s to %s for:%n %s%n",
-            observationCount,
-            dateFormat.format(new Date(firstObservationTimestamp)),
-            dateFormat.format(new Date(lastObservationTimestamp)),
-            encodedException);
+        int distinctErrorCount = 0;
+
+        if (errorBuffer.capacity() > 0 && ErrorLogReader.hasErrors(errorBuffer))
+        {
+            final SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSSZ");
+            final ErrorConsumer errorConsumer = (count, firstTimestamp, lastTimestamp, ex) ->
+                out.format(
+                "***%n%d observations from %s to %s for:%n %s%n",
+                count,
+                dateFormat.format(new Date(firstTimestamp)),
+                dateFormat.format(new Date(lastTimestamp)),
+                ex);
+
+            distinctErrorCount = ErrorLogReader.read(errorBuffer, errorConsumer);
+            out.format("%n%d distinct errors observed.%n", distinctErrorCount);
+        }
+
+        return distinctErrorCount;
     }
 }

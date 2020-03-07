@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,47 +16,49 @@
 package io.aeron.cluster;
 
 import io.aeron.cluster.service.Cluster;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
-import static org.hamcrest.core.Is.is;
-import static org.junit.Assert.assertThat;
-import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class AppointedLeaderTest
 {
     private static final int LEADER_ID = 1;
 
-    @Test(timeout = 10_000L)
-    public void shouldConnectAndSendKeepAlive() throws Exception
+    @Test
+    @Timeout(20)
+    public void shouldConnectAndSendKeepAlive()
     {
         try (TestCluster cluster = TestCluster.startThreeNodeStaticCluster(LEADER_ID))
         {
             final TestNode leader = cluster.awaitLeader();
-            assertThat(leader.index(), is(LEADER_ID));
-            assertThat(leader.role(), is(Cluster.Role.LEADER));
+            assertEquals(LEADER_ID, leader.index());
+            assertEquals(Cluster.Role.LEADER, leader.role());
 
             cluster.connectClient();
             assertTrue(cluster.client().sendKeepAlive());
         }
     }
 
-    @Test(timeout = 10_000L)
-    public void shouldEchoMessagesViaService() throws Exception
+    @Test
+    @Timeout(20)
+    public void shouldEchoMessagesViaService()
     {
         try (TestCluster cluster = TestCluster.startThreeNodeStaticCluster(LEADER_ID))
         {
             final TestNode leader = cluster.awaitLeader();
-            assertThat(leader.index(), is(LEADER_ID));
-            assertThat(leader.role(), is(Cluster.Role.LEADER));
+            assertEquals(LEADER_ID, leader.index());
+            assertEquals(Cluster.Role.LEADER, leader.role());
 
             cluster.connectClient();
 
             final int messageCount = 10;
             cluster.sendMessages(messageCount);
-            cluster.awaitResponses(messageCount);
-            cluster.awaitMessageCountForService(leader, messageCount);
-            cluster.awaitMessageCountForService(cluster.node(0), messageCount);
-            cluster.awaitMessageCountForService(cluster.node(2), messageCount);
+            cluster.awaitResponseMessageCount(messageCount);
+            cluster.awaitServiceMessageCount(leader, messageCount);
+            cluster.awaitServiceMessageCount(cluster.node(0), messageCount);
+            cluster.awaitServiceMessageCount(cluster.node(2), messageCount);
         }
     }
 }

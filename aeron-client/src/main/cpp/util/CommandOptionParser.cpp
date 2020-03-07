@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -57,9 +57,9 @@ void CommandOptionParser::parse(int argc, char** argv)
         }
     }
 
-    for (auto opt = m_options.begin(); opt != m_options.end(); ++opt)
+    for (auto & option : m_options)
     {
-        opt->second.validate();
+        option.second.validate();
     }
 }
 
@@ -83,11 +83,11 @@ CommandOption& CommandOptionParser::getOption(char optionChar)
 
 void CommandOptionParser::displayOptionsHelp(std::ostream& out) const
 {
-    for (auto i = m_options.begin(); i != m_options.end(); ++i)
+    for (const auto & opt : m_options)
     {
-        if (i->first != CommandOption::UNNAMED)
+        if (opt.first != CommandOption::UNNAMED)
         {
-            out << "    -" << i->first << " " << i->second.getHelpText() << std::endl;
+            out << "    -" << opt.first << " " << opt.second.getHelpText() << std::endl;
         }
     }
 }

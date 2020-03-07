@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,7 +28,7 @@ int aeron_counters_manager_init(
     size_t metadata_length,
     uint8_t *values_buffer,
     size_t values_length,
-    aeron_counters_manager_clock_func_t clock_func,
+    aeron_clock_func_t clock_func,
     int64_t free_to_reuse_timeout_ms)
 {
     int result = -1;
@@ -92,11 +92,25 @@ int32_t aeron_counters_manager_allocate(
         memcpy(metadata->key, key, (size_t)fmin((double)sizeof(metadata->key), (double)key_length));
     }
 
-    memcpy(metadata->label, label, (size_t)fmin((double)sizeof(metadata->label), (double)label_length));
-    metadata->label_length = (int32_t)label_length;
+    size_t length = (size_t)fmin((double)sizeof(metadata->label), (double)label_length);
+
+    memcpy(metadata->label, label, length);
+    metadata->label_length = (int32_t)length;
     AERON_PUT_ORDERED(metadata->state, AERON_COUNTER_RECORD_ALLOCATED);
 
     return counter_id;
+}
+
+void aeron_counters_manager_update_label(
+    volatile aeron_counters_manager_t *manager, int32_t counter_id, size_t label_length, const char *label)
+{
+    aeron_counter_metadata_descriptor_t *metadata = (aeron_counter_metadata_descriptor_t *)
+        (manager->metadata + (counter_id * AERON_COUNTERS_MANAGER_METADATA_LENGTH));
+
+    size_t length = (size_t)fmin((double)sizeof(metadata->label), (double)label_length);
+
+    memcpy(metadata->label, label, length);
+    AERON_PUT_ORDERED(metadata->label_length, (int32_t)length);
 }
 
 void aeron_counters_manager_remove_free_list_index(volatile aeron_counters_manager_t *manager, int index)
@@ -181,13 +195,17 @@ void aeron_counters_reader_foreach(
         }
         else if (AERON_COUNTER_RECORD_ALLOCATED == record_state)
         {
+            int32_t label_length;
+
+            AERON_GET_VOLATILE(label_length, record->label_length);
+
             func(
                 id,
                 record->type_id,
                 record->key,
                 sizeof(record->key),
                 record->label,
-                (size_t)record->label_length, clientd);
+                (size_t)label_length, clientd);
         }
 
         id++;

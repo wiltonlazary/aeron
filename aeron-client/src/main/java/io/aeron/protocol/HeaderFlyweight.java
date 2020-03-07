@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -72,6 +72,10 @@ public class HeaderFlyweight extends UnsafeBuffer
      * header type RTT Measurement
      */
     public static final int HDR_TYPE_RTTM = 0x06;
+    /**
+     * header type RESOLUTION
+     */
+    public static final int HDR_TYPE_RES = 0x07;
 
     /**
      * header type EXT

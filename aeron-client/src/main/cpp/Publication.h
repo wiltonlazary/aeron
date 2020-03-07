@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,15 +17,18 @@
 #ifndef AERON_PUBLICATION_H
 #define AERON_PUBLICATION_H
 
-#include <iostream>
 #include <array>
 #include <atomic>
+#include <memory>
+#include <string>
+
 #include <concurrent/AtomicBuffer.h>
 #include <concurrent/logbuffer/BufferClaim.h>
 #include <concurrent/logbuffer/TermAppender.h>
 #include <concurrent/status/UnsafeBufferPosition.h>
 #include "concurrent/status/StatusIndicatorReader.h"
 #include "LogBuffers.h"
+#include "util/Export.h"
 
 namespace aeron {
 
@@ -53,7 +56,7 @@ static const std::int64_t MAX_POSITION_EXCEEDED = -5;
  * @see Aeron#addPublication
  * @see Aeron#findPublication
  */
-class Publication
+class CLIENT_EXPORT Publication
 {
 public:
 

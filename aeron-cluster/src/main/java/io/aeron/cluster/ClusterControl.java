@@ -1,5 +1,5 @@
 /*
- *  Copyright 2014-2019 Real Logic Ltd.
+ *  Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -111,13 +111,19 @@ public class ClusterControl
         /**
          * Toggle the control counter to trigger the requested {@link ToggleState}.
          * <p>
-         * This action is thread safe and will only succeed if the toggle is in the {@link ToggleState#NEUTRAL} state.
+         * This action is thread safe and will succeed if the toggle is in the {@link ToggleState#NEUTRAL} state,
+         * or if toggle is {@link ToggleState#SUSPEND} and requested state is {@link ToggleState#RESUME}.
          *
          * @param controlToggle to change to the trigger state.
          * @return true if the counter toggles or false if it is in a state other than {@link ToggleState#NEUTRAL}.
          */
         public final boolean toggle(final AtomicCounter controlToggle)
         {
+            if (code() == RESUME.code() && controlToggle.get() == SUSPEND.code())
+            {
+                return controlToggle.compareAndSet(SUSPEND.code(), RESUME.code());
+            }
+
             return controlToggle.compareAndSet(NEUTRAL.code(), code());
         }
 

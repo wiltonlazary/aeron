@@ -1,5 +1,5 @@
 /*
- *  Copyright 2014-2019 Real Logic Ltd.
+ *  Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,8 +23,6 @@ import io.aeron.cluster.codecs.*;
 import io.aeron.logbuffer.ControlledFragmentHandler;
 import io.aeron.logbuffer.Header;
 import org.agrona.DirectBuffer;
-
-import static io.aeron.cluster.client.AeronCluster.SESSION_HEADER_LENGTH;
 
 final class LogAdapter implements ControlledFragmentHandler, AutoCloseable
 {
@@ -73,11 +71,11 @@ final class LogAdapter implements ControlledFragmentHandler, AutoCloseable
         return image;
     }
 
-    void removeDestination(final String destination)
+    void asyncRemoveDestination(final String destination)
     {
         if (null != image)
         {
-            image.subscription().removeDestination(destination);
+            image.subscription().asyncRemoveDestination(destination);
         }
     }
 
@@ -103,11 +101,7 @@ final class LogAdapter implements ControlledFragmentHandler, AutoCloseable
 
             consensusModuleAgent.onReplaySessionMessage(
                 sessionHeaderDecoder.clusterSessionId(),
-                sessionHeaderDecoder.timestamp(),
-                buffer,
-                offset + SESSION_HEADER_LENGTH,
-                length - SESSION_HEADER_LENGTH,
-                header);
+                sessionHeaderDecoder.timestamp());
 
             return Action.CONTINUE;
         }
@@ -122,8 +116,7 @@ final class LogAdapter implements ControlledFragmentHandler, AutoCloseable
                     messageHeaderDecoder.version());
 
                 consensusModuleAgent.onReplayTimerEvent(
-                    timerEventDecoder.correlationId(),
-                    timerEventDecoder.timestamp());
+                    timerEventDecoder.correlationId());
                 break;
 
             case SessionOpenEventDecoder.TEMPLATE_ID:
@@ -151,7 +144,6 @@ final class LogAdapter implements ControlledFragmentHandler, AutoCloseable
 
                 consensusModuleAgent.onReplaySessionClose(
                     sessionCloseEventDecoder.clusterSessionId(),
-                    sessionCloseEventDecoder.timestamp(),
                     sessionCloseEventDecoder.closeReason());
                 break;
 
@@ -165,10 +157,8 @@ final class LogAdapter implements ControlledFragmentHandler, AutoCloseable
                 consensusModuleAgent.onReplayNewLeadershipTermEvent(
                     newLeadershipTermEventDecoder.leadershipTermId(),
                     newLeadershipTermEventDecoder.logPosition(),
-                    newLeadershipTermEventDecoder.timestamp(),
                     newLeadershipTermEventDecoder.termBaseLogPosition(),
                     newLeadershipTermEventDecoder.leaderMemberId(),
-                    newLeadershipTermEventDecoder.logSessionId(),
                     ClusterClock.map(newLeadershipTermEventDecoder.timeUnit()),
                     newLeadershipTermEventDecoder.appVersion());
                 break;
@@ -180,12 +170,10 @@ final class LogAdapter implements ControlledFragmentHandler, AutoCloseable
                     messageHeaderDecoder.blockLength(),
                     messageHeaderDecoder.version());
 
-                consensusModuleAgent.onMembershipChange(
+                consensusModuleAgent.onReplayMembershipChange(
                     membershipChangeEventDecoder.leadershipTermId(),
                     membershipChangeEventDecoder.logPosition(),
-                    membershipChangeEventDecoder.timestamp(),
                     membershipChangeEventDecoder.leaderMemberId(),
-                    membershipChangeEventDecoder.clusterSize(),
                     membershipChangeEventDecoder.changeType(),
                     membershipChangeEventDecoder.memberId(),
                     membershipChangeEventDecoder.clusterMembers());
@@ -201,7 +189,6 @@ final class LogAdapter implements ControlledFragmentHandler, AutoCloseable
                 consensusModuleAgent.onReplayClusterAction(
                     clusterActionRequestDecoder.leadershipTermId(),
                     clusterActionRequestDecoder.logPosition(),
-                    clusterActionRequestDecoder.timestamp(),
                     clusterActionRequestDecoder.action());
                 return Action.BREAK;
         }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -586,7 +586,7 @@ public class LogBufferDescriptor
     public static int computeTermIdFromPosition(
         final long position, final int positionBitsToShift, final int initialTermId)
     {
-        return ((int)(position >>> positionBitsToShift) + initialTermId);
+        return (int)(position >>> positionBitsToShift) + initialTermId;
     }
 
     /**

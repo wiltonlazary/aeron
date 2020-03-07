@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -54,16 +54,25 @@ int aeron_driver_sender_init(
             (void **)&sender->recv_buffers.buffers[i],
             &offset,
             context->mtu_length,
-            AERON_CACHE_LINE_LENGTH * 2) < 0)
+            AERON_CACHE_LINE_LENGTH) < 0)
         {
-            int errcode = errno;
-
-            aeron_set_err(errcode, "%s:%d: %s", __FILE__, __LINE__, strerror(errcode));
+            aeron_set_err_from_last_err_code("%s:%d", __FILE__, __LINE__);
             return -1;
         }
 
         sender->recv_buffers.iov[i].iov_base = sender->recv_buffers.buffers[i] + offset;
-        sender->recv_buffers.iov[i].iov_len = context->mtu_length;
+        sender->recv_buffers.iov[i].iov_len = (uint32_t)context->mtu_length;
+    }
+
+    if (aeron_udp_channel_data_paths_init(
+        &sender->data_paths,
+        context->udp_channel_outgoing_interceptor_bindings,
+        context->udp_channel_incoming_interceptor_bindings,
+        context->udp_channel_transport_bindings,
+        aeron_send_channel_endpoint_dispatch,
+        AERON_UDP_CHANNEL_TRANSPORT_AFFINITY_SENDER) < 0)
+    {
+        return -1;
     }
 
     sender->context = context;
@@ -115,17 +124,16 @@ int aeron_driver_sender_do_work(void *clientd)
     aeron_driver_sender_t *sender = (aeron_driver_sender_t *)clientd;
     int work_count = 0;
 
-    work_count +=
-        aeron_spsc_concurrent_array_queue_drain(
-            sender->sender_proxy.command_queue, aeron_driver_sender_on_command, sender, 10);
+    work_count += (int)aeron_spsc_concurrent_array_queue_drain(
+        sender->sender_proxy.command_queue, aeron_driver_sender_on_command, sender, 10);
 
-    int64_t now_ns = sender->context->nano_clock();
+    int64_t now_ns = aeron_clock_cached_nano_time(sender->context->cached_clock);
     int64_t bytes_received = 0;
     int bytes_sent = aeron_driver_sender_do_send(sender, now_ns);
     int poll_result;
 
     if (0 == bytes_sent ||
-        ++sender->duty_cycle_counter == sender->duty_cycle_ratio ||
+        ++sender->duty_cycle_counter >= sender->duty_cycle_ratio ||
         now_ns > sender->control_poll_timeout_ns)
     {
         struct mmsghdr mmsghdr[AERON_DRIVER_SENDER_NUM_RECV_BUFFERS];
@@ -147,7 +155,7 @@ int aeron_driver_sender_do_work(void *clientd)
             mmsghdr,
             AERON_DRIVER_SENDER_NUM_RECV_BUFFERS,
             &bytes_received,
-            aeron_send_channel_endpoint_dispatch,
+            sender->data_paths.recv_func,
             sender->recvmmsg_func,
             sender);
 
@@ -173,6 +181,8 @@ void aeron_driver_sender_on_close(void *clientd)
     {
         aeron_free(sender->recv_buffers.buffers[i]);
     }
+
+    aeron_udp_channel_data_paths_delete(&sender->data_paths);
 
     sender->context->udp_channel_transport_bindings->poller_close_func(&sender->poller);
     aeron_free(sender->network_publications.array);

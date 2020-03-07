@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@
 #include <functional>
 
 #include <gtest/gtest.h>
+#include <gmock/gmock.h>
 
 extern "C"
 {
@@ -93,7 +94,7 @@ TEST_F(UriTest, shouldParseWithSingleParamUdpEndpoint)
 {
     EXPECT_EQ(AERON_URI_PARSE("aeron:udp?endpoint=224.10.9.8", &m_uri), 0);
     ASSERT_EQ(m_uri.type, AERON_URI_UDP);
-    EXPECT_EQ(std::string(m_uri.params.udp.endpoint_key), "224.10.9.8");
+    EXPECT_EQ(std::string(m_uri.params.udp.endpoint), "224.10.9.8");
     EXPECT_EQ(m_uri.params.udp.additional_params.length, 0u);
 }
 
@@ -110,7 +111,7 @@ TEST_F(UriTest, shouldParseWithSingleParamUdpValueWithEmbeddedEquals)
 {
     EXPECT_EQ(AERON_URI_PARSE("aeron:udp?endpoint=224.1=0.9.8", &m_uri), 0);
     ASSERT_EQ(m_uri.type, AERON_URI_UDP);
-    EXPECT_EQ(std::string(m_uri.params.udp.endpoint_key), "224.1=0.9.8");
+    EXPECT_EQ(std::string(m_uri.params.udp.endpoint), "224.1=0.9.8");
     EXPECT_EQ(m_uri.params.udp.additional_params.length, 0u);
 }
 
@@ -118,9 +119,9 @@ TEST_F(UriTest, shouldParseWithMultipleParams)
 {
     EXPECT_EQ(AERON_URI_PARSE("aeron:udp?endpoint=224.10.9.8|port=4567|interface=192.168.0.3|ttl=16", &m_uri), 0);
     ASSERT_EQ(m_uri.type, AERON_URI_UDP);
-    EXPECT_EQ(std::string(m_uri.params.udp.endpoint_key), "224.10.9.8");
-    EXPECT_EQ(std::string(m_uri.params.udp.interface_key), "192.168.0.3");
-    EXPECT_EQ(std::string(m_uri.params.udp.ttl_key), "16");
+    EXPECT_EQ(std::string(m_uri.params.udp.endpoint), "224.10.9.8");
+    EXPECT_EQ(std::string(m_uri.params.udp.bind_interface), "192.168.0.3");
+    EXPECT_EQ(std::string(m_uri.params.udp.ttl), "16");
     EXPECT_EQ(m_uri.params.udp.additional_params.length, 1u);
     EXPECT_EQ(std::string(m_uri.params.udp.additional_params.array[0].key), "port");
     EXPECT_EQ(std::string(m_uri.params.udp.additional_params.array[0].value), "4567");
@@ -245,7 +246,7 @@ TEST_F(UriTest, shouldParsePublicationParamsForReplayUdp)
 
     EXPECT_EQ(AERON_URI_PARSE("aeron:udp?endpoint=224.10.9.8|init-term-id=120|term-id=127|term-offset=64", &m_uri), 0);
     EXPECT_EQ(aeron_uri_publication_params(&m_uri, &params, &m_conductor, true), 0) << aeron_errmsg();
-    EXPECT_EQ(params.is_replay, true);
+    EXPECT_EQ(params.has_position, true);
     EXPECT_EQ(params.initial_term_id, 120l);
     EXPECT_EQ(params.term_id, 127l);
     EXPECT_EQ(params.term_offset, 64u);
@@ -257,7 +258,7 @@ TEST_F(UriTest, shouldParsePublicationParamsForReplayIpc)
 
     EXPECT_EQ(AERON_URI_PARSE("aeron:ipc?init-term-id=250|term-id=257|term-offset=128", &m_uri), 0);
     EXPECT_EQ(aeron_uri_publication_params(&m_uri, &params, &m_conductor, true), 0) << aeron_errmsg();
-    EXPECT_EQ(params.is_replay, true);
+    EXPECT_EQ(params.has_position, true);
     EXPECT_EQ(params.initial_term_id, 250l);
     EXPECT_EQ(params.term_id, 257l);
     EXPECT_EQ(params.term_offset, 128u);
@@ -290,6 +291,42 @@ TEST_F(UriTest, shouldParsePublicationParamsForReplayIpcTermOffsetBeyondTermLeng
     EXPECT_EQ(aeron_uri_publication_params(&m_uri, &params, &m_conductor, true), -1);
 }
 
+TEST_F(UriTest, shouldErrorParsingTooLargeTermIdRange)
+{
+    aeron_uri_publication_params_t params;
+
+    EXPECT_EQ(AERON_URI_PARSE(
+        "aeron:ipc?term-length=65536|init-term-id=-2147483648|term-id=0|term-offset=0", &m_uri), 0);
+    EXPECT_EQ(aeron_uri_publication_params(&m_uri, &params, &m_conductor, true), -1);
+    EXPECT_THAT(std::string(aeron_errmsg()), ::testing::StartsWith("Param difference greater than 2^31 - 1"));
+}
+
+TEST_F(UriTest, shouldParsePublicationSessionId)
+{
+    aeron_uri_publication_params_t params;
+
+    EXPECT_EQ(AERON_URI_PARSE("aeron:udp?endpoint=224.10.9.8|session-id=1001", &m_uri), 0);
+    EXPECT_EQ(aeron_uri_publication_params(&m_uri, &params, &m_conductor, false), 0);
+    EXPECT_EQ(params.has_session_id, true);
+    EXPECT_EQ(params.session_id, 1001);
+}
+
+TEST_F(UriTest, shouldErrorParsingNonNumericSessionId)
+{
+    aeron_uri_publication_params_t params;
+
+    EXPECT_EQ(AERON_URI_PARSE("aeron:udp?endpoint=224.10.9.8|session-id=foobar", &m_uri), 0);
+    EXPECT_EQ(aeron_uri_publication_params(&m_uri, &params, &m_conductor, false), -1);
+}
+
+TEST_F(UriTest, shouldErrorParsingOutOfRangeSessionId)
+{
+    aeron_uri_publication_params_t params;
+
+    EXPECT_EQ(AERON_URI_PARSE("aeron:udp?endpoint=224.10.9.8|session-id=2147483648", &m_uri), 0);
+    EXPECT_EQ(aeron_uri_publication_params(&m_uri, &params, &m_conductor, false), -1);
+}
+
 TEST_F(UriTest, shouldParseSubscriptionParamReliable)
 {
     aeron_uri_subscription_params_t params;
@@ -306,6 +343,17 @@ TEST_F(UriTest, shouldParseSubscriptionParamReliableDefault)
     EXPECT_EQ(AERON_URI_PARSE("aeron:udp?endpoint=224.10.9.8", &m_uri), 0);
     EXPECT_EQ(aeron_uri_subscription_params(&m_uri, &params, &m_conductor), 0);
     EXPECT_EQ(params.is_reliable, true);
+}
+
+
+TEST_F(UriTest, shouldParseSubscriptionSessionId)
+{
+    aeron_uri_subscription_params_t params;
+
+    EXPECT_EQ(AERON_URI_PARSE("aeron:udp?endpoint=224.10.9.8|session-id=1001", &m_uri), 0);
+    EXPECT_EQ(aeron_uri_subscription_params(&m_uri, &params, &m_conductor), 0);
+    EXPECT_EQ(params.has_session_id, true);
+    EXPECT_EQ(params.session_id, 1001);
 }
 
 class UriResolverTest : public testing::Test
@@ -439,16 +487,16 @@ TEST_F(UriResolverTest, shouldResolveLocalhost)
 TEST_F(UriResolverTest, shouldNotResolveInvalidPort)
 {
     EXPECT_EQ(aeron_host_and_port_parse_and_resolve("192.168.1.20:aa", &m_addr), -1);
-    
+
     // Regex is ? for port so it's not mandatory
     // EXPECT_EQ(aeron_host_and_port_parse_and_resolve("192.168.1.20", &m_addr), -1);
 
     EXPECT_EQ(aeron_host_and_port_parse_and_resolve("192.168.1.20:", &m_addr), -1);
     EXPECT_EQ(aeron_host_and_port_parse_and_resolve("[::1]:aa", &m_addr), -1);
-  
+
     // Regex is ? for port so it's not mandatory
     // EXPECT_EQ(aeron_host_and_port_parse_and_resolve("[::1]", &m_addr), -1);
-   
+
     EXPECT_EQ(aeron_host_and_port_parse_and_resolve("[::1]:", &m_addr), -1);
 }
 #endif

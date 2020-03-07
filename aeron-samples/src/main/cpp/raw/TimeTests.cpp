@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -51,7 +51,7 @@ int main(int argc, char** argv)
     cout << std::chrono::duration<long, std::nano>(diff).count() << " ns\n";
 
     start = chrono::steady_clock::now();
-    chrono::high_resolution_clock::now();
+    static_cast<void>(chrono::high_resolution_clock::now());
     end = chrono::steady_clock::now();
     diff = end - start;
 
@@ -59,7 +59,7 @@ int main(int argc, char** argv)
     cout << std::chrono::duration<long, std::nano>(diff).count() << " ns\n";
 
     start = chrono::steady_clock::now();
-    chrono::steady_clock::now();
+    static_cast<void>(chrono::steady_clock::now());
     end = chrono::steady_clock::now();
     diff = end - start;
 
@@ -67,7 +67,7 @@ int main(int argc, char** argv)
     cout << std::chrono::duration<long, std::nano>(diff).count() << " ns\n";
 
     start = chrono::steady_clock::now();
-    chrono::system_clock::now();
+    static_cast<void>(chrono::system_clock::now());
     end = chrono::steady_clock::now();
     diff = end - start;
 

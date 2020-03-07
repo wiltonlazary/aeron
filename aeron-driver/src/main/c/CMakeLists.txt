@@ -1,4 +1,4 @@
-# Copyright 2014-2019 Real Logic Ltd.
+# Copyright 2014-2020 Real Logic Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,43 +16,44 @@ include(CheckSymbolExists)
 include(CheckIncludeFile)
 include(CheckTypeSize)
 
-if("${CMAKE_SYSTEM_NAME}" MATCHES "Linux")
+if ("${CMAKE_SYSTEM_NAME}" MATCHES "Linux")
     set(CMAKE_REQUIRED_DEFINITIONS "-D_GNU_SOURCE")
     add_definitions(-D_DEFAULT_SOURCE)
-endif()
+endif ()
 
-if(MSVC AND "${CMAKE_SYSTEM_NAME}" MATCHES "Windows")
+if (MSVC AND "${CMAKE_SYSTEM_NAME}" MATCHES "Windows")
     set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
     set(BUILD_SHARED_LIBS ON)
-endif()
+endif ()
 
 check_include_file("bsd/stdlib.h" BSDSTDLIB_H_EXISTS)
 check_include_file("uuid/uuid.h" UUID_H_EXISTS)
 find_library(LIBBSD_EXISTS NAMES bsd libbsd)
 find_library(LIBUUID_EXISTS NAMES uuid libuuid libuuid.dll)
 
-if(LIBBSD_EXISTS)
+if (LIBBSD_EXISTS)
     set(CMAKE_REQUIRED_LIBRARIES "${CMAKE_REQUIRED_LIBRARIES} -lbsd")
-endif()
+endif ()
 
-if(LIBUUID_EXISTS)
+if (LIBUUID_EXISTS)
     set(CMAKE_REQUIRED_LIBRARIES "${CMAKE_REQUIRED_LIBRARIES} -luuid")
-endif()
+endif ()
 
-if(NOT BSDSTDLIB_H_EXISTS)
+if (NOT BSDSTDLIB_H_EXISTS)
     check_symbol_exists(arc4random "stdlib.h" ARC4RANDOM_PROTOTYPE_EXISTS)
-else()
+else ()
     add_definitions(-DHAVE_BSDSTDLIB_H)
     check_symbol_exists(arc4random "bsd/stdlib.h" ARC4RANDOM_PROTOTYPE_EXISTS)
-endif()
+endif ()
 
-if(UUID_H_EXISTS)
+if (UUID_H_EXISTS)
     add_definitions(-DHAVE_UUID_H)
-endif()
+endif ()
 
-if(MSVC AND "${CMAKE_SYSTEM_NAME}" MATCHES "Windows")
-    set(AERON_LIB_WINSOCK_LIBS wsock32 ws2_32 Iphlpapi)	
-endif()
+if (MSVC AND "${CMAKE_SYSTEM_NAME}" MATCHES "Windows")
+    set(AERON_LIB_WINSOCK_LIBS wsock32 ws2_32 Iphlpapi)
+    set(WSAPOLL_PROTOTYPE_EXISTS True)
+endif ()
 
 check_symbol_exists(uuid_generate "uuid/uuid.h" UUID_GENERATE_PROTOTYPE_EXISTS)
 
@@ -67,41 +68,49 @@ check_symbol_exists(recvmmsg "sys/socket.h" RECVMMSG_PROTOTYPE_EXISTS)
 check_symbol_exists(sendmmsg "sys/socket.h" SENDMMSG_PROTOTYPE_EXISTS)
 check_symbol_exists(fallocate "fcntl.h" FALLOCATE_PROTOTYPE_EXISTS)
 
-if(ARC4RANDOM_PROTOTYPE_EXISTS)
+if (ARC4RANDOM_PROTOTYPE_EXISTS)
     add_definitions(-DHAVE_ARC4RANDOM)
-else()
+else ()
     message(WARNING "Could not find arc4random. If on Linux, is libbsd installed?")
-endif()
+endif ()
 
-if(UUID_GENERATE_PROTOTYPE_EXISTS)
+if (UUID_GENERATE_PROTOTYPE_EXISTS)
     add_definitions(-DHAVE_UUID_GENERATE)
-else()
+else ()
     message(WARNING "Could not find uuid_generate. If on Linux, is libuuid installed?")
-endif()
+endif ()
 
-if(POLL_PROTOTYPE_EXISTS)
+if (POLL_PROTOTYPE_EXISTS)
     add_definitions(-DHAVE_POLL)
-endif()
+endif ()
 
-if(EPOLL_PROTOTYPE_EXISTS)
+if (EPOLL_PROTOTYPE_EXISTS)
     add_definitions(-DHAVE_EPOLL)
-endif()
+endif ()
 
-if(STRUCT_MMSGHDR_TYPE_EXISTS)
+if (WSAPOLL_PROTOTYPE_EXISTS)
+    add_definitions(-DHAVE_WSAPOLL)
+endif ()
+
+if (NOT POLL_PROTOTYPE_EXISTS AND NOT EPOLL_PROTOTYPE_EXISTS AND NOT WSAPOLL_PROTOTYPE_EXISTS)
+    message(FATAL_ERROR "Unsupported configuration: neither POLL nor EPOLL nor WSAPoll found")
+endif ()
+
+if (STRUCT_MMSGHDR_TYPE_EXISTS)
     add_definitions(-DHAVE_STRUCT_MMSGHDR)
-endif()
+endif ()
 
-if(RECVMMSG_PROTOTYPE_EXISTS)
+if (RECVMMSG_PROTOTYPE_EXISTS)
     add_definitions(-DHAVE_RECVMMSG)
-endif()
+endif ()
 
-if(SENDMMSG_PROTOTYPE_EXISTS)
+if (SENDMMSG_PROTOTYPE_EXISTS)
     add_definitions(-DHAVE_SENDMMSG)
-endif()
+endif ()
 
-if(FALLOCATE_PROTOTYPE_EXISTS)
+if (FALLOCATE_PROTOTYPE_EXISTS)
     add_definitions(-DHAVE_FALLOCATE)
-endif()
+endif ()
 
 SET(SOURCE
     concurrent/aeron_spsc_rb.c
@@ -124,11 +133,13 @@ SET(SOURCE
     util/aeron_fileutil.c
     util/aeron_arrayutil.c
     util/aeron_error.c
+    util/aeron_math.c
     util/aeron_netutil.c
     util/aeron_dlopen.c
     util/aeron_parse_util.c
     util/aeron_properties_util.c
     util/aeron_http_util.c
+    util/aeron_clock.c
     aeron_driver_context.c
     aeron_alloc.c
     aeron_driver.c
@@ -160,16 +171,21 @@ SET(SOURCE
     media/aeron_receive_channel_endpoint.c
     media/aeron_udp_destination_tracker.c
     media/aeron_udp_channel_transport_bindings.c
+    media/aeron_udp_channel_transport_loss.c
+    protocol/aeron_udp_protocol.c
     uri/aeron_uri.c
     collections/aeron_int64_to_ptr_hash_map.c
     collections/aeron_str_to_ptr_hash_map.c
-    reports/aeron_loss_reporter.c)
+    collections/aeron_bit_set.c
+    reports/aeron_loss_reporter.c
+    agent/aeron_driver_agent.c)
 
 SET(HEADERS
     aeron_socket.h
     util/aeron_dlopen.h
     util/aeron_platform.h
     util/aeron_bitutil.h
+    util/aeron_math.h
     util/aeron_strutil.h
     util/aeron_fileutil.h
     util/aeron_arrayutil.h
@@ -178,6 +194,7 @@ SET(HEADERS
     util/aeron_parse_util.h
     util/aeron_properties_util.h
     util/aeron_http_util.h
+    util/aeron_clock.h
     concurrent/aeron_thread.h
     concurrent/aeron_atomic.h
     concurrent/aeron_atomic64_gcc_x86_64.h
@@ -231,73 +248,48 @@ SET(HEADERS
     media/aeron_receive_channel_endpoint.h
     media/aeron_udp_destination_tracker.h
     media/aeron_udp_channel_transport_bindings.h
+    media/aeron_udp_channel_transport_loss.h
     uri/aeron_uri.h
     collections/aeron_int64_to_ptr_hash_map.h
     collections/aeron_str_to_ptr_hash_map.h
-    reports/aeron_loss_reporter.h)
-
-set(AGENT_SOURCE
-    agent/aeron_driver_agent.c
-    concurrent/aeron_mpsc_rb.c
-    concurrent/aeron_atomic.c
-    concurrent/aeron_thread.c
-    concurrent/aeron_logbuffer_descriptor.c
-    util/aeron_fileutil.c
-    util/aeron_dlopen.c
-    util/aeron_error.c    
-    aeron_alloc.c
-    aeron_windows.c)
-
-set(AGENT_HEADERS
-    agent/aeron_driver_agent.h
-    concurrent/aeron_mpsc_rb.h
-    concurrent/aeron_thread.h
-    concurrent/aeron_logbuffer_descriptor.h
-    util/aeron_fileutil.h
-    util/aeron_error.h
-    util/aeron_dlopen.h
-    aeron_alloc.h
-    aeron_windows.h)
-
-add_library(aeron_driver_agent SHARED ${AGENT_SOURCE} ${AGENT_HEADERS})
-target_include_directories(aeron_driver_agent
-    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
-)
+    collections/aeron_bit_set.h
+    reports/aeron_loss_reporter.h
+    agent/aeron_driver_agent.h)
 
 add_library(aeron_driver SHARED ${SOURCE} ${HEADERS})
 target_include_directories(aeron_driver
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
-)
+    )
 
 add_library(aeron_driver_static STATIC ${SOURCE} ${HEADERS})
 target_include_directories(aeron_driver_static
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
-)
+    )
 
 add_executable(aeronmd aeronmd.c)
 target_include_directories(aeronmd
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
-)
+    )
 
 set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -DDISABLE_BOUNDS_CHECKS")
 
-if("${CMAKE_SYSTEM_NAME}" MATCHES "Linux")
-    if(LIBBSD_EXISTS)
+if ("${CMAKE_SYSTEM_NAME}" MATCHES "Linux")
+    if (LIBBSD_EXISTS)
         set(AERON_LIB_BSD_LIBS bsd)
-    endif()
+    endif ()
 
-    if(LIBUUID_EXISTS)
+    if (LIBUUID_EXISTS)
         set(AERON_LIB_UUID_LIBS uuid)
-    endif()
+    endif ()
 
     set(AERON_LIB_M_LIBS m)
-endif()
+endif ()
 
-if(CYGWIN)
-    if(LIBUUID_EXISTS)
+if (CYGWIN)
+    if (LIBUUID_EXISTS)
         set(AERON_LIB_UUID_LIBS uuid)
-    endif()
-endif()
+    endif ()
+endif ()
 
 target_link_libraries(
     aeron_driver
@@ -318,24 +310,15 @@ target_link_libraries(
     ${CMAKE_THREAD_LIBS_INIT}
     ${AERON_LIB_WINSOCK_LIBS})
 
-target_link_libraries(
-    aeron_driver_agent
-    ${CMAKE_DL_LIBS}
-    ${AERON_LIB_BSD_LIBS}
-    ${AERON_LIB_UUID_LIBS}
-    ${AERON_LIB_M_LIBS}
-    ${CMAKE_THREAD_LIBS_INIT}
-    ${AERON_LIB_WINSOCK_LIBS})
-	
 target_compile_definitions(aeron_driver PRIVATE -DAERON_DRIVER)
 target_compile_definitions(aeron_driver_static PRIVATE -DAERON_DRIVER)
 
 if (AERON_INSTALL_TARGETS)
     install(
-        TARGETS aeron_driver aeron_driver_agent aeron_driver_static
+        TARGETS aeron_driver aeron_driver_static
         RUNTIME DESTINATION lib
         LIBRARY DESTINATION lib
         ARCHIVE DESTINATION lib)
     install(TARGETS aeronmd DESTINATION bin)
-    install(DIRECTORY . DESTINATION  include/aeronmd FILES_MATCHING PATTERN "*.h")
-endif()
+    install(DIRECTORY . DESTINATION include/aeronmd FILES_MATCHING PATTERN "*.h")
+endif ()

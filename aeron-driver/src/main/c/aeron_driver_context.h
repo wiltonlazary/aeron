@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,8 @@
 #ifndef AERON_DRIVER_CONTEXT_H
 #define AERON_DRIVER_CONTEXT_H
 
+#include <concurrent/aeron_distinct_error_log.h>
+#include <media/aeron_udp_channel_transport_bindings.h>
 #include "aeron_driver_common.h"
 #include "aeronmd.h"
 #include "util/aeron_bitutil.h"
@@ -62,7 +64,7 @@ typedef aeron_rb_handler_t aeron_driver_conductor_to_driver_interceptor_func_t;
 typedef void (*aeron_driver_conductor_to_client_interceptor_func_t)(
     aeron_driver_conductor_t *conductor, int32_t msg_type_id, const void *message, size_t length);
 
-#define AERON_THREADING_MODE_IS_SHARED_OR_INVOKER(m) (AERON_THREADING_MODE_SHARED == m || AERON_THREADING_MODE_INVOKER)
+#define AERON_THREADING_MODE_IS_SHARED_OR_INVOKER(m) (AERON_THREADING_MODE_SHARED == m || AERON_THREADING_MODE_INVOKER == m)
 
 typedef struct aeron_driver_context_stct
 {
@@ -71,7 +73,7 @@ typedef struct aeron_driver_context_stct
     aeron_inferable_boolean_t receiver_group_consideration; /* aeron.receiver.group.consideration = INFER */
     bool dirs_delete_on_start;                              /* aeron.dir.delete.on.start = false */
     bool dirs_delete_on_shutdown;                           /* aeron.dir.delete.on.shutdown = false */
-    bool warn_if_dirs_exist;                                /* aeron.dir.warn.if.exists = true */
+    bool warn_if_dirs_exist;                                /* aeron.dir.warn.if.exists = false */
     bool term_buffer_sparse_file;                           /* aeron.term.buffer.sparse.file = false */
     bool perform_storage_checks;                            /* aeron.perform.storage.checks = true */
     bool spies_simulate_connection;                         /* aeron.spies.simulate.connection = false */
@@ -111,7 +113,23 @@ typedef struct aeron_driver_context_stct
     size_t loss_report_length;                              /* aeron.loss.report.buffer.length = 1MB */
     size_t file_page_size;                                  /* aeron.file.page.size = 4KB */
     size_t nak_multicast_group_size;                        /* aeron.nak.multicast.group.size = 10 */
+    int32_t publication_reserved_session_id_low;            /* aeron.publication.reserved.session.id.low = -1 */
+    int32_t publication_reserved_session_id_high;           /* aeron.publication.reserved.session.id.high = 10000 */
     uint8_t multicast_ttl;                                  /* aeron.socket.multicast.ttl = 0 */
+
+    struct                                                  /* aeron.receiver.receiver.tag = <unset> */
+    {
+        bool is_present;
+        int64_t value;
+    }
+    receiver_group_tag;
+    struct
+    {
+        int32_t group_min_size;                             /* aeron.flow.control.receiver.group.min.size = 0 */
+        uint64_t receiver_timeout_ns;                       /* aeron.flow.control.receiver.timeout = 2s */
+        int64_t group_tag;                                  /* aeron.flow.control.gtag = -1 */
+    }
+    flow_control;
 
     aeron_mapped_file_t cnc_map;
     aeron_mapped_file_t loss_report;
@@ -124,6 +142,7 @@ typedef struct aeron_driver_context_stct
 
     aeron_clock_func_t nano_clock;
     aeron_clock_func_t epoch_clock;
+    aeron_clock_cache_t* cached_clock;
 
     aeron_spsc_concurrent_array_queue_t sender_command_queue;
     aeron_spsc_concurrent_array_queue_t receiver_command_queue;
@@ -170,6 +189,9 @@ typedef struct aeron_driver_context_stct
     aeron_driver_sender_proxy_t *sender_proxy;
     aeron_driver_receiver_proxy_t *receiver_proxy;
 
+    aeron_counters_manager_t *counters_manager;
+    aeron_distinct_error_log_t *error_log;
+
     aeron_driver_conductor_to_driver_interceptor_func_t to_driver_interceptor_func;
     aeron_driver_conductor_to_client_interceptor_func_t to_client_interceptor_func;
 
@@ -180,8 +202,10 @@ typedef struct aeron_driver_context_stct
     void *termination_hook_state;
 
     aeron_udp_channel_transport_bindings_t *udp_channel_transport_bindings;
+    aeron_udp_channel_interceptor_bindings_t *udp_channel_outgoing_interceptor_bindings;
+    aeron_udp_channel_interceptor_bindings_t *udp_channel_incoming_interceptor_bindings;
 
-    int64_t receiver_id;
+    int64_t next_receiver_id;
 
     aeron_feedback_delay_generator_state_t unicast_delay_feedback_generator;
     aeron_feedback_delay_generator_state_t multicast_delay_feedback_generator;

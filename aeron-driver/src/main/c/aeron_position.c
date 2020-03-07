@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,7 +17,6 @@
 #include <stdio.h>
 #include <inttypes.h>
 #include <string.h>
-#include <stdlib.h>
 #include "aeron_position.h"
 #include "aeron_driver_context.h"
 
@@ -68,7 +67,7 @@ int32_t aeron_stream_counter_allocate(
             .registration_id = registration_id,
             .session_id = session_id,
             .stream_id = stream_id,
-            .channel_length = channel_length
+            .channel_length = (int32_t)channel_length
         };
 
     strncpy(layout.channel, channel, sizeof(layout.channel) - 1);
@@ -213,13 +212,29 @@ int32_t aeron_channel_endpoint_status_allocate(
     int label_length = snprintf(label, sizeof(label), "%s: %.*s", name, (int)channel_length, channel);
     aeron_channel_endpoint_status_key_layout_t layout =
         {
-            .channel_length = channel_length
+            .channel_length = (int32_t)channel_length
         };
 
     strncpy(layout.channel, channel, sizeof(layout.channel) - 1);
 
     return aeron_counters_manager_allocate(
         counters_manager, type_id, (const uint8_t *)&layout, sizeof(layout), label, (size_t)label_length);
+}
+
+void aeron_channel_endpoint_status_update_label(
+    aeron_counters_manager_t *counters_manager,
+    int32_t counter_id,
+    const char *name,
+    size_t channel_length,
+    const char *channel,
+    size_t additional_length,
+    const char *additional)
+{
+    char label[sizeof(((aeron_counter_metadata_descriptor_t *)0)->label)];
+    int label_length = snprintf(
+        label, sizeof(label), "%s: %.*s %.*s", name, (int)channel_length, channel, (int)additional_length, additional);
+
+    aeron_counters_manager_update_label(counters_manager, counter_id, (size_t)label_length, label);
 }
 
 int32_t aeron_counter_send_channel_status_allocate(

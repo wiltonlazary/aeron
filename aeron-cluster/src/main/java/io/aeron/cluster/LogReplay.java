@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,7 +17,6 @@ package io.aeron.cluster;
 
 import io.aeron.*;
 import io.aeron.archive.client.AeronArchive;
-import org.agrona.CloseHelper;
 
 class LogReplay implements AutoCloseable
 {
@@ -73,7 +72,10 @@ class LogReplay implements AutoCloseable
 
     public void close()
     {
-        CloseHelper.close(logSubscription);
+        if (null != logSubscription)
+        {
+            logSubscription.close();
+        }
     }
 
     int doWork(@SuppressWarnings("unused") final long nowMs)

@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,6 +15,7 @@
  */
 package io.aeron.driver;
 
+import io.aeron.driver.media.UdpChannel;
 import io.aeron.protocol.StatusMessageFlyweight;
 
 import java.net.InetSocketAddress;
@@ -29,12 +30,24 @@ import static io.aeron.logbuffer.LogBufferDescriptor.computePosition;
  */
 public class MaxMulticastFlowControl implements FlowControl
 {
-    private long lastPosition = 0;
+    /**
+     * URI param value to identify this {@link FlowControl} strategy.
+     */
+    public static final String FC_PARAM_VALUE = "max";
+
+    /**
+     * Singleton instance which can be used to avoid allocation.
+     */
+    public static final MaxMulticastFlowControl INSTANCE = new MaxMulticastFlowControl();
 
     /**
      * {@inheritDoc}
      */
-    public void initialize(final int initialTermId, final int termBufferLength)
+    public void initialize(
+        final MediaDriver.Context context,
+        final UdpChannel udpChannel,
+        final int initialTermId,
+        final int termBufferLength)
     {
     }
 
@@ -54,8 +67,6 @@ public class MaxMulticastFlowControl implements FlowControl
             flyweight.consumptionTermOffset(),
             positionBitsToShift,
             initialTermId);
-
-        lastPosition = Math.max(lastPosition, position);
 
         return Math.max(senderLimit, position + flyweight.receiverWindowLength());
     }

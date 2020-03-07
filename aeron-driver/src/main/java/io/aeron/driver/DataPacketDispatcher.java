@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -57,13 +57,13 @@ public class DataPacketDispatcher
 
     static class StreamInterest
     {
-        boolean isForAllSessions;
+        boolean isAllSessions;
         final Int2ObjectHashMap<SessionInterest> sessionInterestByIdMap = new Int2ObjectHashMap<>();
         final IntHashSet subscribedSessionIds = new IntHashSet();
 
-        StreamInterest(final boolean isForAllSessions)
+        StreamInterest(final boolean isAllSessions)
         {
-            this.isForAllSessions = isForAllSessions;
+            this.isAllSessions = isAllSessions;
         }
     }
 
@@ -85,16 +85,19 @@ public class DataPacketDispatcher
         {
             streamInterestByIdMap.put(streamId, new StreamInterest(true));
         }
-        else if (!streamInterest.isForAllSessions)
+        else if (!streamInterest.isAllSessions)
         {
-            streamInterest.isForAllSessions = true;
+            streamInterest.isAllSessions = true;
 
-            for (final int sessionId : streamInterest.sessionInterestByIdMap.keySet())
+            final Int2ObjectHashMap<SessionInterest>.ValueIterator iterator =
+                streamInterest.sessionInterestByIdMap.values().iterator();
+
+            while (iterator.hasNext())
             {
-                final SessionInterest sessionInterest = streamInterest.sessionInterestByIdMap.get(sessionId);
+                final SessionInterest sessionInterest = iterator.next();
                 if (NO_INTEREST == sessionInterest.state)
                 {
-                    streamInterest.sessionInterestByIdMap.remove(sessionId);
+                    iterator.remove();
                 }
             }
         }
@@ -103,7 +106,6 @@ public class DataPacketDispatcher
     public void addSubscription(final int streamId, final int sessionId)
     {
         StreamInterest streamInterest = streamInterestByIdMap.get(streamId);
-
         if (null == streamInterest)
         {
             streamInterest = new StreamInterest(false);
@@ -124,25 +126,30 @@ public class DataPacketDispatcher
         final StreamInterest streamInterest = streamInterestByIdMap.get(streamId);
         if (null == streamInterest)
         {
-            throw new UnknownSubscriptionException("No subscription registered on stream " + streamId);
+            throw new UnknownSubscriptionException("no subscription for stream " + streamId);
         }
 
-        for (final int sessionId : streamInterest.sessionInterestByIdMap.keySet())
-        {
-            final SessionInterest sessionInterest = streamInterest.sessionInterestByIdMap.get(sessionId);
+        final Int2ObjectHashMap<SessionInterest>.EntryIterator iterator =
+            streamInterest.sessionInterestByIdMap.entrySet().iterator();
 
+        while (iterator.hasNext())
+        {
+            iterator.next();
+
+            final int sessionId = iterator.getIntKey();
             if (!streamInterest.subscribedSessionIds.contains(sessionId))
             {
+                final SessionInterest sessionInterest = iterator.getValue();
                 if (null != sessionInterest.image)
                 {
                     sessionInterest.image.ifActiveGoInactive();
                 }
 
-                streamInterest.sessionInterestByIdMap.remove(sessionId);
+                iterator.remove();
             }
         }
 
-        streamInterest.isForAllSessions = false;
+        streamInterest.isAllSessions = false;
 
         if (streamInterest.subscribedSessionIds.isEmpty())
         {
@@ -155,18 +162,21 @@ public class DataPacketDispatcher
         final StreamInterest streamInterest = streamInterestByIdMap.get(streamId);
         if (null == streamInterest)
         {
-            throw new UnknownSubscriptionException("No subscription registered on stream " + streamId);
+            throw new UnknownSubscriptionException("no subscription for stream " + streamId);
         }
 
-        final SessionInterest sessionInterest = streamInterest.sessionInterestByIdMap.remove(sessionId);
-        if (null != sessionInterest && null != sessionInterest.image)
+        if (!streamInterest.isAllSessions)
         {
-            sessionInterest.image.ifActiveGoInactive();
+            final SessionInterest sessionInterest = streamInterest.sessionInterestByIdMap.remove(sessionId);
+            if (null != sessionInterest && null != sessionInterest.image)
+            {
+                sessionInterest.image.ifActiveGoInactive();
+            }
         }
 
         streamInterest.subscribedSessionIds.remove(sessionId);
 
-        if (!streamInterest.isForAllSessions && streamInterest.subscribedSessionIds.isEmpty())
+        if (!streamInterest.isAllSessions && streamInterest.subscribedSessionIds.isEmpty())
         {
             streamInterestByIdMap.remove(streamId);
         }
@@ -174,16 +184,13 @@ public class DataPacketDispatcher
 
     public void addPublicationImage(final PublicationImage image)
     {
-        final int sessionId = image.sessionId();
-        final int streamId = image.streamId();
-
-        final StreamInterest streamInterest = streamInterestByIdMap.get(streamId);
-        SessionInterest sessionInterest = streamInterest.sessionInterestByIdMap.get(sessionId);
+        final StreamInterest streamInterest = streamInterestByIdMap.get(image.streamId());
+        SessionInterest sessionInterest = streamInterest.sessionInterestByIdMap.get(image.sessionId());
 
         if (null == sessionInterest)
         {
             sessionInterest = new SessionInterest(ACTIVE);
-            streamInterest.sessionInterestByIdMap.put(sessionId, sessionInterest);
+            streamInterest.sessionInterestByIdMap.put(image.sessionId(), sessionInterest);
         }
         else
         {
@@ -191,19 +198,15 @@ public class DataPacketDispatcher
         }
 
         sessionInterest.image = image;
-
         image.activate();
     }
 
     public void removePublicationImage(final PublicationImage image)
     {
-        final int sessionId = image.sessionId();
-        final int streamId = image.streamId();
-
-        final StreamInterest streamInterest = streamInterestByIdMap.get(streamId);
+        final StreamInterest streamInterest = streamInterestByIdMap.get(image.streamId());
         if (null != streamInterest)
         {
-            final SessionInterest sessionInterest = streamInterest.sessionInterestByIdMap.get(sessionId);
+            final SessionInterest sessionInterest = streamInterest.sessionInterestByIdMap.get(image.sessionId());
             if (null != sessionInterest && null != sessionInterest.image)
             {
                 if (sessionInterest.image.correlationId() == image.correlationId())
@@ -257,7 +260,6 @@ public class DataPacketDispatcher
         if (null != streamInterest)
         {
             final int sessionId = header.sessionId();
-            final int termId = header.termId();
             final SessionInterest sessionInterest = streamInterest.sessionInterestByIdMap.get(sessionId);
 
             if (null != sessionInterest)
@@ -265,12 +267,12 @@ public class DataPacketDispatcher
                 if (null != sessionInterest.image)
                 {
                     return sessionInterest.image.insertPacket(
-                        termId, header.termOffset(), buffer, length, transportIndex, srcAddress);
+                        header.termId(), header.termOffset(), buffer, length, transportIndex, srcAddress);
                 }
             }
             else if (!DataHeaderFlyweight.isEndOfStream(buffer))
             {
-                if (streamInterest.isForAllSessions || streamInterest.subscribedSessionIds.contains(sessionId))
+                if (streamInterest.isAllSessions || streamInterest.subscribedSessionIds.contains(sessionId))
                 {
                     streamInterest.sessionInterestByIdMap.put(sessionId, new SessionInterest(PENDING_SETUP_FRAME));
                     elicitSetupMessageFromSource(channelEndpoint, transportIndex, srcAddress, streamId, sessionId);
@@ -297,13 +299,11 @@ public class DataPacketDispatcher
         if (null != streamInterest)
         {
             final int sessionId = header.sessionId();
-            final int initialTermId = header.initialTermId();
-            final int activeTermId = header.activeTermId();
             final SessionInterest sessionInterest = streamInterest.sessionInterestByIdMap.get(sessionId);
 
             if (null != sessionInterest)
             {
-                if (null == sessionInterest.image && (PENDING_SETUP_FRAME == sessionInterest.state))
+                if (null == sessionInterest.image && PENDING_SETUP_FRAME == sessionInterest.state)
                 {
                     sessionInterest.state = INIT_IN_PROGRESS;
 
@@ -313,8 +313,8 @@ public class DataPacketDispatcher
                         srcAddress,
                         streamId,
                         sessionId,
-                        initialTermId,
-                        activeTermId,
+                        header.initialTermId(),
+                        header.activeTermId(),
                         header.termOffset(),
                         header.termLength(),
                         header.mtuLength(),
@@ -325,7 +325,7 @@ public class DataPacketDispatcher
                     sessionInterest.image.addDestinationConnectionIfUnknown(transportIndex, srcAddress);
                 }
             }
-            else if (streamInterest.isForAllSessions || streamInterest.subscribedSessionIds.contains(sessionId))
+            else if (streamInterest.isAllSessions || streamInterest.subscribedSessionIds.contains(sessionId))
             {
                 streamInterest.sessionInterestByIdMap.put(sessionId, new SessionInterest(INIT_IN_PROGRESS));
                 createPublicationImage(
@@ -334,8 +334,8 @@ public class DataPacketDispatcher
                     srcAddress,
                     streamId,
                     sessionId,
-                    initialTermId,
-                    activeTermId,
+                    header.initialTermId(),
+                    header.activeTermId(),
                     header.termOffset(),
                     header.termLength(),
                     header.mtuLength(),

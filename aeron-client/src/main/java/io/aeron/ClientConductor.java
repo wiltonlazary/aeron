@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,8 +18,7 @@ package io.aeron;
 import io.aeron.exceptions.*;
 import io.aeron.status.ChannelEndpointStatus;
 import io.aeron.status.HeartbeatTimestamp;
-import org.agrona.DirectBuffer;
-import org.agrona.ManagedResource;
+import org.agrona.*;
 import org.agrona.collections.ArrayListUtil;
 import org.agrona.collections.Long2ObjectHashMap;
 import org.agrona.collections.LongHashSet;
@@ -128,13 +127,14 @@ class ClientConductor implements Agent, DriverEventsListener
 
     public void onClose()
     {
+        boolean isInterrupted = false;
+
         clientLock.lock();
         try
         {
             if (!isClosed)
             {
-                isClosed = true;
-                if (isTerminating)
+                if (!aeron.isClosed())
                 {
                     aeron.internalClose();
                 }
@@ -143,6 +143,7 @@ class ClientConductor implements Agent, DriverEventsListener
 
                 for (int i = closeHandlers.size() - 1; i >= 0; i--)
                 {
+                    isInCallback = true;
                     try
                     {
                         closeHandlers.get(i).run();
@@ -150,6 +151,10 @@ class ClientConductor implements Agent, DriverEventsListener
                     catch (final Exception ex)
                     {
                         handleError(ex);
+                    }
+                    finally
+                    {
+                        isInCallback = false;
                     }
                 }
 
@@ -164,12 +169,12 @@ class ClientConductor implements Agent, DriverEventsListener
                 }
                 catch (final InterruptedException ignore)
                 {
-                    Thread.currentThread().interrupt();
+                    isInterrupted = true;
                 }
 
                 for (int i = 0, size = lingeringResources.size(); i < size; i++)
                 {
-                    lingeringResources.get(i).delete();
+                    deleteResource(lingeringResources.get(i));
                 }
 
                 driverProxy.clientClose();
@@ -178,6 +183,12 @@ class ClientConductor implements Agent, DriverEventsListener
         }
         finally
         {
+            isClosed = true;
+            if (isInterrupted)
+            {
+                Thread.currentThread().interrupt();
+            }
+
             clientLock.unlock();
         }
     }
@@ -224,6 +235,14 @@ class ClientConductor implements Agent, DriverEventsListener
     public void onError(final long correlationId, final int codeValue, final ErrorCode errorCode, final String message)
     {
         driverException = new RegistrationException(correlationId, codeValue, errorCode, message);
+
+        final Object resource = resourceByRegIdMap.get(correlationId);
+        if (resource instanceof Subscription)
+        {
+            final Subscription subscription = (Subscription)resource;
+            subscription.internalClose();
+            resourceByRegIdMap.remove(correlationId);
+        }
     }
 
     public void onAsyncError(
@@ -436,7 +455,10 @@ class ClientConductor implements Agent, DriverEventsListener
 
     void handleError(final Throwable ex)
     {
-        ctx.errorHandler().onError(ex);
+        if (!isClosed)
+        {
+            ctx.errorHandler().onError(ex);
+        }
     }
 
     ConcurrentPublication addPublication(final String channel, final int streamId)
@@ -484,9 +506,13 @@ class ClientConductor implements Agent, DriverEventsListener
         clientLock.lock();
         try
         {
+            if (isTerminating || isClosed)
+            {
+                return;
+            }
+
             if (!publication.isClosed())
             {
-                ensureActive();
                 ensureNotReentrant();
 
                 publication.internalClose();
@@ -530,7 +556,6 @@ class ClientConductor implements Agent, DriverEventsListener
                 unavailableImageHandler);
 
             resourceByRegIdMap.put(correlationId, subscription);
-
             awaitResponse(correlationId);
 
             return subscription;
@@ -546,15 +571,21 @@ class ClientConductor implements Agent, DriverEventsListener
         clientLock.lock();
         try
         {
+            if (isTerminating || isClosed)
+            {
+                return;
+            }
+
             if (!subscription.isClosed())
             {
-                ensureActive();
                 ensureNotReentrant();
 
                 subscription.internalClose();
                 final long registrationId = subscription.registrationId();
-                resourceByRegIdMap.remove(registrationId);
-                awaitResponse(driverProxy.removeSubscription(registrationId));
+                if (subscription == resourceByRegIdMap.remove(registrationId))
+                {
+                    awaitResponse(driverProxy.removeSubscription(registrationId));
+                }
             }
         }
         finally
@@ -704,6 +735,11 @@ class ClientConductor implements Agent, DriverEventsListener
         clientLock.lock();
         try
         {
+            if (isClosed)
+            {
+                return false;
+            }
+
             ensureActive();
 
             return asyncCommandIdSet.contains(correlationId);
@@ -796,8 +832,13 @@ class ClientConductor implements Agent, DriverEventsListener
         clientLock.lock();
         try
         {
-            ensureActive();
+            if (isTerminating || isClosed)
+            {
+                return false;
+            }
+
             ensureNotReentrant();
+
             return availableCounterHandlers.remove(handler);
         }
         finally
@@ -826,8 +867,13 @@ class ClientConductor implements Agent, DriverEventsListener
         clientLock.lock();
         try
         {
-            ensureActive();
+            if (isTerminating || isClosed)
+            {
+                return false;
+            }
+
             ensureNotReentrant();
+
             return unavailableCounterHandlers.remove(handler);
         }
         finally
@@ -856,8 +902,13 @@ class ClientConductor implements Agent, DriverEventsListener
         clientLock.lock();
         try
         {
-            ensureActive();
+            if (isTerminating || isClosed)
+            {
+                return false;
+            }
+
             ensureNotReentrant();
+
             return closeHandlers.remove(handler);
         }
         finally
@@ -871,11 +922,15 @@ class ClientConductor implements Agent, DriverEventsListener
         clientLock.lock();
         try
         {
-            ensureActive();
+            if (isTerminating || isClosed)
+            {
+                return;
+            }
+
             ensureNotReentrant();
 
             final long registrationId = counter.registrationId();
-            if (null != resourceByRegIdMap.remove(registrationId))
+            if (counter == resourceByRegIdMap.remove(registrationId))
             {
                 awaitResponse(driverProxy.removeCounter(registrationId));
             }
@@ -1001,7 +1056,13 @@ class ClientConductor implements Agent, DriverEventsListener
 
             if (driverEventsAdapter.isInvalid())
             {
-                onClose();
+                isTerminating = true;
+                forceCloseResources();
+
+                if (!isClientApiCall(correlationId))
+                {
+                    throw new IllegalStateException("Driver events adapter is invalid");
+                }
             }
 
             if (isClientApiCall(correlationId))
@@ -1048,7 +1109,7 @@ class ClientConductor implements Agent, DriverEventsListener
                 return;
             }
 
-            if (Thread.currentThread().isInterrupted())
+            if (Thread.interrupted())
             {
                 isTerminating = true;
                 throw new AgentTerminationException("thread interrupted");
@@ -1083,10 +1144,9 @@ class ClientConductor implements Agent, DriverEventsListener
             isTerminating = true;
             forceCloseResources();
 
-            final long serviceIntervalNs = nowNs - timeOfLastServiceNs;
-
             throw new ConductorServiceTimeoutException(
-                "service interval exceeded (ns): timeout=" + interServiceTimeoutNs + ", actual=" + serviceIntervalNs);
+                "service interval exceeded (ns): timeout=" + interServiceTimeoutNs +
+                ", interval=" + (nowNs - timeOfLastServiceNs));
         }
     }
 
@@ -1102,11 +1162,9 @@ class ClientConductor implements Agent, DriverEventsListener
                 isTerminating = true;
                 forceCloseResources();
 
-                final long keepAliveAgeMs = nowMs - lastKeepAliveMs;
-
                 throw new DriverTimeoutException(
                     "MediaDriver keepalive age exceeded (ms): timeout= " +
-                     driverTimeoutMs + ", actual=" + keepAliveAgeMs);
+                     driverTimeoutMs + ", age=" + (nowMs - lastKeepAliveMs));
             }
 
             final long clientId = driverProxy.clientId();
@@ -1154,7 +1212,8 @@ class ClientConductor implements Agent, DriverEventsListener
             if ((resource.timeOfLastStateChange() + resourceLingerDurationNs) - nowNs < 0)
             {
                 ArrayListUtil.fastUnorderedRemove(lingeringResources, i, lastIndex--);
-                resource.delete();
+                deleteResource(resource);
+
                 workCount += 1;
             }
         }
@@ -1206,6 +1265,18 @@ class ClientConductor implements Agent, DriverEventsListener
             {
                 isInCallback = false;
             }
+        }
+    }
+
+    private void deleteResource(final ManagedResource resource)
+    {
+        try
+        {
+            resource.delete();
+        }
+        catch (final Throwable throwable)
+        {
+            handleError(throwable);
         }
     }
 }

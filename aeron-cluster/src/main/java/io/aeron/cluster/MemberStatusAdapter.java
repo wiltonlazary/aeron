@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,14 +26,14 @@ import org.agrona.DirectBuffer;
 
 class MemberStatusAdapter implements FragmentHandler, AutoCloseable
 {
-    public static final int FRAGMENT_POLL_LIMIT = 10;
+    static final int FRAGMENT_POLL_LIMIT = 10;
 
     private final MessageHeaderDecoder messageHeaderDecoder = new MessageHeaderDecoder();
     private final CanvassPositionDecoder canvassPositionDecoder = new CanvassPositionDecoder();
     private final RequestVoteDecoder requestVoteDecoder = new RequestVoteDecoder();
     private final VoteDecoder voteDecoder = new VoteDecoder();
     private final NewLeadershipTermDecoder newLeadershipTermDecoder = new NewLeadershipTermDecoder();
-    private final AppendedPositionDecoder appendedPositionDecoder = new AppendedPositionDecoder();
+    private final AppendPositionDecoder appendPositionDecoder = new AppendPositionDecoder();
     private final CommitPositionDecoder commitPositionDecoder = new CommitPositionDecoder();
     private final CatchupPositionDecoder catchupPositionDecoder = new CatchupPositionDecoder();
     private final StopCatchupDecoder stopCatchupDecoder = new StopCatchupDecoder();
@@ -49,12 +49,12 @@ class MemberStatusAdapter implements FragmentHandler, AutoCloseable
 
     private final FragmentAssembler fragmentAssembler = new FragmentAssembler(this);
     private final Subscription subscription;
-    private final MemberStatusListener memberStatusListener;
+    private final ConsensusModuleAgent consensusModuleAgent;
 
-    MemberStatusAdapter(final Subscription subscription, final MemberStatusListener memberStatusListener)
+    MemberStatusAdapter(final Subscription subscription, final ConsensusModuleAgent consensusModuleAgent)
     {
         this.subscription = subscription;
-        this.memberStatusListener = memberStatusListener;
+        this.consensusModuleAgent = consensusModuleAgent;
     }
 
     public void close()
@@ -93,7 +93,7 @@ class MemberStatusAdapter implements FragmentHandler, AutoCloseable
                     messageHeaderDecoder.blockLength(),
                     messageHeaderDecoder.version());
 
-                memberStatusListener.onCanvassPosition(
+                consensusModuleAgent.onCanvassPosition(
                     canvassPositionDecoder.logLeadershipTermId(),
                     canvassPositionDecoder.logPosition(),
                     canvassPositionDecoder.followerMemberId());
@@ -106,7 +106,7 @@ class MemberStatusAdapter implements FragmentHandler, AutoCloseable
                     messageHeaderDecoder.blockLength(),
                     messageHeaderDecoder.version());
 
-                memberStatusListener.onRequestVote(
+                consensusModuleAgent.onRequestVote(
                     requestVoteDecoder.logLeadershipTermId(),
                     requestVoteDecoder.logPosition(),
                     requestVoteDecoder.candidateTermId(),
@@ -120,7 +120,7 @@ class MemberStatusAdapter implements FragmentHandler, AutoCloseable
                     messageHeaderDecoder.blockLength(),
                     messageHeaderDecoder.version());
 
-                memberStatusListener.onVote(
+                consensusModuleAgent.onVote(
                     voteDecoder.candidateTermId(),
                     voteDecoder.logLeadershipTermId(),
                     voteDecoder.logPosition(),
@@ -136,26 +136,27 @@ class MemberStatusAdapter implements FragmentHandler, AutoCloseable
                     messageHeaderDecoder.blockLength(),
                     messageHeaderDecoder.version());
 
-                memberStatusListener.onNewLeadershipTerm(
+                consensusModuleAgent.onNewLeadershipTerm(
                     newLeadershipTermDecoder.logLeadershipTermId(),
                     newLeadershipTermDecoder.leadershipTermId(),
                     newLeadershipTermDecoder.logPosition(),
                     newLeadershipTermDecoder.timestamp(),
                     newLeadershipTermDecoder.leaderMemberId(),
-                    newLeadershipTermDecoder.logSessionId());
+                    newLeadershipTermDecoder.logSessionId(),
+                    newLeadershipTermDecoder.isStartup() == BooleanType.TRUE);
                 break;
 
-            case AppendedPositionDecoder.TEMPLATE_ID:
-                appendedPositionDecoder.wrap(
+            case AppendPositionDecoder.TEMPLATE_ID:
+                appendPositionDecoder.wrap(
                     buffer,
                     offset + MessageHeaderDecoder.ENCODED_LENGTH,
                     messageHeaderDecoder.blockLength(),
                     messageHeaderDecoder.version());
 
-                memberStatusListener.onAppendedPosition(
-                    appendedPositionDecoder.leadershipTermId(),
-                    appendedPositionDecoder.logPosition(),
-                    appendedPositionDecoder.followerMemberId());
+                consensusModuleAgent.onAppendPosition(
+                    appendPositionDecoder.leadershipTermId(),
+                    appendPositionDecoder.logPosition(),
+                    appendPositionDecoder.followerMemberId());
                 break;
 
             case CommitPositionDecoder.TEMPLATE_ID:
@@ -165,7 +166,7 @@ class MemberStatusAdapter implements FragmentHandler, AutoCloseable
                     messageHeaderDecoder.blockLength(),
                     messageHeaderDecoder.version());
 
-                memberStatusListener.onCommitPosition(
+                consensusModuleAgent.onCommitPosition(
                     commitPositionDecoder.leadershipTermId(),
                     commitPositionDecoder.logPosition(),
                     commitPositionDecoder.leaderMemberId());
@@ -178,7 +179,7 @@ class MemberStatusAdapter implements FragmentHandler, AutoCloseable
                     messageHeaderDecoder.blockLength(),
                     messageHeaderDecoder.version());
 
-                memberStatusListener.onCatchupPosition(
+                consensusModuleAgent.onCatchupPosition(
                     catchupPositionDecoder.leadershipTermId(),
                     catchupPositionDecoder.logPosition(),
                     catchupPositionDecoder.followerMemberId());
@@ -191,9 +192,8 @@ class MemberStatusAdapter implements FragmentHandler, AutoCloseable
                     messageHeaderDecoder.blockLength(),
                     messageHeaderDecoder.version());
 
-                memberStatusListener.onStopCatchup(
+                consensusModuleAgent.onStopCatchup(
                     stopCatchupDecoder.leadershipTermId(),
-                    stopCatchupDecoder.logPosition(),
                     stopCatchupDecoder.followerMemberId());
                 break;
 
@@ -204,7 +204,7 @@ class MemberStatusAdapter implements FragmentHandler, AutoCloseable
                     messageHeaderDecoder.blockLength(),
                     messageHeaderDecoder.version());
 
-                memberStatusListener.onAddPassiveMember(
+                consensusModuleAgent.onAddPassiveMember(
                     addPassiveMemberDecoder.correlationId(), addPassiveMemberDecoder.memberEndpoints());
                 break;
 
@@ -215,7 +215,7 @@ class MemberStatusAdapter implements FragmentHandler, AutoCloseable
                     messageHeaderDecoder.blockLength(),
                     messageHeaderDecoder.version());
 
-                memberStatusListener.onClusterMembersChange(
+                consensusModuleAgent.onClusterMembersChange(
                     clusterMembersChangeDecoder.correlationId(),
                     clusterMembersChangeDecoder.leaderMemberId(),
                     clusterMembersChangeDecoder.activeMembers(),
@@ -229,7 +229,7 @@ class MemberStatusAdapter implements FragmentHandler, AutoCloseable
                     messageHeaderDecoder.blockLength(),
                     messageHeaderDecoder.version());
 
-                memberStatusListener.onSnapshotRecordingQuery(
+                consensusModuleAgent.onSnapshotRecordingQuery(
                     snapshotRecordingQueryDecoder.correlationId(), snapshotRecordingQueryDecoder.requestMemberId());
                 break;
 
@@ -240,7 +240,7 @@ class MemberStatusAdapter implements FragmentHandler, AutoCloseable
                     messageHeaderDecoder.blockLength(),
                     messageHeaderDecoder.version());
 
-                memberStatusListener.onSnapshotRecordings(
+                consensusModuleAgent.onSnapshotRecordings(
                     snapshotRecordingsDecoder.correlationId(), snapshotRecordingsDecoder);
                 break;
 
@@ -251,7 +251,7 @@ class MemberStatusAdapter implements FragmentHandler, AutoCloseable
                     messageHeaderDecoder.blockLength(),
                     messageHeaderDecoder.version());
 
-                memberStatusListener.onJoinCluster(
+                consensusModuleAgent.onJoinCluster(
                     joinClusterDecoder.leadershipTermId(), joinClusterDecoder.memberId());
                 break;
 
@@ -262,7 +262,7 @@ class MemberStatusAdapter implements FragmentHandler, AutoCloseable
                     messageHeaderDecoder.blockLength(),
                     messageHeaderDecoder.version());
 
-                memberStatusListener.onTerminationPosition(terminationPositionDecoder.logPosition());
+                consensusModuleAgent.onTerminationPosition(terminationPositionDecoder.logPosition());
                 break;
 
             case TerminationAckDecoder.TEMPLATE_ID:
@@ -272,7 +272,7 @@ class MemberStatusAdapter implements FragmentHandler, AutoCloseable
                     messageHeaderDecoder.blockLength(),
                     messageHeaderDecoder.version());
 
-                memberStatusListener.onTerminationAck(
+                consensusModuleAgent.onTerminationAck(
                     terminationAckDecoder.logPosition(), terminationAckDecoder.memberId());
                 break;
 
@@ -287,7 +287,7 @@ class MemberStatusAdapter implements FragmentHandler, AutoCloseable
                 final byte[] credentials = new byte[backupQueryDecoder.encodedCredentialsLength()];
                 backupQueryDecoder.getEncodedCredentials(credentials, 0, credentials.length);
 
-                memberStatusListener.onBackupQuery(
+                consensusModuleAgent.onBackupQuery(
                     backupQueryDecoder.correlationId(),
                     backupQueryDecoder.responseStreamId(),
                     backupQueryDecoder.version(),

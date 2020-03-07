@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,12 +20,14 @@ import io.aeron.archive.client.AeronArchive;
 import io.aeron.archive.status.RecordingPos;
 import io.aeron.driver.MediaDriver;
 import io.aeron.driver.ThreadingMode;
+import io.aeron.test.Tests;
 import org.agrona.CloseHelper;
 import org.agrona.SystemUtil;
 import org.agrona.concurrent.status.CountersReader;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 import java.io.File;
 
@@ -33,17 +35,15 @@ import static io.aeron.Aeron.NULL_VALUE;
 import static io.aeron.archive.Common.*;
 import static io.aeron.archive.client.AeronArchive.NULL_POSITION;
 import static io.aeron.archive.codecs.SourceLocation.LOCAL;
-import static org.hamcrest.core.Is.is;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertThat;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 public class BasicArchiveTest
 {
-    private static final int RECORDING_STREAM_ID = 33;
-    private static final String RECORDING_CHANNEL = new ChannelUriStringBuilder()
+    private static final int RECORDED_STREAM_ID = 33;
+    private static final String RECORDED_CHANNEL = new ChannelUriStringBuilder()
         .media("udp")
         .endpoint("localhost:3333")
-        .termLength(Common.TERM_BUFFER_LENGTH)
+        .termLength(Common.TERM_LENGTH)
         .build();
 
     private static final int REPLAY_STREAM_ID = 66;
@@ -56,7 +56,7 @@ public class BasicArchiveTest
     private Aeron aeron;
     private AeronArchive aeronArchive;
 
-    @Before
+    @BeforeEach
     public void before()
     {
         final String aeronDirectoryName = CommonContext.generateRandomDirName();
@@ -68,7 +68,6 @@ public class BasicArchiveTest
                 .threadingMode(ThreadingMode.SHARED)
                 .errorHandler(Throwable::printStackTrace)
                 .spiesSimulateConnection(false)
-                .dirDeleteOnShutdown(true)
                 .dirDeleteOnStart(true),
             new Archive.Context()
                 .maxCatalogEntries(Common.MAX_CATALOG_ENTRIES)
@@ -87,37 +86,37 @@ public class BasicArchiveTest
                 .aeron(aeron));
     }
 
-    @After
+    @AfterEach
     public void after()
     {
-        CloseHelper.close(aeronArchive);
-        CloseHelper.close(aeron);
-        CloseHelper.close(archivingMediaDriver);
+        CloseHelper.closeAll(aeronArchive, aeron, archivingMediaDriver);
 
-        archivingMediaDriver.archive().context().deleteArchiveDirectory();
+        archivingMediaDriver.archive().context().deleteDirectory();
+        archivingMediaDriver.mediaDriver().context().deleteDirectory();
     }
 
-    @Test(timeout = 10_000)
+    @Test
+    @Timeout(10)
     public void shouldRecordThenReplayThenTruncate()
     {
         final String messagePrefix = "Message-Prefix-";
         final int messageCount = 10;
         final long stopPosition;
 
-        final long subscriptionId = aeronArchive.startRecording(RECORDING_CHANNEL, RECORDING_STREAM_ID, LOCAL);
+        final long subscriptionId = aeronArchive.startRecording(RECORDED_CHANNEL, RECORDED_STREAM_ID, LOCAL);
         final long recordingIdFromCounter;
         final int sessionId;
 
-        try (Subscription subscription = aeron.addSubscription(RECORDING_CHANNEL, RECORDING_STREAM_ID);
-            Publication publication = aeron.addPublication(RECORDING_CHANNEL, RECORDING_STREAM_ID))
+        try (Subscription subscription = aeron.addSubscription(RECORDED_CHANNEL, RECORDED_STREAM_ID);
+            Publication publication = aeron.addPublication(RECORDED_CHANNEL, RECORDED_STREAM_ID))
         {
             sessionId = publication.sessionId();
 
             final CountersReader counters = aeron.countersReader();
-            final int counterId = getRecordingCounterId(counters, sessionId);
+            final int counterId = awaitRecordingCounterId(counters, sessionId);
             recordingIdFromCounter = RecordingPos.getRecordingId(counters, counterId);
 
-            assertThat(RecordingPos.getSourceIdentity(counters, counterId), is(CommonContext.IPC_CHANNEL));
+            assertEquals(CommonContext.IPC_CHANNEL, RecordingPos.getSourceIdentity(counters, counterId));
 
             offer(publication, messageCount, messagePrefix);
             consume(subscription, messageCount, messagePrefix);
@@ -125,17 +124,19 @@ public class BasicArchiveTest
             stopPosition = publication.position();
             awaitPosition(counters, counterId, stopPosition);
 
-            assertThat(aeronArchive.getRecordingPosition(recordingIdFromCounter), is(stopPosition));
-            assertThat(aeronArchive.getStopPosition(recordingIdFromCounter), is((long)NULL_VALUE));
+            final long joinPosition = subscription.imageBySessionId(sessionId).joinPosition();
+            assertEquals(joinPosition, aeronArchive.getStartPosition(recordingIdFromCounter));
+            assertEquals(stopPosition, aeronArchive.getRecordingPosition(recordingIdFromCounter));
+            assertEquals(NULL_VALUE, aeronArchive.getStopPosition(recordingIdFromCounter));
         }
 
         aeronArchive.stopRecording(subscriptionId);
 
         final long recordingId = aeronArchive.findLastMatchingRecording(
-            0, "endpoint=localhost:3333", RECORDING_STREAM_ID, sessionId);
+            0, "endpoint=localhost:3333", RECORDED_STREAM_ID, sessionId);
 
         assertEquals(recordingIdFromCounter, recordingId);
-        assertThat(aeronArchive.getStopPosition(recordingIdFromCounter), is(stopPosition));
+        assertEquals(stopPosition, aeronArchive.getStopPosition(recordingIdFromCounter));
 
         final long position = 0L;
         final long length = stopPosition - position;
@@ -171,7 +172,8 @@ public class BasicArchiveTest
         assertEquals(1, count);
     }
 
-    @Test(timeout = 10_000)
+    @Test
+    @Timeout(10)
     public void shouldRecordReplayAndCancelReplayEarly()
     {
         final String messagePrefix = "Message-Prefix-";
@@ -179,11 +181,11 @@ public class BasicArchiveTest
         final int messageCount = 10;
         final long recordingId;
 
-        try (Subscription subscription = aeron.addSubscription(RECORDING_CHANNEL, RECORDING_STREAM_ID);
-            Publication publication = aeronArchive.addRecordedPublication(RECORDING_CHANNEL, RECORDING_STREAM_ID))
+        try (Subscription subscription = aeron.addSubscription(RECORDED_CHANNEL, RECORDED_STREAM_ID);
+            Publication publication = aeronArchive.addRecordedPublication(RECORDED_CHANNEL, RECORDED_STREAM_ID))
         {
             final CountersReader counters = aeron.countersReader();
-            final int counterId = Common.getRecordingCounterId(counters, publication.sessionId());
+            final int counterId = Common.awaitRecordingCounterId(counters, publication.sessionId());
             recordingId = RecordingPos.getRecordingId(counters, counterId);
 
             offer(publication, messageCount, messagePrefix);
@@ -192,13 +194,13 @@ public class BasicArchiveTest
             stopPosition = publication.position();
             awaitPosition(counters, counterId, stopPosition);
 
-            assertThat(aeronArchive.getRecordingPosition(recordingId), is(stopPosition));
+            assertEquals(stopPosition, aeronArchive.getRecordingPosition(recordingId));
 
             aeronArchive.stopRecording(publication);
             while (NULL_POSITION != aeronArchive.getRecordingPosition(recordingId))
             {
                 Thread.yield();
-                SystemTest.checkInterruptedStatus();
+                Tests.checkInterruptStatus();
             }
         }
 
@@ -211,19 +213,20 @@ public class BasicArchiveTest
         aeronArchive.stopReplay(replaySessionId);
     }
 
-    @Test(timeout = 10_000)
+    @Test
+    @Timeout(10)
     public void shouldReplayRecordingFromLateJoinPosition()
     {
         final String messagePrefix = "Message-Prefix-";
         final int messageCount = 10;
 
-        final long subscriptionId = aeronArchive.startRecording(RECORDING_CHANNEL, RECORDING_STREAM_ID, LOCAL);
+        final long subscriptionId = aeronArchive.startRecording(RECORDED_CHANNEL, RECORDED_STREAM_ID, LOCAL);
 
-        try (Subscription subscription = aeron.addSubscription(RECORDING_CHANNEL, RECORDING_STREAM_ID);
-            Publication publication = aeron.addPublication(RECORDING_CHANNEL, RECORDING_STREAM_ID))
+        try (Subscription subscription = aeron.addSubscription(RECORDED_CHANNEL, RECORDED_STREAM_ID);
+            Publication publication = aeron.addPublication(RECORDED_CHANNEL, RECORDED_STREAM_ID))
         {
             final CountersReader counters = aeron.countersReader();
-            final int counterId = Common.getRecordingCounterId(counters, publication.sessionId());
+            final int counterId = Common.awaitRecordingCounterId(counters, publication.sessionId());
             final long recordingId = RecordingPos.getRecordingId(counters, counterId);
 
             offer(publication, messageCount, messagePrefix);

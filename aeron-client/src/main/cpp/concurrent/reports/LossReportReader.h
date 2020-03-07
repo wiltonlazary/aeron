@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -43,13 +43,11 @@ typedef std::function<void(
  * @param entryConsumer to be called to accept each entry in the report.
  * @return the number of entries read.
  */
-inline static int read(
-    AtomicBuffer& buffer,
-    const loss_report_consumer_t &consumer)
+inline static int read(AtomicBuffer& buffer, const loss_report_consumer_t &consumer)
 {
     int recordsRead = 0;
-    int offset = 0;
-    const int capacity = buffer.capacity();
+    util::index_t offset = 0;
+    const util::index_t capacity = buffer.capacity();
 
     while (offset < capacity)
     {
@@ -63,11 +61,10 @@ inline static int read(
         ++recordsRead;
 
         const std::string channel = buffer.getString(offset + LossReportDescriptor::CHANNEL_OFFSET);
+        auto alignedChannelLength = static_cast<util::index_t>(util::BitUtil::align(
+            sizeof(std::int32_t) + channel.length(), sizeof(std::int32_t)));
         const std::string source = buffer.getString(
-                offset +
-                LossReportDescriptor::CHANNEL_OFFSET +
-                sizeof(std::int32_t) +
-                static_cast<util::index_t>(channel.length()));
+            offset + LossReportDescriptor::CHANNEL_OFFSET + alignedChannelLength);
 
         auto &record = buffer.overlayStruct<LossReportDescriptor::LossReportEntryDefn>(offset);
 
@@ -81,11 +78,11 @@ inline static int read(
             channel,
             source);
 
-        const int recordLength =
+        const util::index_t recordLength =
             LossReportDescriptor::CHANNEL_OFFSET +
-            (sizeof(std::int32_t) * 2) +
-            static_cast<int>(channel.length()) +
-            static_cast<int>(source.length());
+            alignedChannelLength +
+            static_cast<util::index_t>(sizeof(std::int32_t)) +
+            static_cast<util::index_t>(source.length());
 
         offset += util::BitUtil::align(recordLength, LossReportDescriptor::ENTRY_ALIGNMENT);
     }

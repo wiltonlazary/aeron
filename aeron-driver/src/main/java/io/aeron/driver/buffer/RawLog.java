@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,7 +23,7 @@ import java.nio.ByteBuffer;
  * Represents the collection of term and associated state buffers for the image between a publisher and subscriber
  * image for the replicated log.
  */
-public interface RawLog
+public interface RawLog extends AutoCloseable
 {
     /**
      * The length of each term in bytes.

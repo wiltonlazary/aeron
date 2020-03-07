@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,22 +15,25 @@
  */
 package io.aeron.cluster;
 
+import io.aeron.ExclusivePublication;
 import io.aeron.Image;
-import io.aeron.Publication;
 import io.aeron.cluster.codecs.CloseReason;
 import io.aeron.cluster.service.ClientSession;
 import io.aeron.cluster.service.Cluster;
 import io.aeron.cluster.service.ClusteredService;
 import io.aeron.logbuffer.Header;
 import org.agrona.DirectBuffer;
+import org.agrona.concurrent.IdleStrategy;
 
 class StubClusteredService implements ClusteredService
 {
     protected Cluster cluster;
+    protected IdleStrategy idleStrategy;
 
     public void onStart(final Cluster cluster, final Image snapshotImage)
     {
         this.cluster = cluster;
+        this.idleStrategy = cluster.idleStrategy();
     }
 
     public void onSessionOpen(final ClientSession session, final long timestamp)
@@ -55,7 +58,7 @@ class StubClusteredService implements ClusteredService
     {
     }
 
-    public void onTakeSnapshot(final Publication snapshotPublication)
+    public void onTakeSnapshot(final ExclusivePublication snapshotPublication)
     {
     }
 

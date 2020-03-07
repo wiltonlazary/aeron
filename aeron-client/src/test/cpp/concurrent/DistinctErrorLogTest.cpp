@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,7 +18,7 @@
 
 #include <gtest/gtest.h>
 
-#include <thread>
+
 #include "MockAtomicBuffer.h"
 #include <concurrent/errors/DistinctErrorLog.h>
 
@@ -171,7 +171,8 @@ TEST_F(DistinctErrorLogTest, shouldRecordTwoDistinctObservations)
     EXPECT_CALL(m_mockBuffer, getAndAddInt32(offset + ErrorLogDescriptor::OBSERVATION_COUNT_OFFSET, testing::_))
         .Times(1)
         .InSequence(sequence);
-    EXPECT_CALL(m_mockBuffer, putInt64Ordered(offset + ErrorLogDescriptor::LAST_OBSERVATION_TIMESTAMP_OFFSET, testing::_))
+    EXPECT_CALL(
+        m_mockBuffer, putInt64Ordered(offset + ErrorLogDescriptor::LAST_OBSERVATION_TIMESTAMP_OFFSET, testing::_))
         .Times(1)
         .InSequence(sequence);
 
@@ -191,7 +192,8 @@ TEST_F(DistinctErrorLogTest, shouldRecordTwoDistinctObservations)
     EXPECT_CALL(m_mockBuffer, getAndAddInt32(offset + ErrorLogDescriptor::OBSERVATION_COUNT_OFFSET, testing::_))
         .Times(1)
         .InSequence(sequence);
-    EXPECT_CALL(m_mockBuffer, putInt64Ordered(offset + ErrorLogDescriptor::LAST_OBSERVATION_TIMESTAMP_OFFSET, testing::_))
+    EXPECT_CALL(
+        m_mockBuffer, putInt64Ordered(offset + ErrorLogDescriptor::LAST_OBSERVATION_TIMESTAMP_OFFSET, testing::_))
         .Times(1)
         .InSequence(sequence);
 

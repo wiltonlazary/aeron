@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,12 +23,13 @@
 #include <map>
 
 #include "Exceptions.h"
+#include "util/Export.h"
 
 namespace aeron { namespace util {
 
 AERON_DECLARE_SOURCED_EXCEPTION (CommandOptionException, ExceptionCategory::EXCEPTION_CATEGORY_ERROR);
 
-class CommandOption
+class CLIENT_EXPORT CommandOption
 {
 
 private:

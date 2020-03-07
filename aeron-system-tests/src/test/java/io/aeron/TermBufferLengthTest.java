@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,45 +17,40 @@ package io.aeron;
 
 import io.aeron.driver.MediaDriver;
 import io.aeron.logbuffer.LogBufferDescriptor;
-import org.junit.Test;
-import org.junit.experimental.theories.DataPoint;
-import org.junit.experimental.theories.Theories;
-import org.junit.experimental.theories.Theory;
-import org.junit.runner.RunWith;
+import io.aeron.test.TestMediaDriver;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
-import static org.hamcrest.Matchers.is;
-import static org.junit.Assert.assertThat;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
-@RunWith(Theories.class)
 public class TermBufferLengthTest
 {
     public static final int TEST_TERM_LENGTH = LogBufferDescriptor.TERM_MIN_LENGTH * 2;
 
-    @DataPoint
-    public static final String UNICAST_TEST_CHANNEL =
-        "aeron:udp?endpoint=localhost:54325|" + CommonContext.TERM_LENGTH_PARAM_NAME + "=" + TEST_TERM_LENGTH;
+    public static final int STREAM_ID = 1001;
 
-    @DataPoint
-    public static final String IPC_TEST_CHANNEL =
-        "aeron:ipc?" + CommonContext.TERM_LENGTH_PARAM_NAME + "=" + TEST_TERM_LENGTH;
-
-    public static final int STREAM_ID = 1;
-
-    @Theory
-    @Test
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "aeron:udp?endpoint=localhost:24325|" + CommonContext.TERM_LENGTH_PARAM_NAME + "=" + TEST_TERM_LENGTH,
+        "aeron:ipc?" + CommonContext.TERM_LENGTH_PARAM_NAME + "=" + TEST_TERM_LENGTH
+    })
     public void shouldHaveCorrectTermBufferLength(final String channel)
     {
         final MediaDriver.Context ctx = new MediaDriver.Context()
             .errorHandler(Throwable::printStackTrace)
-            .dirDeleteOnShutdown(true)
+            .dirDeleteOnStart(true)
             .publicationTermBufferLength(TEST_TERM_LENGTH * 2)
             .ipcTermBufferLength(TEST_TERM_LENGTH * 2);
 
-        try (MediaDriver ignore = MediaDriver.launch(ctx);
+        try (TestMediaDriver ignore = TestMediaDriver.launch(ctx);
             Aeron aeron = Aeron.connect();
             Publication publication = aeron.addPublication(channel, STREAM_ID))
         {
-            assertThat(publication.termBufferLength(), is(TEST_TERM_LENGTH));
+            assertEquals(TEST_TERM_LENGTH, publication.termBufferLength());
+        }
+        finally
+        {
+            ctx.deleteDirectory();
         }
     }
 }

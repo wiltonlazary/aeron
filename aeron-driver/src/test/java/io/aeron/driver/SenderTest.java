@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,6 +28,7 @@ import io.aeron.protocol.DataHeaderFlyweight;
 import io.aeron.protocol.HeaderFlyweight;
 import io.aeron.protocol.SetupFlyweight;
 import io.aeron.protocol.StatusMessageFlyweight;
+import org.agrona.ErrorHandler;
 import org.agrona.concurrent.CachedEpochClock;
 import org.agrona.concurrent.CachedNanoClock;
 import org.agrona.concurrent.OneToOneConcurrentArrayQueue;
@@ -35,9 +36,9 @@ import org.agrona.concurrent.UnsafeBuffer;
 import org.agrona.concurrent.status.AtomicCounter;
 import org.agrona.concurrent.status.AtomicLongPosition;
 import org.agrona.concurrent.status.Position;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.mockito.stubbing.Answer;
 
 import java.net.InetSocketAddress;
@@ -58,7 +59,7 @@ public class SenderTest
     private static final int TERM_BUFFER_LENGTH = LogBufferDescriptor.TERM_MIN_LENGTH;
     private static final int MAX_FRAME_LENGTH = 1024;
     private static final int SESSION_ID = 1;
-    private static final int STREAM_ID = 2;
+    private static final int STREAM_ID = 1002;
     private static final int INITIAL_TERM_ID = 3;
     private static final byte[] PAYLOAD = "Payload is here!".getBytes();
 
@@ -78,7 +79,7 @@ public class SenderTest
     private final FlowControl flowControl = spy(new UnicastFlowControl());
     private final RetransmitHandler mockRetransmitHandler = mock(RetransmitHandler.class);
 
-    private long currentTimestamp = 0;
+    private final CachedNanoClock nanoClock = new CachedNanoClock();
 
     private final Queue<ByteBuffer> receivedFrames = new ArrayDeque<>();
 
@@ -105,7 +106,9 @@ public class SenderTest
             return length;
         };
 
-    @Before
+    private final ErrorHandler errorHandler = mock(ErrorHandler.class);
+
+    @BeforeEach
     public void setUp()
     {
         final SendChannelEndpoint mockSendChannelEndpoint = mock(SendChannelEndpoint.class);
@@ -113,17 +116,15 @@ public class SenderTest
         when(mockSendChannelEndpoint.send(any())).thenAnswer(saveByteBufferAnswer);
         when(mockSystemCounters.get(any())).thenReturn(mock(AtomicCounter.class));
 
-        final CachedNanoClock mockCachedNanoClock = mock(CachedNanoClock.class);
-        when(mockCachedNanoClock.nanoTime()).thenAnswer((invocation) -> currentTimestamp);
-
         sender = new Sender(
             new MediaDriver.Context()
                 .cachedEpochClock(new CachedEpochClock())
-                .cachedNanoClock(mockCachedNanoClock)
+                .cachedNanoClock(nanoClock)
                 .controlTransportPoller(mockTransportPoller)
                 .systemCounters(mockSystemCounters)
                 .senderCommandQueue(senderCommandQueue)
-                .nanoClock(() -> currentTimestamp));
+                .nanoClock(nanoClock)
+                .errorHandler(errorHandler));
 
         LogBufferDescriptor.initialiseTailWithTermId(rawLog.metaData(), 0, INITIAL_TERM_ID);
 
@@ -143,7 +144,7 @@ public class SenderTest
             1,
             params,
             mockSendChannelEndpoint,
-            () -> currentTimestamp,
+            nanoClock,
             rawLog,
             Configuration.producerWindowLength(TERM_BUFFER_LENGTH, Configuration.publicationTermWindowLength()),
             mock(Position.class),
@@ -163,12 +164,13 @@ public class SenderTest
             Configuration.untetheredWindowLimitTimeoutNs(),
             Configuration.untetheredRestingTimeoutNs(),
             false,
-            false);
+            false,
+            errorHandler);
 
         senderCommandQueue.offer(() -> sender.onNewNetworkPublication(publication));
     }
 
-    @After
+    @AfterEach
     public void tearDown()
     {
         sender.onClose();
@@ -179,10 +181,11 @@ public class SenderTest
     {
         sender.doWork();
         assertThat(receivedFrames.size(), is(1));
-        currentTimestamp += Configuration.PUBLICATION_SETUP_TIMEOUT_NS - 1;
+        nanoClock.advance(Configuration.PUBLICATION_SETUP_TIMEOUT_NS - 1);
         sender.doWork();
         assertThat(receivedFrames.size(), is(1));
-        currentTimestamp += 10;
+
+        nanoClock.advance(10);
         sender.doWork();
         assertThat(receivedFrames.size(), is(2));
 
@@ -203,9 +206,10 @@ public class SenderTest
         sender.doWork();
         assertThat(receivedFrames.size(), is(1));
 
-        currentTimestamp += Configuration.PUBLICATION_SETUP_TIMEOUT_NS - 1;
+        nanoClock.advance(Configuration.PUBLICATION_SETUP_TIMEOUT_NS - 1);
         sender.doWork();
-        currentTimestamp += 10;
+
+        nanoClock.advance(10);
         sender.doWork();
 
         assertThat(receivedFrames.size(), is(2));
@@ -225,7 +229,7 @@ public class SenderTest
         assertThat(receivedFrames.size(), is(1));
         receivedFrames.remove();
 
-        currentTimestamp += Configuration.PUBLICATION_SETUP_TIMEOUT_NS + 10;
+        nanoClock.advance(Configuration.PUBLICATION_SETUP_TIMEOUT_NS + 10);
         sender.doWork();
 
         assertThat(receivedFrames.size(), is(1));
@@ -260,8 +264,7 @@ public class SenderTest
         sender.doWork();
         assertThat(receivedFrames.size(), is(0)); // setup has been sent already, have to wait
 
-        currentTimestamp += Configuration.PUBLICATION_SETUP_TIMEOUT_NS + 10;
-
+        nanoClock.advance(Configuration.PUBLICATION_SETUP_TIMEOUT_NS + 10);
         sender.doWork();
 
         assertThat(receivedFrames.size(), is(1));
@@ -434,11 +437,11 @@ public class SenderTest
         receivedFrames.remove();                   // skip setup & data frame
         receivedFrames.remove();
 
-        currentTimestamp += Configuration.PUBLICATION_HEARTBEAT_TIMEOUT_NS - 1;
+        nanoClock.advance(Configuration.PUBLICATION_HEARTBEAT_TIMEOUT_NS - 1);
         sender.doWork();
 
         assertThat(receivedFrames.size(), is(0));  // should not send yet
-        currentTimestamp += 10;
+        nanoClock.advance(10);
         sender.doWork();
 
         assertThat(receivedFrames.size(), greaterThanOrEqualTo(1));  // should send ticks
@@ -468,10 +471,11 @@ public class SenderTest
         receivedFrames.remove();
         receivedFrames.remove();                   // skip setup & data frame
 
-        currentTimestamp += Configuration.PUBLICATION_HEARTBEAT_TIMEOUT_NS - 1;
+        nanoClock.advance(Configuration.PUBLICATION_HEARTBEAT_TIMEOUT_NS - 1);
         sender.doWork();
         assertThat(receivedFrames.size(), is(0));  // should not send yet
-        currentTimestamp += 10;
+
+        nanoClock.advance(10);
         sender.doWork();
         assertThat(receivedFrames.size(), greaterThanOrEqualTo(1));  // should send ticks
 
@@ -479,10 +483,11 @@ public class SenderTest
         assertThat(dataHeader.frameLength(), is(0));
         assertThat(dataHeader.termOffset(), is(offsetOfMessage(2)));
 
-        currentTimestamp += Configuration.PUBLICATION_HEARTBEAT_TIMEOUT_NS - 1;
+        nanoClock.advance(Configuration.PUBLICATION_HEARTBEAT_TIMEOUT_NS - 1);
         sender.doWork();
         assertThat(receivedFrames.size(), is(0));  // should not send yet
-        currentTimestamp += 10;
+
+        nanoClock.advance(10);
         sender.doWork();
         assertThat(receivedFrames.size(), greaterThanOrEqualTo(1));  // should send ticks
 

@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -31,6 +31,8 @@ static const std::size_t DEFAULT_CONTROLLED_FRAGMENT_ASSEMBLY_BUFFER_LENGTH = 40
  * Unfragmented messages are delegated without copy. Fragmented messages are copied to a temporary
  * buffer for reassembly before delegation.
  * <p>
+ * The Header passed to the delegate on assembling a message will be that of the last fragment.
+ * <p>
  * Session based buffers will be allocated and grown as necessary based on the length of messages to be assembled.
  * When sessions go inactive see {@link on_unavailable_image_t}, it is possible to free the buffer by calling
  * {@link #deleteSessionBuffer(std::int32_t)}.
@@ -45,7 +47,7 @@ public:
      * @param delegate            onto which whole messages are forwarded.
      * @param initialBufferLength to be used for each session.
      */
-    ControlledFragmentAssembler(
+    explicit ControlledFragmentAssembler(
         const controlled_poll_fragment_handler_t& delegate,
         size_t initialBufferLength = DEFAULT_CONTROLLED_FRAGMENT_ASSEMBLY_BUFFER_LENGTH) :
         m_initialBufferLength(initialBufferLength),
@@ -54,8 +56,8 @@ public:
     }
 
     /**
-     * Compose a controlled_poll_fragment_handler_t that calls the this ControlledFragmentAssembler instance for reassembly. Suitable for
-     * passing to Subscription::poll(controlled_poll_fragment_handler_t, int).
+     * Compose a controlled_poll_fragment_handler_t that calls the this ControlledFragmentAssembler instance for
+     * reassembly. Suitable for passing to Subscription::controlledPoll(controlled_poll_fragment_handler_t, int).
      *
      * @return controlled_poll_fragment_handler_t composed with the ControlledFragmentAssembler instance
      */
@@ -96,7 +98,8 @@ private:
         {
             if ((flags & FrameDescriptor::BEGIN_FRAG) == FrameDescriptor::BEGIN_FRAG)
             {
-                auto result = m_builderBySessionIdMap.emplace(header.sessionId(), static_cast<std::uint32_t>(m_initialBufferLength));
+                auto result = m_builderBySessionIdMap.emplace(
+                    header.sessionId(), static_cast<std::uint32_t>(m_initialBufferLength));
                 BufferBuilder& builder = result.first->second;
 
                 builder
@@ -120,22 +123,8 @@ private:
                         {
                             const util::index_t msgLength = builder.limit() - DataFrameHeader::LENGTH;
                             AtomicBuffer msgBuffer(builder.buffer(), builder.limit());
-                            Header assemblyHeader(header);
 
-                            assemblyHeader.buffer(msgBuffer);
-                            assemblyHeader.offset(0);
-                            DataFrameHeader::DataFrameHeaderDefn& frame(
-                                msgBuffer.overlayStruct<DataFrameHeader::DataFrameHeaderDefn>());
-
-                            frame.frameLength = DataFrameHeader::LENGTH + msgLength;
-                            frame.sessionId = header.sessionId();
-                            frame.streamId = header.streamId();
-                            frame.termId = header.termId();
-                            frame.flags = FrameDescriptor::UNFRAGMENTED;
-                            frame.type = DataFrameHeader::HDR_TYPE_DATA;
-                            frame.termOffset = header.termOffset() - (frame.frameLength - header.frameLength());
-
-                            action = m_delegate(msgBuffer, DataFrameHeader::LENGTH, msgLength, assemblyHeader);
+                            action = m_delegate(msgBuffer, DataFrameHeader::LENGTH, msgLength, header);
 
                             if (ControlledPollAction::ABORT == action)
                             {

@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -251,10 +251,12 @@ uint64_t aeron_driver_context_get_rcv_status_message_timeout_ns(aeron_driver_con
 
 typedef struct aeron_flow_control_strategy_stct aeron_flow_control_strategy_t;
 
+typedef struct aeron_udp_channel_stct aeron_udp_channel_t;
+
 typedef int (*aeron_flow_control_strategy_supplier_func_t)(
     aeron_flow_control_strategy_t **strategy,
-    size_t channel_length,
-    const char *channel,
+    aeron_driver_context_t *context,
+    aeron_udp_channel_t *channel,
     int32_t stream_id,
     int64_t registration_id,
     int32_t initial_term_id,
@@ -262,6 +264,7 @@ typedef int (*aeron_flow_control_strategy_supplier_func_t)(
 
 #define AERON_MULTICAST_MIN_FLOW_CONTROL_STRATEGY_NAME "multicast_min"
 #define AERON_MULTICAST_MAX_FLOW_CONTROL_STRATEGY_NAME "multicast_max"
+#define AERON_MULTICAST_TAGGED_FLOW_CONTROL_STRATEGY_NAME "multicast_tagged"
 #define AERON_UNICAST_MAX_FLOW_CONTROL_STRATEGY_NAME "unicast_max"
 
 /**
@@ -474,6 +477,37 @@ uint64_t aeron_driver_context_get_counters_free_to_reuse_timeout_ns(aeron_driver
  */
 #define AERON_MIN_MULTICAST_FLOW_CONTROL_RECEIVER_TIMEOUT_ENV_VAR "AERON_MIN_MULTICAST_FLOW_CONTROL_RECEIVER_TIMEOUT"
 
+int aeron_driver_context_set_flow_control_receiver_timeout_ns(
+    aeron_driver_context_t *context,
+    uint64_t value);
+
+uint64_t aeron_driver_context_get_flow_control_receiver_timeout_ns(aeron_driver_context_t *context);
+
+/**
+ * Default receiver tag for publishers to group endpoints by using tagged flow control.
+ */
+#define AERON_FLOW_CONTROL_GROUP_TAG_ENV_VAR "AERON_FLOW_CONTROL_GROUP_TAG"
+
+int aeron_driver_context_set_flow_control_group_tag(aeron_driver_context_t *context, int64_t value);
+int64_t aeron_driver_context_get_flow_control_group_tag(aeron_driver_context_t *context);
+
+/**
+ * Default required group size to use in tagged multicast flow control.
+ */
+#define AERON_FLOW_CONTROL_GROUP_MIN_SIZE_ENV_VAR "AERON_FLOW_CONTROL_GROUP_MIN_SIZE"
+
+int aeron_driver_context_set_flow_control_group_min_size(aeron_driver_context_t *context, int32_t value);
+int32_t aeron_driver_context_get_flow_control_group_min_size(aeron_driver_context_t *context);
+
+/**
+ * Default receiver tag to be sent on status messages from channel to handle tagged flow control.
+ */
+#define AERON_RECEIVER_GROUP_TAG_ENV_VAR "AERON_RECEIVER_GROUP_TAG"
+
+int aeron_driver_context_set_receiver_group_tag(aeron_driver_context_t *context, bool is_present, int64_t value);
+bool aeron_driver_context_get_receiver_group_tag_is_present(aeron_driver_context_t *context);
+int64_t aeron_driver_context_get_receiver_group_tag_value(aeron_driver_context_t *context);
+
 /**
  * Function name to call for termination validation.
  */
@@ -618,7 +652,7 @@ bool aeron_driver_context_get_rejoin_stream(aeron_driver_context_t *context);
 /**
  * Bindings for UDP Channel Transports.
  */
-#define AERON_UDP_CHANNEL_TRANSPORT_BINDINGS_ENV_VAR "AERON_UDP_CHANNEL_TRANSPORT_BINDINGS"
+#define AERON_UDP_CHANNEL_TRANSPORT_BINDINGS_MEDIA_ENV_VAR "AERON_UDP_CHANNEL_TRANSPORT_BINDINGS_MEDIA"
 
 typedef struct aeron_udp_channel_transport_bindings_stct aeron_udp_channel_transport_bindings_t;
 
@@ -626,6 +660,31 @@ int aeron_driver_context_set_udp_channel_transport_bindings(
     aeron_driver_context_t *context, aeron_udp_channel_transport_bindings_t *value);
 aeron_udp_channel_transport_bindings_t *aeron_driver_context_get_udp_channel_transport_bindings(
     aeron_driver_context_t *context);
+
+#define AERON_UDP_CHANNEL_OUTGOING_INTERCEPTORS_ENV_VAR "AERON_UDP_CHANNEL_OUTGOING_INTERCEPTORS"
+#define AERON_UDP_CHANNEL_INCOMING_INTERCEPTORS_ENV_VAR "AERON_UDP_CHANNEL_INCOMING_INTERCEPTORS"
+
+typedef struct aeron_udp_channel_interceptor_bindings_stct aeron_udp_channel_interceptor_bindings_t;
+
+int aeron_driver_context_set_udp_channel_outgoing_interceptors(
+    aeron_driver_context_t *context, aeron_udp_channel_interceptor_bindings_t *value);
+aeron_udp_channel_interceptor_bindings_t *aeron_driver_context_get_udp_channel_outgoing_interceptors(
+    aeron_driver_context_t *context);
+
+int aeron_driver_context_set_udp_channel_incoming_interceptors(
+    aeron_driver_context_t *context, aeron_udp_channel_interceptor_bindings_t *value);
+aeron_udp_channel_interceptor_bindings_t *aeron_driver_context_get_udp_channel_incoming_interceptors(
+    aeron_driver_context_t *context);
+
+#define AERON_PUBLICATION_RESERVED_SESSION_ID_LOW_ENV_VAR "AERON_PUBLICATION_RESERVED_SESSION_ID_LOW"
+
+int aeron_driver_context_set_publication_reserved_session_id_low(aeron_driver_context_t *context, int32_t value);
+int32_t aeron_driver_context_get_publication_reserved_session_id_low(aeron_driver_context_t *context);
+
+#define AERON_PUBLICATION_RESERVED_SESSION_ID_HIGH_ENV_VAR "AERON_PUBLICATION_RESERVED_SESSION_ID_HIGH"
+
+int aeron_driver_context_set_publication_reserved_session_id_high(aeron_driver_context_t *context, int32_t value);
+int32_t aeron_driver_context_get_publication_reserved_session_id_high(aeron_driver_context_t *context);
 
 /**
  * Return full version and build string.

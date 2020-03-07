@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,7 +18,6 @@
 
 #include <gtest/gtest.h>
 
-#include <thread>
 #include "MockAtomicBuffer.h"
 #include <concurrent/logbuffer/TermBlockScanner.h>
 
@@ -35,7 +34,8 @@ class TermBlockScannerTest : public testing::Test
 {
 public:
     TermBlockScannerTest() :
-        m_log(&m_logBuffer[0], m_logBuffer.size())
+        m_log(&m_logBuffer[0],
+        m_logBuffer.size())
     {
         m_logBuffer.fill(0);
     }

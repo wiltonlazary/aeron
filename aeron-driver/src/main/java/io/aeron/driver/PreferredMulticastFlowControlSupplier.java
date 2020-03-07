@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,8 +18,12 @@ package io.aeron.driver;
 import io.aeron.driver.media.UdpChannel;
 
 /**
- * Supplier of {@link PreferredMulticastFlowControl} implementation strategies.
+ *
+ * This has been replaced by {@link TaggedMulticastFlowControlSupplier}
+ *
+ * @deprecated Use {@link TaggedMulticastFlowControlSupplier} instead
  */
+@Deprecated
 public class PreferredMulticastFlowControlSupplier implements FlowControlSupplier
 {
     public FlowControl newInstance(final UdpChannel udpChannel, final int streamId, final long registrationId)

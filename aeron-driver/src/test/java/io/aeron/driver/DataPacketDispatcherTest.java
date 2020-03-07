@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,8 +16,8 @@
 package io.aeron.driver;
 
 import io.aeron.driver.media.ReceiveChannelEndpoint;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
 import io.aeron.logbuffer.LogBufferDescriptor;
 import io.aeron.protocol.DataHeaderFlyweight;
@@ -32,7 +32,7 @@ public class DataPacketDispatcherTest
 {
     private static final long CORRELATION_ID_1 = 101;
     private static final long CORRELATION_ID_2 = 102;
-    private static final int STREAM_ID = 10;
+    private static final int STREAM_ID = 1010;
     private static final int INITIAL_TERM_ID = 3;
     private static final int ACTIVE_TERM_ID = 3;
     private static final int SESSION_ID = 1;
@@ -51,7 +51,7 @@ public class DataPacketDispatcherTest
     private final PublicationImage mockImage = mock(PublicationImage.class);
     private final ReceiveChannelEndpoint mockChannelEndpoint = mock(ReceiveChannelEndpoint.class);
 
-    @Before
+    @BeforeEach
     public void setUp()
     {
         when(mockHeader.sessionId()).thenReturn(SESSION_ID);
@@ -241,5 +241,23 @@ public class DataPacketDispatcherTest
     {
         dispatcher.addSubscription(STREAM_ID, SESSION_ID);
         dispatcher.removeSubscription(STREAM_ID, SESSION_ID);
+    }
+
+    @Test
+    public void shouldRemoveSessionSpecificSubscriptionAndStillReceiveIntoImage()
+    {
+        final PublicationImage mockImage = mock(PublicationImage.class);
+
+        when(mockImage.sessionId()).thenReturn(SESSION_ID);
+        when(mockImage.streamId()).thenReturn(STREAM_ID);
+        when(mockImage.correlationId()).thenReturn(CORRELATION_ID_1);
+
+        dispatcher.addSubscription(STREAM_ID);
+        dispatcher.addPublicationImage(mockImage);
+        dispatcher.addSubscription(STREAM_ID, SESSION_ID);
+        dispatcher.removeSubscription(STREAM_ID, SESSION_ID);
+        dispatcher.onDataPacket(mockChannelEndpoint, mockHeader, mockBuffer, LENGTH, SRC_ADDRESS, 0);
+
+        verify(mockImage).insertPacket(ACTIVE_TERM_ID, TERM_OFFSET, mockBuffer, LENGTH, 0, SRC_ADDRESS);
     }
 }

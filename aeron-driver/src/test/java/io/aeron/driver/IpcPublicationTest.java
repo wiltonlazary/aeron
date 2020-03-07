@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,8 +18,8 @@ package io.aeron.driver;
 import io.aeron.driver.buffer.TestLogFactory;
 import io.aeron.driver.status.SystemCounters;
 import io.aeron.logbuffer.LogBufferDescriptor;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import io.aeron.CommonContext;
 import io.aeron.DriverProxy;
 import org.agrona.concurrent.*;
@@ -41,7 +41,7 @@ import static org.mockito.Mockito.mock;
 public class IpcPublicationTest
 {
     private static final long CLIENT_ID = 7L;
-    private static final int STREAM_ID = 10;
+    private static final int STREAM_ID = 1010;
     private static final int TERM_BUFFER_LENGTH = LogBufferDescriptor.TERM_MIN_LENGTH;
     private static final int BUFFER_LENGTH = 16 * 1024;
 
@@ -55,7 +55,7 @@ public class IpcPublicationTest
     private final NanoClock nanoClock = () -> currentTime;
 
     @SuppressWarnings("unchecked")
-    @Before
+    @BeforeEach
     public void setUp()
     {
         final RingBuffer toDriverCommands = new ManyToOneRingBuffer(new UnsafeBuffer(
@@ -64,6 +64,7 @@ public class IpcPublicationTest
         final UnsafeBuffer counterBuffer = new UnsafeBuffer(ByteBuffer.allocateDirect(BUFFER_LENGTH));
         final CountersManager countersManager = new CountersManager(
             new UnsafeBuffer(ByteBuffer.allocateDirect(BUFFER_LENGTH * 2)), counterBuffer, StandardCharsets.US_ASCII);
+        final SystemCounters systemCounters = new SystemCounters(countersManager);
 
         final MediaDriver.Context ctx = new MediaDriver.Context()
             .tempBuffer(new UnsafeBuffer(new byte[METADATA_LENGTH]))
@@ -72,11 +73,12 @@ public class IpcPublicationTest
             .logFactory(new TestLogFactory())
             .clientProxy(mock(ClientProxy.class))
             .driverCommandQueue(mock(ManyToOneConcurrentArrayQueue.class))
-            .epochClock(new SystemEpochClock())
+            .epochClock(SystemEpochClock.INSTANCE)
             .cachedEpochClock(new CachedEpochClock())
             .cachedNanoClock(new CachedNanoClock())
             .countersManager(countersManager)
-            .systemCounters(mock(SystemCounters.class))
+            .systemCounters(systemCounters)
+            .nameResolver(DefaultNameResolver.INSTANCE)
             .nanoClock(nanoClock);
 
         ctx.countersValuesBuffer(counterBuffer);

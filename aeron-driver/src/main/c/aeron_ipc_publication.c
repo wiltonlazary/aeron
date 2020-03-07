@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,7 +22,6 @@
 #include "aeron_ipc_publication.h"
 #include "util/aeron_fileutil.h"
 #include "aeron_alloc.h"
-#include "protocol/aeron_udp_protocol.h"
 #include "aeron_driver_conductor.h"
 #include "util/aeron_error.h"
 
@@ -40,12 +39,11 @@ int aeron_ipc_publication_create(
     aeron_system_counters_t *system_counters)
 {
     char path[AERON_MAX_PATH];
-    int path_length = aeron_ipc_publication_location(
-        path, sizeof(path), context->aeron_dir, session_id, stream_id, registration_id);
+    int path_length = aeron_ipc_publication_location(path, sizeof(path), context->aeron_dir, registration_id);
     aeron_ipc_publication_t *_pub = NULL;
     const uint64_t usable_fs_space = context->usable_fs_space_func(context->aeron_dir);
     const uint64_t log_length = aeron_logbuffer_compute_log_length(params->term_length, context->file_page_size);
-    const int64_t now_ns = context->nano_clock();
+    int64_t now_ns = aeron_clock_cached_nano_time(context->cached_clock);
 
     *publication = NULL;
 
@@ -86,7 +84,7 @@ int aeron_ipc_publication_create(
     _pub->log_file_name_length = (size_t)path_length;
     _pub->log_meta_data = (aeron_logbuffer_metadata_t *)(_pub->mapped_raw_log.log_meta_data.addr);
 
-    if (params->is_replay)
+    if (params->has_position)
     {
         int64_t term_id = params->term_id;
         int32_t term_count = params->term_id - initial_term_id;
@@ -116,7 +114,6 @@ int aeron_ipc_publication_create(
         _pub->log_meta_data->active_term_count = 0;
     }
 
-    _pub->log_meta_data->active_term_count = 0;
     _pub->log_meta_data->initial_term_id = initial_term_id;
     _pub->log_meta_data->mtu_length = (int32_t)params->mtu_length;
     _pub->log_meta_data->term_length = (int32_t)params->term_length;
@@ -128,7 +125,6 @@ int aeron_ipc_publication_create(
     aeron_logbuffer_fill_default_header(
         _pub->mapped_raw_log.log_meta_data.addr, session_id, stream_id, initial_term_id);
 
-    _pub->nano_clock = context->nano_clock;
     _pub->conductor_fields.subscribable.array = NULL;
     _pub->conductor_fields.subscribable.length = 0;
     _pub->conductor_fields.subscribable.capacity = 0;
@@ -194,11 +190,6 @@ void aeron_ipc_publication_close(aeron_counters_manager_t *counters_manager, aer
 
 int aeron_ipc_publication_update_pub_lmt(aeron_ipc_publication_t *publication)
 {
-    if (0 == publication->conductor_fields.subscribable.length)
-    {
-        return 0;
-    }
-
     int work_count = 0;
     int64_t min_sub_pos = INT64_MAX;
     int64_t max_sub_pos = publication->conductor_fields.consumer_position;
@@ -216,12 +207,7 @@ int aeron_ipc_publication_update_pub_lmt(aeron_ipc_publication_t *publication)
         }
     }
 
-    if (0 == publication->conductor_fields.subscribable.length)
-    {
-        aeron_counter_set_ordered(publication->pub_lmt_position.value_addr, max_sub_pos);
-        publication->conductor_fields.trip_limit = max_sub_pos;
-    }
-    else
+    if (publication->conductor_fields.subscribable.length > 0)
     {
         int64_t proposed_limit = min_sub_pos + publication->term_window_length;
         if (proposed_limit > publication->conductor_fields.trip_limit)
@@ -230,10 +216,16 @@ int aeron_ipc_publication_update_pub_lmt(aeron_ipc_publication_t *publication)
             aeron_counter_set_ordered(publication->pub_lmt_position.value_addr, proposed_limit);
             publication->conductor_fields.trip_limit = proposed_limit + publication->trip_gain;
 
-            work_count = 1;
+            work_count += 1;
         }
 
         publication->conductor_fields.consumer_position = max_sub_pos;
+    }
+    else if (*publication->pub_lmt_position.value_addr > max_sub_pos)
+    {
+        aeron_counter_set_ordered(publication->pub_lmt_position.value_addr, max_sub_pos);
+        publication->conductor_fields.trip_limit = max_sub_pos;
+        aeron_ipc_publication_clean_buffer(publication, min_sub_pos);
     }
 
     return work_count;
@@ -245,7 +237,7 @@ void aeron_ipc_publication_clean_buffer(aeron_ipc_publication_t *publication, in
     if (position > clean_position)
     {
         size_t dirty_index = aeron_logbuffer_index_by_position(clean_position, publication->position_bits_to_shift);
-        size_t bytes_to_clean = position - clean_position;
+        size_t bytes_to_clean = (size_t)(position - clean_position);
         size_t term_length = publication->mapped_raw_log.term_length;
         size_t term_offset = (size_t)(clean_position & (term_length - 1));
         size_t bytes_left_in_term = term_length - term_offset;

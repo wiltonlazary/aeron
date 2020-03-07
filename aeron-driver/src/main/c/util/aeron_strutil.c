@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,6 +22,8 @@
 #include <time.h>
 #include <stdio.h>
 #include <inttypes.h>
+#include <errno.h>
+#include <string.h>
 #include "util/aeron_strutil.h"
 
 void aeron_format_date(char *str, size_t count, int64_t timestamp)
@@ -58,6 +60,61 @@ void aeron_format_to_hex(char *str, size_t str_length, uint8_t *data, size_t dat
     }
 
     str[j] = '\0';
+}
+
+int aeron_tokenise(char *input, const char delimiter, const int max_tokens, char **tokens)
+{
+    if (NULL == input)
+    {
+        return -EINVAL;
+    }
+
+    const size_t len = strlen(input);
+
+    if (INT32_MAX < len)
+    {
+        return -EINVAL;
+    }
+
+    if (0 == len)
+    {
+        return 0;
+    }
+
+    int num_tokens = 0;
+
+    for (int i = (int)len - 1; --i != -1;)
+    {
+        if (delimiter == input[i])
+        {
+            input[i] = '\0';
+        }
+
+        if (0 == i && '\0' != input[i])
+        {
+            if (max_tokens <= num_tokens)
+            {
+                num_tokens = -ERANGE;
+                break;
+            }
+
+            tokens[num_tokens] = &input[i];
+            num_tokens++;
+        }
+        else if ('\0' == input[i] && '\0' != input[i + 1])
+        {
+            if (max_tokens <= num_tokens)
+            {
+                num_tokens = -ERANGE;
+                break;
+            }
+
+            tokens[num_tokens] = &input[i + 1];
+            num_tokens++;
+        }
+    }
+
+    return num_tokens;
 }
 
 extern uint64_t aeron_fnv_64a_buf(uint8_t *buf, size_t len);

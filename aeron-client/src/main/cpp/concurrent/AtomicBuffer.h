@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,7 +18,7 @@
 #define AERON_CONCURRENT_ATOMIC_BUFFER_H
 
 #include <cstdint>
-#include <string.h>
+#include <cstring>
 #include <string>
 #include <array>
 #include <util/Exceptions.h>
@@ -54,7 +54,7 @@ public:
         m_length(static_cast<util::index_t>(length))
     {
 #if !defined(DISABLE_BOUNDS_CHECKS)
-        if (AERON_COND_EXPECT(length > std::numeric_limits<util::index_t>::max(), true))
+        if (AERON_COND_EXPECT(length > static_cast<size_t>(std::numeric_limits<util::index_t>::max()), true))
         {
             throw aeron::util::OutOfBoundsException(
                 aeron::util::strPrintf("length out of bounds[%p]: length=%lld", this, static_cast<long long>(length)),
@@ -75,7 +75,7 @@ public:
         m_length(static_cast<util::index_t>(length))
     {
 #if !defined(DISABLE_BOUNDS_CHECKS)
-        if (AERON_COND_EXPECT(length > std::numeric_limits<util::index_t>::max(), true))
+        if (AERON_COND_EXPECT(length > static_cast<size_t>(std::numeric_limits<util::index_t>::max()), true))
         {
             throw aeron::util::OutOfBoundsException(
                 aeron::util::strPrintf("length out of bounds[%p]. length=%lld", this, static_cast<long long>(length)),
@@ -87,7 +87,7 @@ public:
     }
 
     template<size_t N>
-    AtomicBuffer(std::array<std::uint8_t, N>& buffer)
+    explicit AtomicBuffer(std::array<std::uint8_t, N>& buffer)
     {
         wrap(buffer);
     }
@@ -99,7 +99,11 @@ public:
         buffer.fill(initialValue);
     }
 
-    COND_MOCK_VIRTUAL ~AtomicBuffer() = default;
+#if COND_MOCK
+    AtomicBuffer(const AtomicBuffer&) = default;
+    AtomicBuffer& operator=(const AtomicBuffer&) = default;
+    virtual ~AtomicBuffer() = default;
+#endif
 
     /**
      * Wrap a buffer of memory for a given length.
@@ -110,7 +114,7 @@ public:
     inline void wrap(std::uint8_t* buffer, size_t length)
     {
 #if !defined(DISABLE_BOUNDS_CHECKS)
-        if (AERON_COND_EXPECT(length > std::numeric_limits<util::index_t>::max(), true))
+        if (AERON_COND_EXPECT(length > static_cast<size_t>(std::numeric_limits<util::index_t>::max()), true))
         {
             throw aeron::util::OutOfBoundsException(
                 aeron::util::strPrintf("length out of bounds[%p]: length=%lld", this, static_cast<long long>(length)),
@@ -162,7 +166,7 @@ public:
     inline void capacity(size_t length)
     {
 #if !defined(DISABLE_BOUNDS_CHECKS)
-        if (AERON_COND_EXPECT(length > std::numeric_limits<util::index_t>::max(), true))
+        if (AERON_COND_EXPECT(length > static_cast<size_t>(std::numeric_limits<util::index_t>::max()), true))
         {
             throw aeron::util::OutOfBoundsException(
                 aeron::util::strPrintf("length out of bounds[%p]: length=%lld", this, static_cast<long long>(length)),
@@ -427,7 +431,7 @@ public:
 
     std::int32_t putString(util::index_t offset, const std::string &value)
     {
-        std::int32_t length = static_cast<std::int32_t>(value.length());
+        auto length = static_cast<std::int32_t>(value.length());
 
         boundsCheck(offset, value.length() + sizeof(length));
 

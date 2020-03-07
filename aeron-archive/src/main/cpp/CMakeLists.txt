@@ -1,5 +1,5 @@
 #
-# Copyright 2014-2019 Real Logic Ltd.
+# Copyright 2014-2020 Real Logic Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -34,9 +34,18 @@ set(GENERATED_CODECS
     ${ARCHIVE_CODEC_TARGET_DIR}/aeron_archive_client/RecordingPositionRequest.h
     ${ARCHIVE_CODEC_TARGET_DIR}/aeron_archive_client/TruncateRecordingRequest.h
     ${ARCHIVE_CODEC_TARGET_DIR}/aeron_archive_client/StopRecordingSubscriptionRequest.h
+    ${ARCHIVE_CODEC_TARGET_DIR}/aeron_archive_client/StartPositionRequest.h
     ${ARCHIVE_CODEC_TARGET_DIR}/aeron_archive_client/StopPositionRequest.h
     ${ARCHIVE_CODEC_TARGET_DIR}/aeron_archive_client/FindLastMatchingRecordingRequest.h
     ${ARCHIVE_CODEC_TARGET_DIR}/aeron_archive_client/ListRecordingSubscriptionsRequest.h
+    ${ARCHIVE_CODEC_TARGET_DIR}/aeron_archive_client/ReplicateRequest.h
+    ${ARCHIVE_CODEC_TARGET_DIR}/aeron_archive_client/TaggedReplicateRequest.h
+    ${ARCHIVE_CODEC_TARGET_DIR}/aeron_archive_client/DetachSegmentsRequest.h
+    ${ARCHIVE_CODEC_TARGET_DIR}/aeron_archive_client/DeleteDetachedSegmentsRequest.h
+    ${ARCHIVE_CODEC_TARGET_DIR}/aeron_archive_client/PurgeSegmentsRequest.h
+    ${ARCHIVE_CODEC_TARGET_DIR}/aeron_archive_client/AttachSegmentsRequest.h
+    ${ARCHIVE_CODEC_TARGET_DIR}/aeron_archive_client/MigrateSegmentsRequest.h
+    ${ARCHIVE_CODEC_TARGET_DIR}/aeron_archive_client/KeepAliveRequest.h
     ${ARCHIVE_CODEC_TARGET_DIR}/aeron_archive_client/CatalogHeader.h
     ${ARCHIVE_CODEC_TARGET_DIR}/aeron_archive_client/RecordingDescriptorHeader.h
     ${ARCHIVE_CODEC_TARGET_DIR}/aeron_archive_client/RecordingDescriptor.h
@@ -48,7 +57,7 @@ set(GENERATED_CODECS
 
 add_custom_command(OUTPUT ${GENERATED_CODECS}
     COMMAND ./gradlew -Dcodec.target.dir=${ARCHIVE_CODEC_TARGET_DIR} :aeron-archive:generateCppCodecs
-    DEPENDS ${CODEC_SCHEMA}
+    DEPENDS ${CODEC_SCHEMA} aeron-all-jar
     WORKING_DIRECTORY ${ARCHIVE_CODEC_WORKING_DIR}
     COMMENT "Generating C++ Archive codecs")
 
@@ -93,7 +102,7 @@ target_include_directories(aeron_archive_client
 if (NOT WIN32)
     set(CMAKE_THREAD_PREFER_PTHREAD TRUE)
     set(THREADS_PREFER_PTHREAD_FLAG TRUE)
-endif()
+endif ()
 
 target_link_libraries(aeron_archive_client
     PRIVATE aeron_client
@@ -101,5 +110,5 @@ target_link_libraries(aeron_archive_client
 
 if (AERON_INSTALL_TARGETS)
     install(TARGETS aeron_archive_client ARCHIVE DESTINATION lib)
-    install(DIRECTORY . DESTINATION  include FILES_MATCHING PATTERN "*.h")
-endif()
+    install(DIRECTORY . DESTINATION include FILES_MATCHING PATTERN "*.h")
+endif ()

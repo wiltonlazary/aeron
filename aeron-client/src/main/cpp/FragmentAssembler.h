@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-#ifndef AERON_FRAGMENT_ASSEMBLY_H
-#define AERON_FRAGMENT_ASSEMBLY_H
+#ifndef AERON_FRAGMENT_ASSEMBLER_H
+#define AERON_FRAGMENT_ASSEMBLER_H
 
 #include <unordered_map>
 #include "Aeron.h"
@@ -32,6 +32,8 @@ static const std::size_t DEFAULT_FRAGMENT_ASSEMBLY_BUFFER_LENGTH = 4096;
  * Unfragmented messages are delegated without copy. Fragmented messages are copied to a temporary
  * buffer for reassembly before delegation.
  * <p>
+ * The Header passed to the delegate on assembling a message will be that of the last fragment.
+ * <p>
  * Session based buffers will be allocated and grown as necessary based on the length of messages to be assembled.
  * When sessions go inactive see {@link on_unavailable_image_t}, it is possible to free the buffer by calling
  * {@link #deleteSessionBuffer(std::int32_t)}.
@@ -46,7 +48,7 @@ public:
      * @param delegate            onto which whole messages are forwarded.
      * @param initialBufferLength to be used for each session.
      */
-    FragmentAssembler(
+    explicit FragmentAssembler(
         const fragment_handler_t& delegate, size_t initialBufferLength = DEFAULT_FRAGMENT_ASSEMBLY_BUFFER_LENGTH) :
         m_initialBufferLength(initialBufferLength), m_delegate(delegate)
     {

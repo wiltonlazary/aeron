@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,7 @@
 package io.aeron;
 
 import io.aeron.driver.MediaDriver;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 public class StartStopSystemTest
 {
@@ -24,7 +24,7 @@ public class StartStopSystemTest
     public void shouldStartAndStopInstantly()
     {
         final MediaDriver.Context driverCtx = new MediaDriver.Context()
-            .dirDeleteOnShutdown(true)
+            .dirDeleteOnStart(true)
             .errorHandler(Throwable::printStackTrace);
 
         try (MediaDriver ignore = MediaDriver.launchEmbedded(driverCtx))
@@ -37,6 +37,10 @@ public class StartStopSystemTest
             {
                 // ignore
             }
+        }
+        finally
+        {
+            driverCtx.deleteDirectory();
         }
     }
 }

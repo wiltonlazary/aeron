@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,24 +16,26 @@
 package io.aeron.driver;
 
 import io.aeron.driver.media.*;
-import org.agrona.collections.MutableInteger;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
 import io.aeron.driver.status.SystemCounters;
 import io.aeron.logbuffer.FrameDescriptor;
 import io.aeron.protocol.DataHeaderFlyweight;
 import io.aeron.protocol.HeaderFlyweight;
 import io.aeron.protocol.StatusMessageFlyweight;
 import org.agrona.BitUtil;
-import org.agrona.concurrent.status.AtomicCounter;
+import org.agrona.ErrorHandler;
+import org.agrona.collections.MutableInteger;
+import org.agrona.concurrent.CachedNanoClock;
 import org.agrona.concurrent.UnsafeBuffer;
+import org.agrona.concurrent.status.AtomicCounter;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 
-import static org.hamcrest.core.Is.is;
-import static org.junit.Assert.assertThat;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.Mockito.*;
 
 public class SelectorAndTransportTest
@@ -64,15 +66,16 @@ public class SelectorAndTransportTest
 
     private final DataPacketDispatcher mockDispatcher = mock(DataPacketDispatcher.class);
     private final NetworkPublication mockPublication = mock(NetworkPublication.class);
+    private final ErrorHandler errorHandler = mock(ErrorHandler.class);
 
-    private final DataTransportPoller dataTransportPoller = new DataTransportPoller();
-    private final ControlTransportPoller controlTransportPoller = new ControlTransportPoller();
+    private final DataTransportPoller dataTransportPoller = new DataTransportPoller(errorHandler);
+    private final ControlTransportPoller controlTransportPoller = new ControlTransportPoller(errorHandler);
     private SendChannelEndpoint sendChannelEndpoint;
     private ReceiveChannelEndpoint receiveChannelEndpoint;
 
     private final MediaDriver.Context context = new MediaDriver.Context();
 
-    @Before
+    @BeforeEach
     public void setup()
     {
         when(mockSystemCounters.get(any())).thenReturn(mockStatusMessagesReceivedCounter);
@@ -80,12 +83,12 @@ public class SelectorAndTransportTest
         when(mockPublication.sessionId()).thenReturn(SESSION_ID);
 
         context
-            .applicationSpecificFeedback(Configuration.applicationSpecificFeedback())
             .systemCounters(mockSystemCounters)
-            .receiveChannelEndpointThreadLocals(new ReceiveChannelEndpointThreadLocals(context));
+            .receiveChannelEndpointThreadLocals(new ReceiveChannelEndpointThreadLocals(context))
+            .cachedNanoClock(new CachedNanoClock());
     }
 
-    @After
+    @AfterEach
     public void tearDown()
     {
         try
@@ -111,7 +114,8 @@ public class SelectorAndTransportTest
         }
     }
 
-    @Test(timeout = 1000)
+    @Test
+    @Timeout(10)
     public void shouldHandleBasicSetupAndTearDown()
     {
         receiveChannelEndpoint = new ReceiveChannelEndpoint(
@@ -126,7 +130,8 @@ public class SelectorAndTransportTest
         processLoop(dataTransportPoller, 5);
     }
 
-    @Test(timeout = 1000)
+    @Test
+    @Timeout(10)
     public void shouldSendEmptyDataFrameUnicastFromSourceToReceiver()
     {
         final MutableInteger dataHeadersReceived = new MutableInteger(0);
@@ -173,10 +178,11 @@ public class SelectorAndTransportTest
             processLoop(dataTransportPoller, 1);
         }
 
-        assertThat(dataHeadersReceived.get(), is(1));
+        assertEquals(1, dataHeadersReceived.get());
     }
 
-    @Test(timeout = 1000)
+    @Test
+    @Timeout(10)
     public void shouldSendMultipleDataFramesPerDatagramUnicastFromSourceToReceiver()
     {
         final MutableInteger dataHeadersReceived = new MutableInteger(0);
@@ -236,10 +242,11 @@ public class SelectorAndTransportTest
             processLoop(dataTransportPoller, 1);
         }
 
-        assertThat(dataHeadersReceived.get(), is(1));
+        assertEquals(1, dataHeadersReceived.get());
     }
 
-    @Test(timeout = 1000)
+    @Test
+    @Timeout(10)
     public void shouldHandleSmFrameFromReceiverToSender()
     {
         final MutableInteger controlMessagesReceived = new MutableInteger(0);

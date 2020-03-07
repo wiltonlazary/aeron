@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -78,6 +78,12 @@ typedef struct aeron_status_message_header_stct
 }
 aeron_status_message_header_t;
 
+typedef struct aeron_status_message_optional_header_stct
+{
+    int64_t group_tag;
+}
+aeron_status_message_optional_header_t;
+
 typedef struct aeron_rttm_header_stct
 {
     aeron_frame_header_t frame_header;
@@ -89,6 +95,8 @@ typedef struct aeron_rttm_header_stct
 }
 aeron_rttm_header_t;
 #pragma pack(pop)
+
+int aeron_udp_protocol_group_tag(aeron_status_message_header_t *sm, int64_t *group_tag);
 
 #define AERON_FRAME_HEADER_VERSION (0)
 

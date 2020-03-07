@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,129 +16,134 @@
 package io.aeron.agent;
 
 import org.agrona.DirectBuffer;
-import org.agrona.MutableDirectBuffer;
+import org.agrona.concurrent.UnsafeBuffer;
 
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 
-import static io.aeron.agent.EventConfiguration.MAX_EVENT_LENGTH;
+import static io.aeron.agent.CommonEventEncoder.*;
 import static java.nio.ByteOrder.LITTLE_ENDIAN;
 import static org.agrona.BitUtil.SIZE_OF_INT;
 import static org.agrona.BitUtil.SIZE_OF_LONG;
 
 /**
- * Encoding of event types to a {@link MutableDirectBuffer} for logging.
+ * Encoding of event types to a {@link UnsafeBuffer} for logging.
  */
-public class DriverEventEncoder
+final class DriverEventEncoder
 {
-    private static final int LOG_HEADER_LENGTH = 16;
-    private static final int SOCKET_ADDRESS_MAX_LENGTH = 24;
-
-    public static int encode(
-        final MutableDirectBuffer encodingBuffer, final DirectBuffer buffer, final int offset, final int length)
+    private DriverEventEncoder()
     {
-        final int captureLength = determineCaptureLength(length);
-        int relativeOffset = encodeLogHeader(encodingBuffer, captureLength, length);
-
-        encodingBuffer.putBytes(relativeOffset, buffer, offset, captureLength);
-        relativeOffset += captureLength;
-
-        return relativeOffset;
     }
 
-    public static int encode(
-        final MutableDirectBuffer encodingBuffer,
-        final ByteBuffer buffer,
+    static void encode(
+        final UnsafeBuffer encodingBuffer,
         final int offset,
-        final int bufferLength,
+        final int captureLength,
+        final int length,
+        final ByteBuffer srcBuffer,
+        final int srcOffset,
         final InetSocketAddress dstAddress)
     {
-        final int captureLength = determineCaptureLength(bufferLength);
-        int relativeOffset = encodeLogHeader(encodingBuffer, captureLength, bufferLength);
+        int relativeOffset = encodeLogHeader(encodingBuffer, offset, captureLength, length);
 
-        relativeOffset += encodeSocketAddress(encodingBuffer, relativeOffset, dstAddress);
-        encodingBuffer.putBytes(relativeOffset, buffer, offset, captureLength);
-        relativeOffset += captureLength;
+        final int encodedSocketLength = encodeSocketAddress(encodingBuffer, offset + relativeOffset, dstAddress);
+        relativeOffset += encodedSocketLength;
 
-        return relativeOffset;
+        final int bufferCaptureLength = captureLength - encodedSocketLength;
+        encodingBuffer.putBytes(offset + relativeOffset, srcBuffer, srcOffset, bufferCaptureLength);
     }
 
-    public static int encode(
-        final MutableDirectBuffer encodingBuffer,
-        final DirectBuffer buffer,
+    static void encode(
+        final UnsafeBuffer encodingBuffer,
         final int offset,
-        final int bufferLength,
+        final int captureLength,
+        final int length,
+        final DirectBuffer srcBuffer,
+        final int srcOffset,
         final InetSocketAddress dstAddress)
     {
-        final int captureLength = determineCaptureLength(bufferLength);
-        int relativeOffset = encodeLogHeader(encodingBuffer, captureLength, bufferLength);
+        int relativeOffset = encodeLogHeader(encodingBuffer, offset, captureLength, length);
 
-        relativeOffset += encodeSocketAddress(encodingBuffer, relativeOffset, dstAddress);
-        encodingBuffer.putBytes(relativeOffset, buffer, offset, captureLength);
-        relativeOffset += captureLength;
+        final int encodedSocketLength = encodeSocketAddress(encodingBuffer, offset + relativeOffset, dstAddress);
+        relativeOffset += encodedSocketLength;
 
-        return relativeOffset;
+        final int bufferCaptureLength = captureLength - encodedSocketLength;
+        encodingBuffer.putBytes(offset + relativeOffset, srcBuffer, srcOffset, bufferCaptureLength);
     }
 
-    public static int encode(final MutableDirectBuffer encodingBuffer, final String value)
+    static void encode(
+        final UnsafeBuffer encodingBuffer,
+        final int offset,
+        final int captureLength,
+        final int length,
+        final String value)
     {
-        final int length = encodingBuffer.putStringUtf8(LOG_HEADER_LENGTH, value, LITTLE_ENDIAN);
-        final int recordLength = LOG_HEADER_LENGTH + length;
-        encodeLogHeader(encodingBuffer, recordLength, recordLength);
-
-        return recordLength;
+        final int relativeOffset = encodeLogHeader(encodingBuffer, offset, captureLength, length);
+        encodeTrailingString(encodingBuffer, offset + relativeOffset, captureLength, value);
     }
 
-    private static int encodeLogHeader(
-        final MutableDirectBuffer encodingBuffer, final int captureLength, final int length)
+    static void encodePublicationRemoval(
+        final UnsafeBuffer encodingBuffer,
+        final int offset,
+        final int captureLength,
+        final int length,
+        final String uri,
+        final int sessionId,
+        final int streamId)
     {
-        int relativeOffset = 0;
-        /*
-         * Stream of values:
-         * - capture buffer length (int)
-         * - total buffer length (int)
-         * - timestamp (long)
-         * - buffer (until end)
-         */
+        int relativeOffset = encodeLogHeader(encodingBuffer, offset, captureLength, length);
 
-        encodingBuffer.putInt(relativeOffset, captureLength, LITTLE_ENDIAN);
+        encodingBuffer.putInt(offset + relativeOffset, sessionId, LITTLE_ENDIAN);
         relativeOffset += SIZE_OF_INT;
 
-        encodingBuffer.putInt(relativeOffset, length, LITTLE_ENDIAN);
+        encodingBuffer.putInt(offset + relativeOffset, streamId, LITTLE_ENDIAN);
         relativeOffset += SIZE_OF_INT;
 
-        encodingBuffer.putLong(relativeOffset, System.nanoTime(), LITTLE_ENDIAN);
+        encodeTrailingString(encodingBuffer, offset + relativeOffset, captureLength - (SIZE_OF_INT * 2), uri);
+    }
+
+    static void encodeSubscriptionRemoval(
+        final UnsafeBuffer encodingBuffer,
+        final int offset,
+        final int captureLength,
+        final int length,
+        final String uri,
+        final int streamId,
+        final long id)
+    {
+        int relativeOffset = encodeLogHeader(encodingBuffer, offset, captureLength, length);
+
+        encodingBuffer.putInt(offset + relativeOffset, streamId, LITTLE_ENDIAN);
+        relativeOffset += SIZE_OF_INT;
+
+        encodingBuffer.putLong(offset + relativeOffset, id, LITTLE_ENDIAN);
         relativeOffset += SIZE_OF_LONG;
 
-        return relativeOffset;
+        encodeTrailingString(encodingBuffer, offset + relativeOffset, captureLength - SIZE_OF_INT - SIZE_OF_LONG, uri);
     }
 
-    private static int encodeSocketAddress(
-        final MutableDirectBuffer encodingBuffer, final int offset, final InetSocketAddress dstAddress)
+    static void encodeImageRemoval(
+        final UnsafeBuffer encodingBuffer,
+        final int offset,
+        final int captureLength,
+        final int length,
+        final String uri,
+        final int sessionId,
+        final int streamId,
+        final long id)
     {
-        int relativeOffset = 0;
-        /*
-         * Stream of values:
-         * - port (int) (unsigned short int)
-         * - IP address length (int) (4 or 16)
-         * - IP address (4 or 16 bytes)
-         */
+        int relativeOffset = encodeLogHeader(encodingBuffer, offset, captureLength, length);
 
-        encodingBuffer.putInt(offset + relativeOffset, dstAddress.getPort(), LITTLE_ENDIAN);
+        encodingBuffer.putInt(offset + relativeOffset, sessionId, LITTLE_ENDIAN);
         relativeOffset += SIZE_OF_INT;
 
-        final byte[] addressBytes = dstAddress.getAddress().getAddress();
-        encodingBuffer.putInt(offset + relativeOffset, addressBytes.length, LITTLE_ENDIAN);
+        encodingBuffer.putInt(offset + relativeOffset, streamId, LITTLE_ENDIAN);
         relativeOffset += SIZE_OF_INT;
 
-        encodingBuffer.putBytes(offset + relativeOffset, addressBytes);
-        relativeOffset += addressBytes.length;
+        encodingBuffer.putLong(offset + relativeOffset, id, LITTLE_ENDIAN);
+        relativeOffset += SIZE_OF_LONG;
 
-        return relativeOffset;
-    }
-
-    private static int determineCaptureLength(final int bufferLength)
-    {
-        return Math.min(bufferLength, MAX_EVENT_LENGTH - LOG_HEADER_LENGTH - SOCKET_ADDRESS_MAX_LENGTH);
+        encodeTrailingString(
+            encodingBuffer, offset + relativeOffset, captureLength - (SIZE_OF_INT * 2) - SIZE_OF_LONG, uri);
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,9 +15,9 @@
  */
 
 #include "util/aeron_platform.h"
-#if  defined(AERON_COMPILER_MSVC) && defined(AERON_CPU_X64)
+#if defined(AERON_COMPILER_MSVC) && defined(AERON_CPU_X64)
 #include <io.h>
-#else 
+#else
 #include <unistd.h>
 #endif
 
@@ -37,11 +37,11 @@ int aeron_udp_transport_poller_init(
 #if defined(HAVE_EPOLL)
     if ((poller->epoll_fd = epoll_create1(0)) < 0)
     {
-        aeron_set_err(errno, "epoll_create1: %s", strerror(errno));
+        aeron_set_err_from_last_err_code("epoll_create1");
         return -1;
     }
     poller->epoll_events = NULL;
-#elif defined(HAVE_POLL)
+#elif defined(HAVE_POLL) || defined(HAVE_WSAPOLL)
     poller->pollfds = NULL;
 #endif
 
@@ -55,7 +55,7 @@ int aeron_udp_transport_poller_close(aeron_udp_transport_poller_t *poller)
 #if defined(HAVE_EPOLL)
     close(poller->epoll_fd);
     aeron_free(poller->epoll_events);
-#elif defined(HAVE_POLL)
+#elif defined(HAVE_POLL) || defined(HAVE_WSAPOLL)
     aeron_free(poller->pollfds);
 #endif
     return 0;
@@ -93,11 +93,11 @@ int aeron_udp_transport_poller_add(aeron_udp_transport_poller_t *poller, aeron_u
     int result = epoll_ctl(poller->epoll_fd, EPOLL_CTL_ADD, transport->fd, &event);
     if (result < 0)
     {
-        aeron_set_err(errno, "epoll_ctl(EPOLL_CTL_ADD): %s", strerror(errno));
+        aeron_set_err_from_last_err_code("epoll_ctl(EPOLL_CTL_ADD)");
         return -1;
     }
 
-#elif defined(HAVE_POLL)
+#elif defined(HAVE_POLL) || defined(HAVE_WSAPOLL)
     size_t new_capacity = poller->transports.capacity;
 
     if (new_capacity > old_capacity)
@@ -154,11 +154,11 @@ int aeron_udp_transport_poller_remove(aeron_udp_transport_poller_t *poller, aero
         int result = epoll_ctl(poller->epoll_fd, EPOLL_CTL_DEL, transport->fd, &event);
         if (result < 0)
         {
-            aeron_set_err(errno, "epoll_ctl(EPOLL_CTL_DEL): %s", strerror(errno));
+            aeron_set_err_from_last_err_code("epoll_ctl(EPOLL_CTL_DEL)");
             return -1;
         }
 
-#elif defined(HAVE_POLL)
+#elif defined(HAVE_POLL) || defined(HAVE_WSAPOLL)
         aeron_array_fast_unordered_remove(
             (uint8_t *)poller->pollfds,
             sizeof(struct pollfd),
@@ -210,7 +210,7 @@ int aeron_udp_transport_poller_poll(
                 return 0;
             }
 
-            aeron_set_err(err, "epoll_wait: %s", strerror(err));
+            aeron_set_err_from_last_err_code("epoll_wait");
             return -1;
         }
         else if (0 == result)
@@ -219,7 +219,7 @@ int aeron_udp_transport_poller_poll(
         }
         else
         {
-            for (size_t i = 0, length = result; i < length; i++)
+            for (size_t i = 0, length = (size_t)result; i < length; i++)
             {
                 if (poller->epoll_events[i].events & EPOLLIN)
                 {
@@ -238,7 +238,7 @@ int aeron_udp_transport_poller_poll(
             }
         }
 
-#elif defined(HAVE_POLL)
+#elif defined(HAVE_POLL) || defined(HAVE_WSAPOLL)
         int result = poll(poller->pollfds, (nfds_t)poller->transports.length, 0);
 
         if (result < 0)
@@ -250,7 +250,7 @@ int aeron_udp_transport_poller_poll(
                 return 0;
             }
 
-            aeron_set_err(err, "poll: %s", strerror(err));
+            aeron_set_err_from_last_err_code("poll");
             return -1;
         }
         else if (0 == result)

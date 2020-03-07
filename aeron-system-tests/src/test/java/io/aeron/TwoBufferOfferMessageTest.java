@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,36 +18,39 @@ package io.aeron;
 import io.aeron.driver.MediaDriver;
 import io.aeron.driver.ThreadingMode;
 import io.aeron.logbuffer.FragmentHandler;
+import io.aeron.test.TestMediaDriver;
+import io.aeron.test.Tests;
 import org.agrona.CloseHelper;
 import org.agrona.collections.MutableReference;
 import org.agrona.concurrent.UnsafeBuffer;
-import org.junit.After;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
-import static org.junit.Assert.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 public class TwoBufferOfferMessageTest
 {
-    public static final String CHANNEL = "aeron:ipc?term-length=64k";
-
-    private static final int STREAM_ID = 1;
+    private static final String CHANNEL = "aeron:ipc?term-length=64k";
+    private static final int STREAM_ID = 1001;
     private static final int FRAGMENT_COUNT_LIMIT = 10;
 
-    private final MediaDriver driver = MediaDriver.launch(new MediaDriver.Context()
+    private final TestMediaDriver driver = TestMediaDriver.launch(new MediaDriver.Context()
         .errorHandler(Throwable::printStackTrace)
-        .dirDeleteOnShutdown(true)
+        .dirDeleteOnStart(true)
         .threadingMode(ThreadingMode.SHARED));
 
     private final Aeron aeron = Aeron.connect();
 
-    @After
+    @AfterEach
     public void after()
     {
-        CloseHelper.close(aeron);
-        CloseHelper.close(driver);
+        CloseHelper.closeAll(aeron, driver);
+        driver.context().deleteDirectory();
     }
 
-    @Test(timeout = 10_000)
+    @Test
+    @Timeout(10)
     public void shouldTransferUnfragmentedTwoPartMessage()
     {
         final UnsafeBuffer expectedBuffer = new UnsafeBuffer(new byte[256]);
@@ -82,7 +85,8 @@ public class TwoBufferOfferMessageTest
         }
     }
 
-    @Test(timeout = 10_000)
+    @Test
+    @Timeout(10)
     public void shouldTransferFragmentedTwoPartMessage()
     {
         final UnsafeBuffer expectedBuffer = new UnsafeBuffer(new byte[32 + driver.context().mtuLength()]);
@@ -122,8 +126,8 @@ public class TwoBufferOfferMessageTest
     {
         while (publication.offer(bufferOne, 0, bufferOne.capacity(), bufferTwo, 0, bufferTwo.capacity()) < 0L)
         {
-            SystemTest.checkInterruptedStatus();
             Thread.yield();
+            Tests.checkInterruptStatus();
         }
     }
 
@@ -137,8 +141,8 @@ public class TwoBufferOfferMessageTest
             final int fragments = subscription.poll(handler, FRAGMENT_COUNT_LIMIT);
             if (fragments == 0)
             {
-                SystemTest.checkInterruptedStatus();
                 Thread.yield();
+                Tests.checkInterruptStatus();
             }
         }
     }

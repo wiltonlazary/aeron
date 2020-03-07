@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,17 +15,18 @@
  */
 package io.aeron.driver.reports;
 
+import org.agrona.BitUtil;
 import org.agrona.concurrent.AtomicBuffer;
 import org.agrona.concurrent.UnsafeBuffer;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
 
 import java.nio.ByteBuffer;
 
 import static io.aeron.driver.reports.LossReport.*;
 import static org.agrona.BitUtil.SIZE_OF_INT;
-import static org.hamcrest.Matchers.is;
-import static org.junit.Assert.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.Mockito.*;
 
 public class LossReportTest
@@ -54,7 +55,8 @@ public class LossReportTest
         inOrder.verify(buffer).putInt(SESSION_ID_OFFSET, sessionId);
         inOrder.verify(buffer).putInt(STREAM_ID_OFFSET, streamId);
         inOrder.verify(buffer).putStringAscii(CHANNEL_OFFSET, channel);
-        inOrder.verify(buffer).putStringAscii(CHANNEL_OFFSET + SIZE_OF_INT + channel.length(), source);
+        inOrder.verify(buffer).putStringAscii(
+            CHANNEL_OFFSET + BitUtil.align(SIZE_OF_INT + channel.length(), SIZE_OF_INT), source);
         inOrder.verify(buffer).putLongOrdered(OBSERVATION_COUNT_OFFSET, 1L);
     }
 
@@ -68,15 +70,15 @@ public class LossReportTest
         final String channel = "aeron:udp://stuff";
         final String source = "127.0.0.1:8888";
 
-        final ReportEntry entry =
-            lossReport.createEntry(initialBytesLost, timestampMs, sessionId, streamId, channel, source);
+        final ReportEntry entry = lossReport.createEntry(
+            initialBytesLost, timestampMs, sessionId, streamId, channel, source);
 
         final long additionBytesLost = 64;
         final long latestTimestamp = 10;
         entry.recordObservation(additionBytesLost, latestTimestamp);
 
-        assertThat(unsafeBuffer.getLong(LAST_OBSERVATION_OFFSET), is(latestTimestamp));
-        assertThat(unsafeBuffer.getLong(TOTAL_BYTES_LOST_OFFSET), is(initialBytesLost + additionBytesLost));
-        assertThat(unsafeBuffer.getLong(OBSERVATION_COUNT_OFFSET), is(2L));
+        assertEquals(latestTimestamp, unsafeBuffer.getLong(LAST_OBSERVATION_OFFSET));
+        assertEquals(initialBytesLost + additionBytesLost, unsafeBuffer.getLong(TOTAL_BYTES_LOST_OFFSET));
+        assertEquals(2L, unsafeBuffer.getLong(OBSERVATION_COUNT_OFFSET));
     }
 }

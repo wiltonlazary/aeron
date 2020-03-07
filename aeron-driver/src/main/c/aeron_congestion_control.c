@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,7 +21,6 @@
 
 #include <errno.h>
 #include "protocol/aeron_udp_protocol.h"
-#include "concurrent/aeron_logbuffer_descriptor.h"
 #include "util/aeron_error.h"
 #include "util/aeron_dlopen.h"
 #include "aeron_congestion_control.h"
@@ -33,8 +32,10 @@ aeron_congestion_control_strategy_supplier_func_t aeron_congestion_control_strat
 {
     aeron_congestion_control_strategy_supplier_func_t func = NULL;
 
+#if defined(AERON_COMPILER_GCC)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wpedantic"
+#endif
     if ((func = (aeron_congestion_control_strategy_supplier_func_t)aeron_dlsym(RTLD_DEFAULT, strategy_name)) == NULL)
     {
         aeron_set_err(
@@ -42,7 +43,9 @@ aeron_congestion_control_strategy_supplier_func_t aeron_congestion_control_strat
 
         return NULL;
     }
+#if defined(AERON_COMPILER_GCC)
 #pragma GCC diagnostic pop
+#endif
 
     return func;
 }
@@ -109,7 +112,7 @@ int aeron_static_window_congestion_control_strategy_supplier(
     aeron_congestion_control_strategy_t *_strategy;
 
     if (aeron_alloc((void **)&_strategy, sizeof(aeron_congestion_control_strategy_t)) < 0 ||
-        aeron_alloc((void **)&_strategy->state, sizeof(aeron_static_window_congestion_control_strategy_state_t)) < 0)
+        aeron_alloc(&_strategy->state, sizeof(aeron_static_window_congestion_control_strategy_state_t)) < 0)
     {
         return -1;
     }

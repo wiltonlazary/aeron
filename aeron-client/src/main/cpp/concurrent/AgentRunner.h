@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,10 +17,11 @@
 #define AERON_AGENT_RUNNER_H
 
 #include <string>
-#include <util/Exceptions.h>
 #include <functional>
 #include <thread>
 #include <atomic>
+#include <util/Exceptions.h>
+#include <util/ScopeUtils.h>
 #include <concurrent/logbuffer/TermReader.h>
 
 #if !defined(AERON_COMPILER_MSVC)
@@ -39,6 +40,7 @@ public:
         m_agent(agent),
         m_idleStrategy(idleStrategy),
         m_exceptionHandler(exceptionHandler),
+        m_isStarted(false),
         m_isRunning(false),
         m_isClosed(false),
         m_name("aeron-agent")
@@ -46,10 +48,14 @@ public:
     }
 
     AgentRunner(
-        Agent& agent, IdleStrategy& idleStrategy, logbuffer::exception_handler_t& exceptionHandler, const std::string& name) :
+        Agent& agent,
+        IdleStrategy& idleStrategy,
+        logbuffer::exception_handler_t& exceptionHandler,
+        const std::string& name) :
         m_agent(agent),
         m_idleStrategy(idleStrategy),
         m_exceptionHandler(exceptionHandler),
+        m_isStarted(false),
         m_isRunning(false),
         m_isClosed(false),
         m_name(name)
@@ -67,10 +73,20 @@ public:
     }
 
     /**
- * Is the Agent running?
- *
- * @return is the Agent been started successfully and not closed?
- */
+     * Is the Agent started?
+     *
+     * @return is the Agent started?
+     */
+    inline bool isStarted() const
+    {
+        return m_isStarted;
+    }
+
+    /**
+     * Is the Agent running?
+     *
+     * @return is the Agent started successfully and not closed?
+     */
     inline bool isRunning() const
     {
         return m_isRunning;
@@ -87,22 +103,34 @@ public:
     }
 
     /**
-     * Start the Agent running
+     * Start the Agent running. Start may be called only once and is invalid after close has been called.
      *
      * Will spawn a std::thread.
      */
     inline void start()
     {
-        m_thread = std::thread([&]()
+        if (m_isClosed)
         {
+            throw util::IllegalStateException(std::string("AgentRunner closed"), SOURCEINFO);
+        }
+
+        bool expected = false;
+        if (!std::atomic_compare_exchange_strong(&m_isStarted, &expected, true))
+        {
+            throw util::IllegalStateException(std::string("AgentRunner already started"), SOURCEINFO);
+        }
+
+        m_thread = std::thread(
+            [&]()
+            {
 #if defined(AERON_COMPILER_MSVC)
 #elif defined(Darwin)
-            pthread_setname_np(m_name.c_str());
+                pthread_setname_np(m_name.c_str());
 #else
-            pthread_setname_np(pthread_self(), m_name.c_str());
+                pthread_setname_np(pthread_self(), m_name.c_str());
 #endif
-            run();
-        });
+                run();
+            });
     }
 
     /**
@@ -110,8 +138,14 @@ public:
      */
     inline void run()
     {
-        bool expected = false;
-        std::atomic_compare_exchange_strong(&m_isRunning, &expected, true);
+        m_isRunning = true;
+        bool isRunning = true;
+
+        util::OnScopeExit tidy(
+            [&]()
+            {
+                m_isRunning = false;
+            });
 
         try
         {
@@ -119,19 +153,22 @@ public:
         }
         catch (const util::SourcedException &exception)
         {
+            isRunning = false;
             m_exceptionHandler(exception);
-            m_isRunning = false;
         }
 
-        while (m_isRunning)
+        if (isRunning)
         {
-            try
+            while (!m_isClosed)
             {
-                m_idleStrategy.idle(m_agent.doWork());
-            }
-            catch (const util::SourcedException &exception)
-            {
-                m_exceptionHandler(exception);
+                try
+                {
+                    m_idleStrategy.idle(m_agent.doWork());
+                }
+                catch (const util::SourcedException &exception)
+                {
+                    m_exceptionHandler(exception);
+                }
             }
         }
 
@@ -153,8 +190,10 @@ public:
         bool expected = false;
         if (std::atomic_compare_exchange_strong(&m_isClosed, &expected, true))
         {
-            m_isRunning = false;
-            m_thread.join();
+            if (m_thread.joinable())
+            {
+                m_thread.join();
+            }
         }
     }
 
@@ -162,6 +201,7 @@ private:
     Agent& m_agent;
     IdleStrategy& m_idleStrategy;
     logbuffer::exception_handler_t& m_exceptionHandler;
+    std::atomic<bool> m_isStarted;
     std::atomic<bool> m_isRunning;
     std::atomic<bool> m_isClosed;
     std::thread m_thread;

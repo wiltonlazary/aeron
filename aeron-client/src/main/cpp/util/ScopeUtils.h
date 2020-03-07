@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,7 +24,7 @@ class OnScopeExit
 {
 public:
     template<typename func_t>
-    inline OnScopeExit(const func_t &func) : m_holder(new FuncHolder<func_t>(func))
+    inline explicit OnScopeExit(const func_t &func) : m_holder(new FuncHolder<func_t>(func))
     {
     }
 
@@ -41,7 +41,7 @@ private:
     {
         func_t f;
 
-        inline FuncHolder(const func_t &func) : f(func)
+        inline explicit FuncHolder(const func_t &func) : f(func)
         {
         }
 
@@ -52,6 +52,27 @@ private:
     };
 
     std::unique_ptr<FuncHolderBase> m_holder;
+};
+
+class CallbackGuard
+{
+public:
+    explicit CallbackGuard(bool& isInCallback) : m_isInCallback(isInCallback)
+    {
+        m_isInCallback = true;
+    }
+
+    ~CallbackGuard()
+    {
+        m_isInCallback = false;
+    }
+
+    CallbackGuard(const CallbackGuard&) = delete;
+
+    CallbackGuard& operator = (const CallbackGuard&) = delete;
+
+private:
+    bool& m_isInCallback;
 };
 
 }}

@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,10 +20,9 @@ import io.aeron.logbuffer.FrameDescriptor;
 import io.aeron.protocol.*;
 import org.agrona.MutableDirectBuffer;
 
-import java.text.SimpleDateFormat;
-import java.util.Date;
-
-import static java.lang.Integer.toHexString;
+import static io.aeron.agent.CommonEventDissector.dissectLogHeader;
+import static io.aeron.agent.CommonEventDissector.dissectSocketAddress;
+import static io.aeron.agent.DriverEventCode.*;
 import static java.nio.ByteOrder.LITTLE_ENDIAN;
 import static org.agrona.BitUtil.SIZE_OF_INT;
 import static org.agrona.BitUtil.SIZE_OF_LONG;
@@ -33,13 +32,15 @@ import static org.agrona.BitUtil.SIZE_OF_LONG;
  * <p>
  * <b>Note:</b>The event consumer of the log should be single threaded.
  */
-public class DriverEventDissector
+final class DriverEventDissector
 {
     private static final DataHeaderFlyweight DATA_HEADER = new DataHeaderFlyweight();
     private static final StatusMessageFlyweight SM_HEADER = new StatusMessageFlyweight();
     private static final NakFlyweight NAK_HEADER = new NakFlyweight();
     private static final SetupFlyweight SETUP_HEADER = new SetupFlyweight();
     private static final RttMeasurementFlyweight RTT_MEASUREMENT = new RttMeasurementFlyweight();
+    private static final HeaderFlyweight HEADER = new HeaderFlyweight();
+    private static final ResolutionEntryFlyweight RESOLUTION = new ResolutionEntryFlyweight();
     private static final PublicationMessageFlyweight PUB_MSG = new PublicationMessageFlyweight();
     private static final SubscriptionMessageFlyweight SUB_MSG = new SubscriptionMessageFlyweight();
     private static final PublicationBuffersReadyFlyweight PUB_READY = new PublicationBuffersReadyFlyweight();
@@ -56,10 +57,19 @@ public class DriverEventDissector
     private static final ClientTimeoutFlyweight CLIENT_TIMEOUT = new ClientTimeoutFlyweight();
     private static final TerminateDriverFlyweight TERMINATE_DRIVER = new TerminateDriverFlyweight();
 
-    public static void dissectAsFrame(
-        final DriverEventCode code, final MutableDirectBuffer buffer, final int offset, final StringBuilder builder)
+    static final String CONTEXT = "DRIVER";
+
+    private DriverEventDissector()
     {
-        int relativeOffset = dissectLogHeader(code, buffer, offset, builder);
+    }
+
+    static void dissectAsFrame(
+        final DriverEventCode eventCode,
+        final MutableDirectBuffer buffer,
+        final int offset,
+        final StringBuilder builder)
+    {
+        int relativeOffset = dissectLogHeader(CONTEXT, eventCode, buffer, offset, builder);
 
         builder.append(": ");
 
@@ -68,7 +78,8 @@ public class DriverEventDissector
         builder.append(" ");
 
         final int frameOffset = offset + relativeOffset;
-        switch (frameType(buffer, frameOffset))
+        final int frameType = frameType(buffer, frameOffset);
+        switch (frameType)
         {
             case HeaderFlyweight.HDR_TYPE_PAD:
             case HeaderFlyweight.HDR_TYPE_DATA:
@@ -96,18 +107,21 @@ public class DriverEventDissector
                 dissectRttFrame(builder);
                 break;
 
+            case HeaderFlyweight.HDR_TYPE_RES:
+                dissectResFrame(buffer, frameOffset, builder);
+                break;
+
             default:
-                builder.append("FRAME_UNKNOWN: ").append(frameType(buffer, frameOffset));
+                builder.append("FRAME_UNKNOWN: ").append(frameType);
                 break;
         }
     }
 
     @SuppressWarnings("MethodLength")
-    public static void dissectAsCommand(
+    static void dissectAsCommand(
         final DriverEventCode code, final MutableDirectBuffer buffer, final int offset, final StringBuilder builder)
     {
-        final int relativeOffset = dissectLogHeader(code, buffer, offset, builder);
-
+        final int relativeOffset = dissectLogHeader(CONTEXT, code, buffer, offset, builder);
         builder.append(": ");
 
         switch (code)
@@ -202,149 +216,62 @@ public class DriverEventDissector
         }
     }
 
-    public static void dissectAsInvocation(
-        final DriverEventCode code,
-        final MutableDirectBuffer buffer,
-        final int initialOffset,
-        final StringBuilder builder)
-    {
-        final int relativeOffset = dissectLogHeader(code, buffer, initialOffset, builder);
-        builder.append(": ");
-
-        readStackTraceElement(buffer, initialOffset + relativeOffset, builder);
-    }
-
-    public static void dissectAsString(
+    static void dissectAsString(
         final DriverEventCode code, final MutableDirectBuffer buffer, final int offset, final StringBuilder builder)
     {
-        final int relativeOffset = dissectLogHeader(code, buffer, offset, builder);
-        builder.append(": ").append(buffer.getStringUtf8(offset + relativeOffset, LITTLE_ENDIAN));
+        final int relativeOffset = dissectLogHeader(CONTEXT, code, buffer, offset, builder);
+        builder.append(": ").append(buffer.getStringAscii(offset + relativeOffset, LITTLE_ENDIAN));
     }
 
-    public static void dissectLogStartMessage(
-        final long timestampNs, final long timestampMs, final StringBuilder builder)
-    {
-        final SimpleDateFormat format = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSSZ");
-
-        builder
-            .append('[')
-            .append(((double)timestampNs) / 1_000_000_000.0)
-            .append("] log started ")
-            .append(format.format(new Date(timestampMs)));
-    }
-
-    private static void readStackTraceElement(
+    static void dissectRemovePublicationCleanup(
         final MutableDirectBuffer buffer, final int offset, final StringBuilder builder)
     {
-        int i = offset;
+        int absoluteOffset = offset;
+        absoluteOffset += dissectLogHeader(CONTEXT, REMOVE_PUBLICATION_CLEANUP, buffer, absoluteOffset, builder);
 
-        final int lineNumber = buffer.getInt(i, LITTLE_ENDIAN);
-        i += SIZE_OF_INT;
+        builder.append(": sessionId=").append(buffer.getInt(absoluteOffset, LITTLE_ENDIAN));
+        absoluteOffset += SIZE_OF_INT;
 
-        int length = buffer.getInt(i);
-        final String className = buffer.getStringUtf8(i, length);
-        i += SIZE_OF_INT + length;
+        builder.append(", streamId=").append(buffer.getInt(absoluteOffset, LITTLE_ENDIAN));
+        absoluteOffset += SIZE_OF_INT;
 
-        length = buffer.getInt(i);
-        final String methodName = buffer.getStringUtf8(i, length);
-        i += SIZE_OF_INT + length;
-
-        length = buffer.getInt(i);
-        final String fileName = buffer.getStringUtf8(i, length);
-
-        builder
-            .append(className)
-            .append('.')
-            .append(methodName)
-            .append(' ')
-            .append(fileName)
-            .append(':')
-            .append(lineNumber);
+        builder.append(", uri=");
+        buffer.getStringAscii(absoluteOffset, builder);
     }
 
-    private static int dissectLogHeader(
-        final DriverEventCode code, final MutableDirectBuffer buffer, final int offset, final StringBuilder builder)
-    {
-        int relativeOffset = 0;
-
-        final int captureLength = buffer.getInt(offset + relativeOffset, LITTLE_ENDIAN);
-        relativeOffset += SIZE_OF_INT;
-
-        final int bufferLength = buffer.getInt(offset + relativeOffset, LITTLE_ENDIAN);
-        relativeOffset += SIZE_OF_INT;
-
-        final long timestampNs = buffer.getLong(offset + relativeOffset, LITTLE_ENDIAN);
-        relativeOffset += SIZE_OF_LONG;
-
-        builder
-            .append('[')
-            .append(((double)timestampNs) / 1_000_000_000.0)
-            .append("] ")
-            .append(code.name())
-            .append(" [")
-            .append(captureLength)
-            .append('/')
-            .append(bufferLength)
-            .append(']');
-
-        return relativeOffset;
-    }
-
-    private static int dissectSocketAddress(
+    static void dissectRemoveSubscriptionCleanup(
         final MutableDirectBuffer buffer, final int offset, final StringBuilder builder)
     {
-        int relativeOffset = 0;
+        int absoluteOffset = offset;
+        absoluteOffset += dissectLogHeader(CONTEXT, REMOVE_SUBSCRIPTION_CLEANUP, buffer, absoluteOffset, builder);
 
-        final int port = buffer.getInt(offset + relativeOffset, LITTLE_ENDIAN);
-        relativeOffset += SIZE_OF_INT;
+        builder.append(": streamId=").append(buffer.getInt(absoluteOffset, LITTLE_ENDIAN));
+        absoluteOffset += SIZE_OF_INT;
 
-        final int addressLength = buffer.getInt(offset + relativeOffset);
-        relativeOffset += SIZE_OF_INT;
+        builder.append(", id=").append(buffer.getLong(absoluteOffset, LITTLE_ENDIAN));
+        absoluteOffset += SIZE_OF_LONG;
 
-        if (4 == addressLength)
-        {
-            final int i = offset + relativeOffset;
-            builder
-                .append(buffer.getByte(i) & 0xFF)
-                .append('.')
-                .append(buffer.getByte(i + 1) & 0xFF)
-                .append('.')
-                .append(buffer.getByte(i + 2) & 0xFF)
-                .append('.')
-                .append(buffer.getByte(i + 3) & 0xFF)
-                .append(':')
-                .append(port);
-        }
-        else if (16 == addressLength)
-        {
-            final int i = offset + relativeOffset;
-            builder
-                .append(toHexString(((buffer.getByte(i) << 8) & 0xFF00) | buffer.getByte(i + 1) & 0xFF))
-                .append(':')
-                .append(toHexString(((buffer.getByte(i + 2) << 8) & 0xFF00) | buffer.getByte(i + 3) & 0xFF))
-                .append(':')
-                .append(toHexString(((buffer.getByte(i + 4) << 8) & 0xFF00) | buffer.getByte(i + 5) & 0xFF))
-                .append(':')
-                .append(toHexString(((buffer.getByte(i + 6) << 8) & 0xFF00) | buffer.getByte(i + 7) & 0xFF))
-                .append(':')
-                .append(toHexString(((buffer.getByte(i + 8) << 8) & 0xFF00) | buffer.getByte(i + 9) & 0xFF))
-                .append(':')
-                .append(toHexString(((buffer.getByte(i + 10) << 8) & 0xFF00) | buffer.getByte(i + 11) & 0xFF))
-                .append(':')
-                .append(toHexString(((buffer.getByte(i + 12) << 8) & 0xFF00) | buffer.getByte(i + 13) & 0xFF))
-                .append(':')
-                .append(toHexString(((buffer.getByte(i + 14) << 8) & 0xFF00) | buffer.getByte(i + 15) & 0xFF))
-                .append(':')
-                .append(port);
-        }
-        else
-        {
-            builder.append("unknown-address:").append(port);
-        }
+        builder.append(", uri=");
+        buffer.getStringAscii(absoluteOffset, builder);
+    }
 
-        relativeOffset += addressLength;
+    static void dissectRemoveImageCleanup(
+        final MutableDirectBuffer buffer, final int offset, final StringBuilder builder)
+    {
+        int absoluteOffset = offset;
+        absoluteOffset += dissectLogHeader(CONTEXT, REMOVE_IMAGE_CLEANUP, buffer, absoluteOffset, builder);
 
-        return relativeOffset;
+        builder.append(": sessionId=").append(buffer.getInt(absoluteOffset, LITTLE_ENDIAN));
+        absoluteOffset += SIZE_OF_INT;
+
+        builder.append(", streamId=").append(buffer.getInt(absoluteOffset, LITTLE_ENDIAN));
+        absoluteOffset += SIZE_OF_INT;
+
+        builder.append(", id=").append(buffer.getLong(absoluteOffset, LITTLE_ENDIAN));
+        absoluteOffset += SIZE_OF_LONG;
+
+        builder.append(", uri=");
+        buffer.getStringAscii(absoluteOffset, builder);
     }
 
     private static void dissectDataFrame(final StringBuilder builder)
@@ -371,7 +298,6 @@ public class DriverEventDissector
     private static void dissectStatusFrame(final StringBuilder builder)
     {
         builder.append("SM ");
-
         HeaderFlyweight.appendFlagsAsChars(SM_HEADER.flags(), builder);
 
         builder
@@ -394,7 +320,6 @@ public class DriverEventDissector
     private static void dissectNakFrame(final StringBuilder builder)
     {
         builder.append("NAK ");
-
         HeaderFlyweight.appendFlagsAsChars(NAK_HEADER.flags(), builder);
 
         builder
@@ -415,7 +340,6 @@ public class DriverEventDissector
     private static void dissectSetupFrame(final StringBuilder builder)
     {
         builder.append("SETUP ");
-
         HeaderFlyweight.appendFlagsAsChars(SETUP_HEADER.flags(), builder);
 
         builder
@@ -442,7 +366,6 @@ public class DriverEventDissector
     private static void dissectRttFrame(final StringBuilder builder)
     {
         builder.append("RTT ");
-
         HeaderFlyweight.appendFlagsAsChars(RTT_MEASUREMENT.flags(), builder);
 
         builder
@@ -460,26 +383,78 @@ public class DriverEventDissector
             .append(RTT_MEASUREMENT.receiverId());
     }
 
-    private static void dissectPublication(final StringBuilder builder)
+    private static void dissectResFrame(
+        final MutableDirectBuffer buffer, final int offset, final StringBuilder builder)
     {
-        PUB_MSG.appendChannel(builder);
+        int currentOffset = offset;
+
+        HEADER.wrap(buffer, offset, buffer.capacity() - offset);
+        final int length = offset + Math.min(HEADER.frameLength(), CommonEventEncoder.MAX_CAPTURE_LENGTH);
+        currentOffset += HeaderFlyweight.MIN_HEADER_LENGTH;
+
+        builder.append("RES ");
+        HeaderFlyweight.appendFlagsAsChars(HEADER.flags(), builder);
 
         builder
+            .append(" len ")
+            .append(HEADER.frameLength())
+            .append(' ');
+
+        while (length > currentOffset)
+        {
+            RESOLUTION.wrap(buffer, currentOffset, buffer.capacity() - currentOffset);
+
+            if ((length - offset) < RESOLUTION.entryLength())
+            {
+                builder.append(" ... ").append(length - offset).append(" bytes left");
+                break;
+            }
+
+            dissectResEntry(builder);
+
+            currentOffset += RESOLUTION.entryLength();
+        }
+    }
+
+    private static void dissectResEntry(final StringBuilder builder)
+    {
+        builder
+            .append('[')
+            .append(RESOLUTION.resType())
+            .append(' ');
+
+        HeaderFlyweight.appendFlagsAsChars(RESOLUTION.flags(), builder);
+
+        builder
+            .append(" port ")
+            .append(RESOLUTION.udpPort())
             .append(' ')
+            .append(RESOLUTION.ageInMs())
+            .append(' ');
+
+        RESOLUTION.appendAddress(builder);
+        builder.append(' ');
+
+        RESOLUTION.appendName(builder);
+        builder.append(']');
+    }
+
+    private static void dissectPublication(final StringBuilder builder)
+    {
+        builder
             .append(PUB_MSG.streamId())
             .append(" [")
             .append(PUB_MSG.clientId())
             .append(':')
             .append(PUB_MSG.correlationId())
-            .append(']');
+            .append("] ");
+
+        PUB_MSG.appendChannel(builder);
     }
 
     private static void dissectSubscription(final StringBuilder builder)
     {
-        SUB_MSG.appendChannel(builder);
-
         builder
-            .append(' ')
             .append(SUB_MSG.streamId())
             .append(" [")
             .append(SUB_MSG.registrationCorrelationId())
@@ -487,7 +462,9 @@ public class DriverEventDissector
             .append(SUB_MSG.clientId())
             .append(':')
             .append(SUB_MSG.correlationId())
-            .append(']');
+            .append("] ");
+
+        SUB_MSG.appendChannel(builder);
     }
 
     private static void dissectPublicationReady(final StringBuilder builder)
@@ -519,13 +496,14 @@ public class DriverEventDissector
             .append(IMAGE_READY.subscriberPositionId())
             .append(':')
             .append(IMAGE_READY.subscriptionRegistrationId())
-            .append("] \"")
-            .append(IMAGE_READY.sourceIdentity())
-            .append("\" [")
+            .append("] [")
             .append(IMAGE_READY.correlationId())
             .append("] ");
 
         IMAGE_READY.appendLogFileName(builder);
+        builder.append(' ');
+
+        IMAGE_READY.appendSourceIdentity(builder);
     }
 
     private static void dissectCorrelationEvent(final StringBuilder builder)
@@ -540,16 +518,15 @@ public class DriverEventDissector
 
     private static void dissectImage(final StringBuilder builder)
     {
-        IMAGE_MSG.appendChannel(builder);
-
         builder
-            .append(' ')
             .append(IMAGE_MSG.streamId())
             .append(" [")
             .append(IMAGE_MSG.correlationId())
             .append(' ')
             .append(IMAGE_MSG.subscriptionRegistrationId())
-            .append(']');
+            .append("] ");
+
+        IMAGE_MSG.appendChannel(builder);
     }
 
     private static void dissectRemoveEvent(final StringBuilder builder)
@@ -565,16 +542,15 @@ public class DriverEventDissector
 
     private static void dissectDestination(final StringBuilder builder)
     {
-        DESTINATION_MSG.appendChannel(builder);
-
         builder
-            .append(' ')
             .append(DESTINATION_MSG.registrationCorrelationId())
             .append(" [")
             .append(DESTINATION_MSG.clientId())
             .append(':')
             .append(DESTINATION_MSG.correlationId())
-            .append(']');
+            .append("] ");
+
+        DESTINATION_MSG.appendChannel(builder);
     }
 
     private static void dissectError(final StringBuilder builder)
@@ -582,9 +558,10 @@ public class DriverEventDissector
         builder
             .append(ERROR_MSG.offendingCommandCorrelationId())
             .append(' ')
-            .append(ERROR_MSG.errorCode().toString())
-            .append(' ')
-            .append(ERROR_MSG.errorMessage());
+            .append(ERROR_MSG.errorCode())
+            .append(' ');
+
+        ERROR_MSG.appendMessage(builder);
     }
 
     private static void dissectCounter(final StringBuilder builder)
@@ -630,7 +607,7 @@ public class DriverEventDissector
         builder.append(TERMINATE_DRIVER.clientId()).append(' ').append(TERMINATE_DRIVER.tokenBufferLength());
     }
 
-    public static int frameType(final MutableDirectBuffer buffer, final int termOffset)
+    static int frameType(final MutableDirectBuffer buffer, final int termOffset)
     {
         return buffer.getShort(FrameDescriptor.typeOffset(termOffset), LITTLE_ENDIAN) & 0xFFFF;
     }

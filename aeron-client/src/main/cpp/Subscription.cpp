@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,11 +28,13 @@ Subscription::Subscription(
     m_conductor(conductor),
     m_channel(channel),
     m_channelStatusId(channelStatusId),
-    m_registrationId(registrationId),
-    m_streamId(streamId),
     m_imageArray(),
-    m_isClosed(false)
+    m_isClosed(false),
+    m_registrationId(registrationId),
+    m_streamId(streamId)
 {
+    static_cast<void>(m_paddingBefore);
+    static_cast<void>(m_paddingAfter);
 }
 
 Subscription::~Subscription()

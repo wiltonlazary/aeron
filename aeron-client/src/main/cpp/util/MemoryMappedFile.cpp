@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,15 +19,16 @@
     #include <sys/stat.h>
     #include <fcntl.h>
     #include <unistd.h>
+#else
+    #include "StringUtil.h"
 #endif
 
 #include <string>
-#include <string.h>
+#include <cstring>
 
 #include "MemoryMappedFile.h"
 #include "Exceptions.h"
 #include "ScopeUtils.h"
-#include "StringUtil.h"
 
 namespace aeron { namespace util {
 
@@ -70,20 +71,31 @@ MemoryMappedFile::ptr_t MemoryMappedFile::createNew(const char *filename, size_t
         throw IOException(std::string("Failed to create file: ") + filename + " " + toString(GetLastError()), SOURCEINFO);
     }
 
+    OnScopeExit tidy(
+        [&]()
+        {
+            if (INVALID_HANDLE_VALUE != fd.handle)
+            {
+                CloseHandle(fd.handle);
+            }
+        });
+
     if (!fill(fd, size, 0))
     {
-        CloseHandle(fd.handle);
         throw IOException(std::string("Failed to write to file: ") + filename + " " + toString(GetLastError()), SOURCEINFO);
     }
 
-    return MemoryMappedFile::ptr_t(new MemoryMappedFile(fd, offset, size, false));
+    auto obj = MemoryMappedFile::ptr_t(new MemoryMappedFile(fd, offset, size, false));
+    fd.handle = INVALID_HANDLE_VALUE;
+
+    return obj;
 }
 
 MemoryMappedFile::ptr_t MemoryMappedFile::mapExisting(const char *filename, size_t offset, size_t size, bool readOnly)
 {
     FileHandle fd;
     DWORD dwDesiredAccess = readOnly ? GENERIC_READ : (GENERIC_READ | GENERIC_WRITE);
-    DWORD dwSharedMode =FILE_SHARE_READ | FILE_SHARE_WRITE;
+    DWORD dwSharedMode = FILE_SHARE_READ | FILE_SHARE_WRITE;
     fd.handle = CreateFile(filename, dwDesiredAccess, dwSharedMode, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
 
     if (fd.handle == INVALID_HANDLE_VALUE)
@@ -91,7 +103,19 @@ MemoryMappedFile::ptr_t MemoryMappedFile::mapExisting(const char *filename, size
         throw IOException(std::string("Failed to create file: ") + filename + " " + toString(GetLastError()), SOURCEINFO);
     }
 
-    return MemoryMappedFile::ptr_t(new MemoryMappedFile(fd, offset, size, readOnly));
+    OnScopeExit tidy(
+        [&]()
+        {
+            if (INVALID_HANDLE_VALUE != fd.handle)
+            {
+                CloseHandle(fd.handle);
+            }
+        });
+
+    auto obj = MemoryMappedFile::ptr_t(new MemoryMappedFile(fd, offset, size, readOnly));
+    fd.handle = INVALID_HANDLE_VALUE;
+
+    return obj;
 }
 #else
 bool MemoryMappedFile::fill(FileHandle fd, size_t size, uint8_t value)
@@ -116,6 +140,7 @@ bool MemoryMappedFile::fill(FileHandle fd, size_t size, uint8_t value)
             return false;
         }
     }
+
     return true;
 }
 
@@ -129,10 +154,11 @@ MemoryMappedFile::ptr_t MemoryMappedFile::createNew(const char *filename, off_t 
         throw IOException(std::string("failed to create file: ") + filename, SOURCEINFO);
     }
 
-    OnScopeExit tidy([&]()
-    {
-        close(fd.handle);
-    });
+    OnScopeExit tidy(
+        [&]()
+        {
+            close(fd.handle);
+        });
 
     if (!fill(fd, size, 0))
     {
@@ -152,10 +178,11 @@ MemoryMappedFile::ptr_t MemoryMappedFile::mapExisting(const char *filename, off_
         throw IOException(std::string("failed to open existing file: ") + filename, SOURCEINFO);
     }
 
-    OnScopeExit tidy([&]()
-    {
-        close(fd.handle);
-    });
+    OnScopeExit tidy(
+        [&]()
+        {
+            close(fd.handle);
+        });
 
     return MemoryMappedFile::ptr_t(new MemoryMappedFile(fd, offset, length, readOnly));
 }
@@ -181,6 +208,8 @@ size_t MemoryMappedFile::m_page_size = getPageSize();
 #ifdef _WIN32
 MemoryMappedFile::MemoryMappedFile(FileHandle fd, size_t offset, size_t length, bool readOnly)
 {
+    m_file = fd.handle;
+
     if (0 == length && 0 == offset)
     {
         LARGE_INTEGER fileSize;
@@ -205,19 +234,22 @@ MemoryMappedFile::MemoryMappedFile(FileHandle fd, size_t offset, size_t length, 
 
 void MemoryMappedFile::cleanUp()
 {
-    if (m_file)
-    {
-        CloseHandle(m_file);
-    }
-
     if (m_memory)
     {
         UnmapViewOfFile(m_memory);
+        m_memory = NULL;
     }
 
     if (m_mapping)
     {
         CloseHandle(m_mapping);
+        m_mapping = NULL;
+    }
+
+    if (m_file)
+    {
+        CloseHandle(m_file);
+        m_file = NULL;
     }
 }
 
@@ -226,7 +258,7 @@ MemoryMappedFile::~MemoryMappedFile()
     cleanUp();
 }
 
-uint8_t* MemoryMappedFile::doMapping(size_t size, FileHandle fd, size_t offset, bool readOnly)
+uint8_t * MemoryMappedFile::doMapping(size_t size, FileHandle fd, size_t offset, bool readOnly)
 {
     DWORD flProtect = readOnly ? PAGE_READONLY : PAGE_READWRITE;
     m_mapping = CreateFileMapping(fd.handle, NULL, flProtect, 0, (DWORD)size, NULL);
@@ -236,7 +268,7 @@ uint8_t* MemoryMappedFile::doMapping(size_t size, FileHandle fd, size_t offset, 
     }
 
     DWORD dwDesiredAccess = readOnly ? FILE_MAP_READ : FILE_MAP_ALL_ACCESS;
-    void* memory = (LPTSTR)MapViewOfFile(m_mapping, dwDesiredAccess, 0, (DWORD)offset, size);
+    void *memory = (LPTSTR)MapViewOfFile(m_mapping, dwDesiredAccess, 0, (DWORD)offset, size);
 
     return static_cast<uint8_t*>(memory);
 }
@@ -266,7 +298,7 @@ MemoryMappedFile::MemoryMappedFile(FileHandle fd, off_t offset, size_t length, b
 {
     if (0 == length && 0 == offset)
     {
-        struct stat statInfo;
+        struct stat statInfo{};
         ::fstat(fd.handle, &statInfo);
         length = statInfo.st_size;
     }
@@ -285,10 +317,10 @@ MemoryMappedFile::~MemoryMappedFile()
 
 uint8_t* MemoryMappedFile::doMapping(size_t length, FileHandle fd, size_t offset, bool readOnly)
 {
-    void* memory = ::mmap(
+    void *memory = ::mmap(
         NULL,
         length,
-        (readOnly ? PROT_READ : (PROT_READ | PROT_WRITE)),
+        readOnly ? PROT_READ : (PROT_READ | PROT_WRITE),
         MAP_SHARED,
         fd.handle,
         static_cast<off_t>(offset));
@@ -308,7 +340,7 @@ size_t MemoryMappedFile::getPageSize() noexcept
 
 std::int64_t MemoryMappedFile::getFileSize(const char *filename)
 {
-    struct stat statInfo;
+    struct stat statInfo{};
 
     if (::stat(filename, &statInfo) < 0)
     {

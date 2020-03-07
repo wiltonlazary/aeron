@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,6 +15,7 @@
  */
 package io.aeron.driver.media;
 
+import io.aeron.ChannelUri;
 import io.aeron.CommonContext;
 import io.aeron.ErrorCode;
 import io.aeron.driver.*;
@@ -24,7 +25,7 @@ import io.aeron.protocol.NakFlyweight;
 import io.aeron.protocol.RttMeasurementFlyweight;
 import io.aeron.protocol.StatusMessageFlyweight;
 import org.agrona.collections.BiInt2ObjectMap;
-import org.agrona.concurrent.UnsafeBuffer;
+import org.agrona.concurrent.*;
 import org.agrona.concurrent.status.AtomicCounter;
 
 import java.io.IOException;
@@ -45,12 +46,14 @@ public class SendChannelEndpoint extends UdpChannelTransport
 {
     private static final long DESTINATION_TIMEOUT = TimeUnit.SECONDS.toNanos(5);
 
+    private long timeOfLastSmNs;
     private int refCount = 0;
     private final BiInt2ObjectMap<NetworkPublication> publicationBySessionAndStreamId = new BiInt2ObjectMap<>();
-    private final MultiDestination multiDestination;
+    private final MultiSndDestination multiSndDestination;
     private final AtomicCounter statusMessagesReceived;
     private final AtomicCounter nakMessagesReceived;
     private final AtomicCounter statusIndicator;
+    private final CachedNanoClock cachedNanoClock;
 
     public SendChannelEndpoint(
         final UdpChannel udpChannel, final AtomicCounter statusIndicator, final MediaDriver.Context context)
@@ -59,28 +62,26 @@ public class SendChannelEndpoint extends UdpChannelTransport
             udpChannel,
             udpChannel.remoteControl(),
             udpChannel.localControl(),
-            !udpChannel.hasExplicitControl() ? udpChannel.remoteData() : null,
+            udpChannel.hasExplicitControl() || udpChannel.isManualControlMode() ? null : udpChannel.remoteData(),
             context);
 
         nakMessagesReceived = context.systemCounters().get(NAK_MESSAGES_RECEIVED);
         statusMessagesReceived = context.systemCounters().get(STATUS_MESSAGES_RECEIVED);
         this.statusIndicator = statusIndicator;
+        this.cachedNanoClock = context.cachedNanoClock();
+        this.timeOfLastSmNs = cachedNanoClock.nanoTime();
 
-        MultiDestination multiDestination = null;
-        if (udpChannel.hasExplicitControl())
+        MultiSndDestination multiSndDestination = null;
+        if (udpChannel.isManualControlMode())
         {
-            final String mode = udpChannel.channelUri().get(CommonContext.MDC_CONTROL_MODE_PARAM_NAME);
-            if (CommonContext.MDC_CONTROL_MODE_MANUAL.equals(mode))
-            {
-                multiDestination = new ManualMultiDestination();
-            }
-            else if (null == mode || CommonContext.MDC_CONTROL_MODE_DYNAMIC.equals(mode))
-            {
-                multiDestination = new DynamicMultiDestination(context.cachedNanoClock(), DESTINATION_TIMEOUT);
-            }
+            multiSndDestination = new ManualSndMultiDestination(context.cachedNanoClock(), DESTINATION_TIMEOUT);
+        }
+        else if (udpChannel.isDynamicControlMode() || udpChannel.hasExplicitControl())
+        {
+            multiSndDestination = new DynamicSndMultiDestination(context.cachedNanoClock(), DESTINATION_TIMEOUT);
         }
 
-        this.multiDestination = multiDestination;
+        this.multiSndDestination = multiSndDestination;
     }
 
     public void decRef()
@@ -132,6 +133,7 @@ public class SendChannelEndpoint extends UdpChannelTransport
                 "channel cannot be registered unless INITALIZING: status=" + status(currentStatus));
         }
 
+        statusIndicator.appendToLabel(bindAddressAndPort());
         statusIndicator.setOrdered(ChannelEndpointStatus.ACTIVE);
     }
 
@@ -189,7 +191,7 @@ public class SendChannelEndpoint extends UdpChannelTransport
         {
             final int bytesToSend = buffer.remaining();
 
-            if (null == multiDestination)
+            if (null == multiSndDestination)
             {
                 try
                 {
@@ -209,11 +211,29 @@ public class SendChannelEndpoint extends UdpChannelTransport
             }
             else
             {
-                bytesSent = multiDestination.send(sendDatagramChannel, buffer, this, bytesToSend);
+                bytesSent = multiSndDestination.send(sendDatagramChannel, buffer, this, bytesToSend);
             }
         }
 
         return bytesSent;
+    }
+
+    public void checkForReResolution(final long nowNs, final DriverConductorProxy conductorProxy)
+    {
+        if (udpChannel.isManualControlMode())
+        {
+            multiSndDestination.checkForReResolution(this, nowNs, conductorProxy);
+        }
+        else if (!udpChannel.isMulticast() &&
+            !udpChannel.isDynamicControlMode() &&
+            nowNs > (timeOfLastSmNs + DESTINATION_TIMEOUT))
+        {
+            final String endpoint = udpChannel.channelUri().get(CommonContext.ENDPOINT_PARAM_NAME);
+            final InetSocketAddress address = udpChannel.remoteData();
+
+            conductorProxy.reResolveEndpoint(endpoint, this, address);
+            timeOfLastSmNs = nowNs;
+        }
     }
 
     public void onStatusMessage(
@@ -226,9 +246,9 @@ public class SendChannelEndpoint extends UdpChannelTransport
         final int streamId = msg.streamId();
         final NetworkPublication publication = publicationBySessionAndStreamId.get(sessionId, streamId);
 
-        if (null != multiDestination)
+        if (null != multiSndDestination)
         {
-            multiDestination.onStatusMessage(msg, srcAddress);
+            multiSndDestination.onStatusMessage(msg, srcAddress);
 
             if (0 == sessionId && 0 == streamId && SEND_SETUP_FLAG == (msg.flags() & SEND_SETUP_FLAG))
             {
@@ -248,6 +268,7 @@ public class SendChannelEndpoint extends UdpChannelTransport
                 publication.onStatusMessage(msg, srcAddress);
             }
 
+            timeOfLastSmNs = cachedNanoClock.nanoTime();
             statusMessagesReceived.incrementOrdered();
         }
     }
@@ -283,19 +304,31 @@ public class SendChannelEndpoint extends UdpChannelTransport
 
     public void validateAllowsManualControl()
     {
-        if (null == multiDestination || !multiDestination.isManualControlMode())
+        if (!(multiSndDestination instanceof ManualSndMultiDestination))
         {
             throw new ControlProtocolException(ErrorCode.INVALID_CHANNEL, "channel does not allow manual control");
         }
     }
 
-    public void addDestination(final InetSocketAddress address)
+    public void addDestination(final ChannelUri channelUri, final InetSocketAddress address)
     {
-        multiDestination.addDestination(address);
+        multiSndDestination.addDestination(channelUri, address);
     }
 
-    public void removeDestination(final InetSocketAddress address)
+    public void removeDestination(final ChannelUri channelUri, final InetSocketAddress address)
     {
-        multiDestination.removeDestination(address);
+        multiSndDestination.removeDestination(channelUri, address);
+    }
+
+    public void resolutionChange(final String endpoint, final InetSocketAddress newAddress)
+    {
+        if (null != multiSndDestination)
+        {
+            multiSndDestination.updateDestination(endpoint, newAddress);
+        }
+        else
+        {
+            updateEndpoint(newAddress, statusIndicator);
+        }
     }
 }

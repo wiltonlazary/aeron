@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,14 +15,16 @@
  */
 package io.aeron.cluster;
 
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 import static io.aeron.Aeron.NULL_VALUE;
 
 public class ServiceIpcIngressTest
 {
-    @Test(timeout = 10_000L)
-    public void shouldEchoIpcMessages() throws Exception
+    @Test
+    @Timeout(20)
+    public void shouldEchoIpcMessages()
     {
         try (TestCluster cluster = TestCluster.startThreeNodeStaticCluster(NULL_VALUE))
         {
@@ -36,10 +38,10 @@ public class ServiceIpcIngressTest
                 cluster.sendMessage(TestMessages.ECHO_IPC_INGRESS.length());
             }
 
-            cluster.awaitResponses(messageCount);
-            cluster.awaitMessageCountForService(cluster.node(0), messageCount);
-            cluster.awaitMessageCountForService(cluster.node(1), messageCount);
-            cluster.awaitMessageCountForService(cluster.node(2), messageCount);
+            cluster.awaitResponseMessageCount(messageCount);
+            cluster.awaitServiceMessageCount(cluster.node(0), messageCount);
+            cluster.awaitServiceMessageCount(cluster.node(1), messageCount);
+            cluster.awaitServiceMessageCount(cluster.node(2), messageCount);
         }
     }
 }

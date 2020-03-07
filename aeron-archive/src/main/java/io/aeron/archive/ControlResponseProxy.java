@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@ package io.aeron.archive;
 
 import io.aeron.Publication;
 import io.aeron.Subscription;
+import io.aeron.archive.client.AeronArchive;
 import io.aeron.archive.client.ArchiveException;
 import io.aeron.archive.codecs.*;
 import io.aeron.logbuffer.BufferClaim;
@@ -43,6 +44,7 @@ class ControlResponseProxy
     private final RecordingSubscriptionDescriptorEncoder recordingSubscriptionDescriptorEncoder =
         new RecordingSubscriptionDescriptorEncoder();
     private final RecordingSignalEventEncoder recordingSignalEventEncoder = new RecordingSignalEventEncoder();
+    private final ChallengeEncoder challengeEncoder = new ChallengeEncoder();
 
     int sendDescriptor(
         final long controlSessionId,
@@ -115,38 +117,25 @@ class ControlResponseProxy
             .correlationId(correlationId)
             .relevantId(relevantId)
             .code(code)
+            .version(AeronArchive.Configuration.PROTOCOL_SEMANTIC_VERSION)
             .errorMessage(errorMessage);
 
-        return send(session, buffer, MESSAGE_HEADER_LENGTH + responseEncoder.encodedLength());
+        return sendResponseHook(session, buffer, MESSAGE_HEADER_LENGTH + responseEncoder.encodedLength());
     }
 
-    void attemptErrorResponse(
+    boolean sendChallenge(
         final long controlSessionId,
         final long correlationId,
-        final long relevantId,
-        final String errorMessage,
-        final Publication controlPublication)
+        final byte[] encodedChallenge,
+        final ControlSession session)
     {
-        responseEncoder
+        challengeEncoder
             .wrapAndApplyHeader(buffer, 0, messageHeaderEncoder)
             .controlSessionId(controlSessionId)
             .correlationId(correlationId)
-            .relevantId(relevantId)
-            .code(ControlResponseCode.ERROR)
-            .errorMessage(errorMessage);
+            .putEncodedChallenge(encodedChallenge, 0, encodedChallenge.length);
 
-        final int length = MESSAGE_HEADER_LENGTH + responseEncoder.encodedLength();
-
-        int attempts = SEND_ATTEMPTS;
-        do
-        {
-            final long result = controlPublication.offer(buffer, 0, length);
-            if (result > 0)
-            {
-                break;
-            }
-        }
-        while (--attempts > 0);
+        return send(session, buffer, MESSAGE_HEADER_LENGTH + challengeEncoder.encodedLength());
     }
 
     void attemptSendSignal(
@@ -183,6 +172,11 @@ class ControlResponseProxy
             }
         }
         while (--attempts > 0);
+    }
+
+    private boolean sendResponseHook(final ControlSession session, final DirectBuffer buffer, final int length)
+    {
+        return send(session, buffer, length);
     }
 
     private boolean send(final ControlSession session, final DirectBuffer buffer, final int length)

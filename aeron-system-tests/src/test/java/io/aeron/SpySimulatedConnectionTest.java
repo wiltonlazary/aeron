@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,34 +20,36 @@ import io.aeron.driver.ThreadingMode;
 import io.aeron.logbuffer.FragmentHandler;
 import io.aeron.logbuffer.LogBufferDescriptor;
 import io.aeron.protocol.DataHeaderFlyweight;
+import io.aeron.test.MediaDriverTestWatcher;
+import io.aeron.test.TestMediaDriver;
+import io.aeron.test.Tests;
 import org.agrona.CloseHelper;
 import org.agrona.collections.MutableInteger;
 import org.agrona.concurrent.UnsafeBuffer;
-import org.junit.After;
-import org.junit.Test;
-import org.junit.experimental.theories.DataPoint;
-import org.junit.experimental.theories.Theories;
-import org.junit.experimental.theories.Theory;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.extension.RegisterExtension;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
-import static io.aeron.SystemTest.spyForChannel;
-import static org.hamcrest.Matchers.is;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertThat;
+import static java.util.Arrays.asList;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.mockito.Mockito.mock;
 
-@RunWith(Theories.class)
 public class SpySimulatedConnectionTest
 {
-    @DataPoint
-    public static final String UNICAST_CHANNEL = "aeron:udp?endpoint=localhost:54325";
+    private static List<String> channels()
+    {
+        return asList(
+            "aeron:udp?endpoint=localhost:24325",
+            "aeron:udp?endpoint=224.20.30.39:24326|interface=localhost");
+    }
 
-    @DataPoint
-    public static final String MULTICAST_CHANNEL = "aeron:udp?endpoint=224.20.30.39:54326|interface=localhost";
-
-    private static final int STREAM_ID = 1;
+    private static final int STREAM_ID = 1001;
 
     private static final int TERM_BUFFER_LENGTH = LogBufferDescriptor.TERM_MIN_LENGTH;
     private static final int NUM_MESSAGES_PER_TERM = 64;
@@ -57,7 +59,7 @@ public class SpySimulatedConnectionTest
     private final MediaDriver.Context driverContext = new MediaDriver.Context();
 
     private Aeron client;
-    private MediaDriver driver;
+    private TestMediaDriver driver;
     private Publication publication;
     private Subscription subscription;
     private Subscription spy;
@@ -70,30 +72,30 @@ public class SpySimulatedConnectionTest
     private final MutableInteger fragmentCountSub = new MutableInteger();
     private final FragmentHandler fragmentHandlerSub = (buffer1, offset, length, header) -> fragmentCountSub.value++;
 
+    @RegisterExtension
+    public final MediaDriverTestWatcher watcher = new MediaDriverTestWatcher();
+
     private void launch()
     {
         driverContext.publicationTermBufferLength(TERM_BUFFER_LENGTH)
             .errorHandler(Throwable::printStackTrace)
-            .dirDeleteOnShutdown(true)
+            .dirDeleteOnStart(true)
             .threadingMode(ThreadingMode.SHARED);
 
-        driver = MediaDriver.launch(driverContext);
+        driver = TestMediaDriver.launch(driverContext, watcher);
         client = Aeron.connect();
     }
 
-    @After
+    @AfterEach
     public void after()
     {
-        CloseHelper.quietClose(publication);
-        CloseHelper.quietClose(subscription);
-        CloseHelper.quietClose(spy);
-
-        CloseHelper.quietClose(client);
-        CloseHelper.quietClose(driver);
+        CloseHelper.closeAll(client, driver);
+        driver.context().deleteDirectory();
     }
 
-    @Theory
-    @Test(timeout = 10_000)
+    @ParameterizedTest
+    @MethodSource("channels")
+    @Timeout(10)
     public void shouldNotSimulateConnectionWhenNotConfiguredTo(final String channel)
     {
         launch();
@@ -103,15 +105,16 @@ public class SpySimulatedConnectionTest
 
         while (!spy.isConnected())
         {
-            SystemTest.checkInterruptedStatus();
             Thread.yield();
+            Tests.checkInterruptStatus();
         }
 
         assertFalse(publication.isConnected());
     }
 
-    @Theory
-    @Test(timeout = 10_000)
+    @ParameterizedTest
+    @MethodSource("channels")
+    @Timeout(10)
     public void shouldSimulateConnectionWithNoNetworkSubscriptions(final String channel)
     {
         final int messagesToSend = NUM_MESSAGES_PER_TERM * 3;
@@ -128,20 +131,20 @@ public class SpySimulatedConnectionTest
 
         while (!spy.isConnected() || !publication.isConnected())
         {
-            SystemTest.checkInterruptedStatus();
             Thread.yield();
+            Tests.checkInterruptStatus();
         }
 
         for (int i = 0; i < messagesToSend; i++)
         {
             while (publication.offer(buffer, 0, buffer.capacity()) < 0L)
             {
-                SystemTest.checkInterruptedStatus();
                 Thread.yield();
+                Tests.checkInterruptStatus();
             }
 
             final MutableInteger fragmentsRead = new MutableInteger();
-            SystemTest.executeUntil(
+            Tests.executeUntil(
                 () -> fragmentsRead.get() > 0,
                 (j) ->
                 {
@@ -156,11 +159,12 @@ public class SpySimulatedConnectionTest
                 TimeUnit.MILLISECONDS.toNanos(500));
         }
 
-        assertThat(fragmentCountSpy.value, is(messagesToSend));
+        assertEquals(messagesToSend, fragmentCountSpy.value);
     }
 
-    @Theory
-    @Test(timeout = 10_000)
+    @ParameterizedTest
+    @MethodSource("channels")
+    @Timeout(10)
     public void shouldSimulateConnectionWithSlowNetworkSubscription(final String channel)
     {
         final int messagesToSend = NUM_MESSAGES_PER_TERM * 3;
@@ -191,8 +195,8 @@ public class SpySimulatedConnectionTest
                 }
             }
 
-            SystemTest.checkInterruptedStatus();
             Thread.yield();
+            Tests.checkInterruptStatus();
 
             fragmentsFromSpy += spy.poll(fragmentHandlerSpy, 10);
 
@@ -203,12 +207,13 @@ public class SpySimulatedConnectionTest
             }
         }
 
-        assertThat(fragmentCountSpy.value, is(messagesToSend));
-        assertThat(fragmentCountSub.value, is(messagesToSend));
+        assertEquals(messagesToSend, fragmentCountSpy.value);
+        assertEquals(messagesToSend, fragmentCountSub.value);
     }
 
-    @Theory
-    @Test(timeout = 10_000)
+    @ParameterizedTest
+    @MethodSource("channels")
+    @Timeout(10)
     public void shouldSimulateConnectionWithLeavingNetworkSubscription(final String channel)
     {
         final int messagesToSend = NUM_MESSAGES_PER_TERM * 3;
@@ -240,7 +245,7 @@ public class SpySimulatedConnectionTest
                 }
                 else
                 {
-                    SystemTest.checkInterruptedStatus();
+                    Tests.checkInterruptStatus();
                 }
             }
 
@@ -258,34 +263,41 @@ public class SpySimulatedConnectionTest
             }
         }
 
-        assertThat(fragmentCountSpy.value, is(messagesToSend));
+        assertEquals(messagesToSend, fragmentCountSpy.value);
     }
 
     private void waitUntilFullConnectivity()
     {
         while (!spy.isConnected() || !subscription.isConnected() || !publication.isConnected())
         {
-            SystemTest.checkInterruptedStatus();
             Thread.yield();
+            Tests.checkInterruptStatus();
         }
 
         // send initial message to ensure connectivity
         while (publication.offer(buffer, 0, buffer.capacity()) < 0L)
         {
-            SystemTest.checkInterruptedStatus();
             Thread.yield();
+            Tests.checkInterruptStatus();
         }
 
-        while (spy.poll(mock(FragmentHandler.class), 1) == 0)
+        final FragmentHandler mockFragmentHandler = mock(FragmentHandler.class);
+
+        while (spy.poll(mockFragmentHandler, 1) == 0)
         {
-            SystemTest.checkInterruptedStatus();
             Thread.yield();
+            Tests.checkInterruptStatus();
         }
 
-        while (subscription.poll(mock(FragmentHandler.class), 1) == 0)
+        while (subscription.poll(mockFragmentHandler, 1) == 0)
         {
-            SystemTest.checkInterruptedStatus();
             Thread.yield();
+            Tests.checkInterruptStatus();
         }
+    }
+
+    private static String spyForChannel(final String channel)
+    {
+        return CommonContext.SPY_PREFIX + channel;
     }
 }

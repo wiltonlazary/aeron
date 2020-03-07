@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,8 +26,9 @@ import org.agrona.ErrorHandler;
 import org.agrona.MutableDirectBuffer;
 import org.agrona.concurrent.*;
 import org.agrona.concurrent.broadcast.CopyBroadcastReceiver;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Lock;
@@ -42,8 +43,7 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.sameInstance;
 import static org.hamcrest.core.Is.is;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 public class ClientConductorTest
@@ -54,8 +54,8 @@ public class ClientConductorTest
     private static final int SESSION_ID_2 = 15;
 
     private static final String CHANNEL = "aeron:udp?endpoint=localhost:40124";
-    private static final int STREAM_ID_1 = 2;
-    private static final int STREAM_ID_2 = 4;
+    private static final int STREAM_ID_1 = 1002;
+    private static final int STREAM_ID_2 = 1004;
     private static final int SEND_BUFFER_CAPACITY = 1024;
     private static final int COUNTER_BUFFER_LENGTH = 1024;
 
@@ -106,7 +106,7 @@ public class ClientConductorTest
     private final Aeron mockAeron = mock(Aeron.class);
     private boolean suppressPrintError = false;
 
-    @Before
+    @BeforeEach
     public void setUp()
     {
         final Aeron.Context ctx = new Aeron.Context()
@@ -216,10 +216,11 @@ public class ClientConductorTest
         verify(logBuffersFactory).map(SESSION_ID_1 + "-log");
     }
 
-    @Test(expected = DriverTimeoutException.class, timeout = 5_000)
+    @Test
+    @Timeout(5)
     public void addPublicationShouldTimeoutWithoutReadyMessage()
     {
-        conductor.addPublication(CHANNEL, STREAM_ID_1);
+        assertThrows(DriverTimeoutException.class, () -> conductor.addPublication(CHANNEL, STREAM_ID_1));
     }
 
     @Test
@@ -263,7 +264,7 @@ public class ClientConductorTest
         assertThat(firstPublication, not(sameInstance(secondPublication)));
     }
 
-    @Test(expected = RegistrationException.class)
+    @Test
     public void shouldFailToClosePublicationOnMediaDriverError()
     {
         whenReceiveBroadcastOnMessage(
@@ -282,10 +283,10 @@ public class ClientConductorTest
                 return errorResponse.length();
             });
 
-        publication.close();
+        assertThrows(RegistrationException.class, publication::close);
     }
 
-    @Test(expected = RegistrationException.class)
+    @Test
     public void shouldFailToAddPublicationOnMediaDriverError()
     {
         whenReceiveBroadcastOnMessage(
@@ -299,7 +300,7 @@ public class ClientConductorTest
                 return errorResponse.length();
             });
 
-        conductor.addPublication(CHANNEL, STREAM_ID_1);
+        assertThrows(RegistrationException.class, () -> conductor.addPublication(CHANNEL, STREAM_ID_1));
     }
 
     @Test
@@ -414,13 +415,14 @@ public class ClientConductorTest
         verify(driverProxy).removeSubscription(CORRELATION_ID);
     }
 
-    @Test(expected = DriverTimeoutException.class, timeout = 5_000)
+    @Test
+    @Timeout(5)
     public void addSubscriptionShouldTimeoutWithoutOperationSuccessful()
     {
-        conductor.addSubscription(CHANNEL, STREAM_ID_1);
+        assertThrows(DriverTimeoutException.class, () -> conductor.addSubscription(CHANNEL, STREAM_ID_1));
     }
 
-    @Test(expected = RegistrationException.class)
+    @Test
     public void shouldFailToAddSubscriptionOnMediaDriverError()
     {
         whenReceiveBroadcastOnMessage(
@@ -434,7 +436,7 @@ public class ClientConductorTest
                 return errorResponse.length();
             });
 
-        conductor.addSubscription(CHANNEL, STREAM_ID_1);
+        assertThrows(RegistrationException.class, () -> conductor.addSubscription(CHANNEL, STREAM_ID_1));
     }
 
     @Test

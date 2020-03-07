@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -71,17 +71,17 @@ int aeron_properties_parse_line(
             return 0;
         }
 
-        for (size_t i = cursor; i < length; i++)
+        for (size_t i = (size_t)cursor; i < length; i++)
         {
             const char c = line[i];
 
             if (':' == c || '=' == c)
             {
                 state->property_str[state->name_end] = '\0';
-                value_start = i + 1;
+                value_start = (int)i + 1;
 
                 /* trim back for whitespace after name */
-                for (int j = i - 1; j >= 0; j--)
+                for (int j = (int)i - 1; j >= 0; j--)
                 {
                     if (' ' != line[j] && '\t' != line[j])
                     {
@@ -105,7 +105,7 @@ int aeron_properties_parse_line(
             return -1;
         }
 
-        value_start = aeron_next_non_whitespace(line, value_start, length - 1);
+        value_start = aeron_next_non_whitespace(line, (size_t)value_start, length - 1);
 
         if (-1 == value_start)
         {
@@ -119,7 +119,7 @@ int aeron_properties_parse_line(
     }
     else
     {
-        value_start = aeron_next_non_whitespace(line, value_start, length - 1);
+        value_start = aeron_next_non_whitespace(line, (size_t)value_start, length - 1);
 
         if (-1 == value_start || '!' == line[value_start] || '#' == line[value_start])
         {
@@ -165,7 +165,7 @@ int aeron_properties_setenv(const char *name, const char *value)
         }
         else
         {
-            env_name[i] = toupper(c);
+            env_name[i] = (char)toupper(c);
         }
     }
 
@@ -241,9 +241,7 @@ int aeron_properties_file_load(const char *filename)
 
     if (!feof(fpin))
     {
-        int err_code = errno;
-
-        aeron_set_err(err_code, "error reading file: %s", strerror(err_code));
+        aeron_set_err_from_last_err_code("error reading file");
         goto cleanup;
     }
     else
@@ -373,7 +371,7 @@ int aeron_properties_http_load(const char *url)
 
 int aeron_properties_load(const char *url_or_filename)
 {
-    int result = -1;
+    int result;
 
     if (strncmp("file://", url_or_filename, strlen("file://")) == 0)
     {

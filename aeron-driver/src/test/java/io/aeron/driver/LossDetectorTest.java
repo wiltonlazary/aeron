@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,7 @@
 package io.aeron.driver;
 
 import io.aeron.logbuffer.LogBufferDescriptor;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
 import io.aeron.logbuffer.FrameDescriptor;
 import io.aeron.logbuffer.TermRebuilder;

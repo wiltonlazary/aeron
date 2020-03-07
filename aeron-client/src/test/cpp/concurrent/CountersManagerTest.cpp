@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,7 +17,6 @@
 #include <array>
 #include <vector>
 #include <map>
-#include <thread>
 #include <string>
 
 #include <gtest/gtest.h>
@@ -99,11 +98,12 @@ TEST_F(CountersManagerTest, checkAlloc)
 
     ASSERT_NO_THROW(
     {
-        m_countersManager.forEach([&](std::int32_t counterId, std::int32_t, const AtomicBuffer&, const std::string &label)
-        {
-            ASSERT_EQ(label, allocated[counterId]);
-            allocated.erase(allocated.find(counterId));
-        });
+        m_countersManager.forEach(
+            [&](std::int32_t counterId, std::int32_t, const AtomicBuffer&, const std::string &label)
+            {
+                ASSERT_EQ(label, allocated[counterId]);
+                allocated.erase(allocated.find(counterId));
+            });
     });
 
     ASSERT_EQ(allocated.empty(), true);

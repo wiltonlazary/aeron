@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,37 +15,48 @@
  */
 package io.aeron;
 
-import io.aeron.driver.*;
-import io.aeron.driver.ext.*;
-import io.aeron.driver.reports.LossReport;
-import io.aeron.logbuffer.*;
+import io.aeron.driver.MediaDriver;
+import io.aeron.driver.ThreadingMode;
+import io.aeron.driver.ext.DebugChannelEndpointConfiguration;
+import io.aeron.driver.ext.DebugSendChannelEndpoint;
+import io.aeron.driver.ext.LossGenerator;
+import io.aeron.logbuffer.FragmentHandler;
+import io.aeron.logbuffer.Header;
+import io.aeron.logbuffer.LogBufferDescriptor;
+import io.aeron.test.MediaDriverTestWatcher;
+import io.aeron.test.TestMediaDriver;
+import io.aeron.test.Tests;
 import org.agrona.DirectBuffer;
-import org.agrona.concurrent.*;
-import org.junit.Test;
+import org.agrona.concurrent.UnsafeBuffer;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.extension.RegisterExtension;
 
 import java.nio.ByteBuffer;
 import java.util.concurrent.atomic.AtomicLong;
 
+import static io.aeron.test.LossReportTestUtil.verifyLossOccurredForStream;
+import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.lessThan;
-import static org.junit.Assert.assertThat;
-import static org.mockito.ArgumentMatchers.*;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verify;
 
 public class GapFillLossTest
 {
-    private static final String CHANNEL = "aeron:udp?endpoint=localhost:54325";
+    private static final String CHANNEL = "aeron:udp?endpoint=localhost:24325";
     private static final String UNRELIABLE_CHANNEL =
         CHANNEL + "|" + CommonContext.RELIABLE_STREAM_PARAM_NAME + "=false";
 
-    private static final int STREAM_ID = 1;
+    private static final int STREAM_ID = 1001;
     private static final int FRAGMENT_COUNT_LIMIT = 10;
     private static final int MSG_LENGTH = 1024;
     private static final int NUM_MESSAGES = 10_000;
 
     private static final AtomicLong FINAL_POSITION = new AtomicLong(Long.MAX_VALUE);
 
-    @Test(timeout = 10_000)
+    @RegisterExtension
+    MediaDriverTestWatcher watcher = new MediaDriverTestWatcher();
+
+    @Test
+    @Timeout(10)
     public void shouldGapFillWhenLossOccurs() throws Exception
     {
         final UnsafeBuffer srcBuffer = new UnsafeBuffer(ByteBuffer.allocateDirect(MSG_LENGTH));
@@ -55,25 +66,17 @@ public class GapFillLossTest
             .errorHandler(Throwable::printStackTrace)
             .threadingMode(ThreadingMode.SHARED)
             .dirDeleteOnStart(true)
-            .dirDeleteOnShutdown(true)
             .publicationTermBufferLength(LogBufferDescriptor.TERM_MIN_LENGTH);
 
-        final LossReport lossReport = mock(LossReport.class);
-        ctx.lossReport(lossReport);
-
-        final LossGenerator dataLossGenerator =
-            DebugChannelEndpointConfiguration.lossGeneratorSupplier(0.20, 0xcafebabeL);
         final LossGenerator noLossGenerator =
             DebugChannelEndpointConfiguration.lossGeneratorSupplier(0, 0);
 
         ctx.sendChannelEndpointSupplier((udpChannel, statusIndicator, context) -> new DebugSendChannelEndpoint(
             udpChannel, statusIndicator, context, noLossGenerator, noLossGenerator));
 
-        ctx.receiveChannelEndpointSupplier(
-            (udpChannel, dispatcher, statusIndicator, context) -> new DebugReceiveChannelEndpoint(
-            udpChannel, dispatcher, statusIndicator, context, dataLossGenerator, noLossGenerator));
+        TestMediaDriver.enableLossGenerationOnReceive(ctx, 0.20, 0xcafebabeL, true, false);
 
-        try (MediaDriver ignore = MediaDriver.launch(ctx);
+        try (TestMediaDriver ignore = TestMediaDriver.launch(ctx, watcher);
             Aeron aeron = Aeron.connect();
             Subscription subscription = aeron.addSubscription(UNRELIABLE_CHANNEL, STREAM_ID);
             Publication publication = aeron.addPublication(CHANNEL, STREAM_ID))
@@ -90,16 +93,20 @@ public class GapFillLossTest
 
                 while ((position = publication.offer(srcBuffer)) < 0L)
                 {
-                    SystemTest.checkInterruptedStatus();
                     Thread.yield();
+                    Tests.checkInterruptStatus();
                 }
             }
 
             FINAL_POSITION.set(position);
             subscriberThread.join();
 
+            verifyLossOccurredForStream(ctx.aeronDirectoryName(), STREAM_ID);
             assertThat(subscriber.messageCount, lessThan(NUM_MESSAGES));
-            verify(lossReport).createEntry(anyLong(), anyLong(), anyInt(), eq(STREAM_ID), anyString(), anyString());
+        }
+        finally
+        {
+            ctx.deleteDirectory();
         }
     }
 
@@ -117,8 +124,8 @@ public class GapFillLossTest
         {
             while (!subscription.isConnected())
             {
-                SystemTest.checkInterruptedStatus();
                 Thread.yield();
+                Tests.checkInterruptStatus();
             }
 
             final Image image = subscription.imageAtIndex(0);
@@ -128,12 +135,13 @@ public class GapFillLossTest
                 final int fragments = subscription.poll(this, FRAGMENT_COUNT_LIMIT);
                 if (0 == fragments)
                 {
-                    SystemTest.checkInterruptedStatus();
+                    Tests.checkInterruptStatus();
                     if (subscription.isClosed())
                     {
                         return;
                     }
                 }
+
                 Thread.yield();
             }
         }

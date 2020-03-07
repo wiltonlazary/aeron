@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -40,8 +40,8 @@ final class DedicatedModeArchiveConductor extends ArchiveConductor
     {
         super.onStart();
 
-        recorderAgentRunner = new AgentRunner(ctx.idleStrategy(), errorHandler, ctx.errorCounter(), recorder);
-        replayerAgentRunner = new AgentRunner(ctx.idleStrategy(), errorHandler, ctx.errorCounter(), replayer);
+        recorderAgentRunner = new AgentRunner(ctx.recorderIdleStrategy(), errorHandler, ctx.errorCounter(), recorder);
+        replayerAgentRunner = new AgentRunner(ctx.replayerIdleStrategy(), errorHandler, ctx.errorCounter(), replayer);
 
         AgentRunner.startOnThread(replayerAgentRunner, ctx.threadFactory());
         AgentRunner.startOnThread(recorderAgentRunner, ctx.threadFactory());
@@ -64,31 +64,16 @@ final class DedicatedModeArchiveConductor extends ArchiveConductor
 
     protected void closeSessionWorkers()
     {
-        try
-        {
-            CloseHelper.close(recorderAgentRunner);
-        }
-        catch (final Exception ex)
-        {
-            errorHandler.onError(ex);
-        }
-
-        try
-        {
-            CloseHelper.close(replayerAgentRunner);
-        }
-        catch (final Exception ex)
-        {
-            errorHandler.onError(ex);
-        }
+        CloseHelper.close(errorHandler, recorderAgentRunner);
+        CloseHelper.close(errorHandler, replayerAgentRunner);
 
         while (processCloseQueue() > 0 || !closeQueue.isEmpty())
         {
+            Thread.yield();
             if (Thread.currentThread().isInterrupted())
             {
                 break;
             }
-            Thread.yield();
         }
     }
 
@@ -149,15 +134,15 @@ final class DedicatedModeArchiveConductor extends ArchiveConductor
                 throw new AgentTerminationException();
             }
 
-            return drain();
+            return drainSessionsQueue();
         }
 
         protected void preSessionsClose()
         {
-            drain();
+            drainSessionsQueue();
         }
 
-        private int drain()
+        private int drainSessionsQueue()
         {
             int workCount = 0;
             RecordingSession session;
@@ -180,12 +165,16 @@ final class DedicatedModeArchiveConductor extends ArchiveConductor
         {
             while (!closeQueue.offer(session))
             {
+                if (!errorCounter.isClosed())
+                {
+                    errorCounter.increment();
+                }
+
+                Thread.yield();
                 if (Thread.currentThread().isInterrupted())
                 {
                     break;
                 }
-                errorCounter.increment();
-                Thread.yield();
             }
         }
 
@@ -201,12 +190,16 @@ final class DedicatedModeArchiveConductor extends ArchiveConductor
         {
             while (!sessionsQueue.offer(session))
             {
+                if (!errorCounter.isClosed())
+                {
+                    errorCounter.increment();
+                }
+
+                Thread.yield();
                 if (Thread.currentThread().isInterrupted())
                 {
                     break;
                 }
-                errorCounter.increment();
-                Thread.yield();
             }
         }
     }
@@ -250,15 +243,15 @@ final class DedicatedModeArchiveConductor extends ArchiveConductor
                 throw new AgentTerminationException();
             }
 
-            return drain();
+            return drainSessionQueue();
         }
 
         protected void preSessionsClose()
         {
-            drain();
+            drainSessionQueue();
         }
 
-        private int drain()
+        private int drainSessionQueue()
         {
             int workCount = 0;
             ReplaySession session;
@@ -276,12 +269,16 @@ final class DedicatedModeArchiveConductor extends ArchiveConductor
         {
             while (!closeQueue.offer(session))
             {
+                if (!errorCounter.isClosed())
+                {
+                    errorCounter.increment();
+                }
+
+                Thread.yield();
                 if (Thread.currentThread().isInterrupted())
                 {
                     break;
                 }
-                errorCounter.increment();
-                Thread.yield();
             }
         }
 
@@ -297,12 +294,16 @@ final class DedicatedModeArchiveConductor extends ArchiveConductor
         {
             while (!sessionsQueue.offer(session))
             {
+                if (!errorCounter.isClosed())
+                {
+                    errorCounter.increment();
+                }
+
+                Thread.yield();
                 if (Thread.currentThread().isInterrupted())
                 {
                     break;
                 }
-                errorCounter.increment();
-                Thread.yield();
             }
         }
     }

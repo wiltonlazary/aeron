@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,29 +15,36 @@
  */
 package io.aeron.cluster;
 
+import io.aeron.cluster.client.AeronCluster;
 import io.aeron.cluster.service.Cluster;
+import io.aeron.test.SlowTest;
+import io.aeron.test.Tests;
+import org.agrona.ExpandableArrayBuffer;
 import org.agrona.collections.MutableInteger;
 import org.agrona.concurrent.IdleStrategy;
 import org.agrona.concurrent.YieldingIdleStrategy;
 import org.agrona.concurrent.status.CountersReader;
-import org.junit.*;
+import org.junit.jupiter.api.Disabled;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.LockSupport;
 
 import static io.aeron.Aeron.NULL_VALUE;
+import static io.aeron.cluster.TestCluster.awaitElectionClosed;
 import static io.aeron.cluster.service.CommitPos.COMMIT_POSITION_TYPE_ID;
-import static org.hamcrest.core.Is.is;
-import static org.junit.Assert.*;
+import static org.junit.jupiter.api.Assertions.*;
 
-@Ignore
+@SlowTest
 public class ClusterTest
 {
     private static final String MSG = "Hello World!";
 
-    @Test(timeout = 30_000)
-    public void shouldStopFollowerAndRestartFollower() throws Exception
+    @Test
+    @Timeout(30)
+    public void shouldStopFollowerAndRestartFollower()
     {
         try (TestCluster cluster = TestCluster.startThreeNodeStaticCluster(NULL_VALUE))
         {
@@ -46,53 +53,49 @@ public class ClusterTest
             TestNode follower = cluster.followers().get(0);
 
             cluster.stopNode(follower);
-            Thread.sleep(1_000);
-            follower = cluster.startStaticNode(follower.index(), false);
-            Thread.sleep(1_000);
 
-            assertThat(follower.role(), is(Cluster.Role.FOLLOWER));
+            Tests.sleep(1_000); // wait until existing replay can be cleaned up by conductor.
+
+            follower = cluster.startStaticNode(follower.index(), false);
+
+            awaitElectionClosed(follower);
+            assertEquals(Cluster.Role.FOLLOWER, follower.role());
         }
     }
 
-    @Test(timeout = 30_000)
-    public void shouldNotifyClientOfNewLeader() throws Exception
+    @Test
+    @Timeout(40)
+    public void shouldNotifyClientOfNewLeader()
     {
         try (TestCluster cluster = TestCluster.startThreeNodeStaticCluster(NULL_VALUE))
         {
             final TestNode leader = cluster.awaitLeader();
 
             cluster.connectClient();
-
             cluster.stopNode(leader);
-
             cluster.awaitLeadershipEvent(1);
         }
     }
 
-    @Test(timeout = 30_000)
-    public void shouldStopLeaderAndFollowersThenRestartAllWithSnapshot() throws Exception
+    @Test
+    @Timeout(30)
+    public void shouldStopLeaderAndFollowersThenRestartAllWithSnapshot()
     {
         try (TestCluster cluster = TestCluster.startThreeNodeStaticCluster(NULL_VALUE))
         {
             final TestNode leader = cluster.awaitLeader();
 
             cluster.takeSnapshot(leader);
-            cluster.awaitSnapshotCounter(cluster.node(0), 1);
-            cluster.awaitSnapshotCounter(cluster.node(1), 1);
-            cluster.awaitSnapshotCounter(cluster.node(2), 1);
+            cluster.awaitSnapshotCount(cluster.node(0), 1);
+            cluster.awaitSnapshotCount(cluster.node(1), 1);
+            cluster.awaitSnapshotCount(cluster.node(2), 1);
 
-            cluster.stopNode(cluster.node(0));
-            cluster.stopNode(cluster.node(1));
-            cluster.stopNode(cluster.node(2));
+            cluster.stopAllNodes();
 
-            Thread.sleep(1_000);
-
-            cluster.startStaticNode(0, false);
-            cluster.startStaticNode(1, false);
-            cluster.startStaticNode(2, false);
+            cluster.restartAllNodes(false);
 
             cluster.awaitLeader();
-            assertThat(cluster.followers().size(), is(2));
+            assertEquals(2, cluster.followers().size());
 
             cluster.awaitSnapshotLoadedForService(cluster.node(0));
             cluster.awaitSnapshotLoadedForService(cluster.node(1));
@@ -100,8 +103,9 @@ public class ClusterTest
         }
     }
 
-    @Test(timeout = 30_000)
-    public void shouldShutdownClusterAndRestartWithSnapshots() throws Exception
+    @Test
+    @Timeout(30)
+    public void shouldShutdownClusterAndRestartWithSnapshots()
     {
         try (TestCluster cluster = TestCluster.startThreeNodeStaticCluster(NULL_VALUE))
         {
@@ -120,18 +124,12 @@ public class ClusterTest
             assertTrue(cluster.node(1).service().wasSnapshotTaken());
             assertTrue(cluster.node(2).service().wasSnapshotTaken());
 
-            cluster.stopNode(cluster.node(0));
-            cluster.stopNode(cluster.node(1));
-            cluster.stopNode(cluster.node(2));
+            cluster.stopAllNodes();
 
-            Thread.sleep(1_000);
-
-            cluster.startStaticNode(0, false);
-            cluster.startStaticNode(1, false);
-            cluster.startStaticNode(2, false);
+            cluster.restartAllNodes(false);
 
             cluster.awaitLeader();
-            assertThat(cluster.followers().size(), is(2));
+            assertEquals(2, cluster.followers().size());
 
             cluster.awaitSnapshotLoadedForService(cluster.node(0));
             cluster.awaitSnapshotLoadedForService(cluster.node(1));
@@ -139,8 +137,9 @@ public class ClusterTest
         }
     }
 
-    @Test(timeout = 30_000)
-    public void shouldAbortClusterAndRestart() throws Exception
+    @Test
+    @Timeout(30)
+    public void shouldAbortClusterAndRestart()
     {
         try (TestCluster cluster = TestCluster.startThreeNodeStaticCluster(NULL_VALUE))
         {
@@ -159,18 +158,12 @@ public class ClusterTest
             assertFalse(cluster.node(1).service().wasSnapshotTaken());
             assertFalse(cluster.node(2).service().wasSnapshotTaken());
 
-            cluster.stopNode(cluster.node(0));
-            cluster.stopNode(cluster.node(1));
-            cluster.stopNode(cluster.node(2));
+            cluster.stopAllNodes();
 
-            Thread.sleep(1_000);
-
-            cluster.startStaticNode(0, false);
-            cluster.startStaticNode(1, false);
-            cluster.startStaticNode(2, false);
+            cluster.restartAllNodes(false);
 
             cluster.awaitLeader();
-            assertThat(cluster.followers().size(), is(2));
+            assertEquals(2, cluster.followers().size());
 
             assertFalse(cluster.node(0).service().wasSnapshotLoaded());
             assertFalse(cluster.node(1).service().wasSnapshotLoaded());
@@ -178,16 +171,16 @@ public class ClusterTest
         }
     }
 
-    @Test(timeout = 30_000)
-    public void shouldAbortClusterOnTerminationTimeout() throws Exception
+    @Test
+    @Timeout(30)
+    public void shouldAbortClusterOnTerminationTimeout()
     {
         try (TestCluster cluster = TestCluster.startThreeNodeStaticCluster(NULL_VALUE))
         {
             final TestNode leader = cluster.awaitLeader();
-
             final List<TestNode> followers = cluster.followers();
 
-            assertThat(followers.size(), is(2));
+            assertEquals(2, followers.size());
             final TestNode followerA = followers.get(0);
             final TestNode followerB = followers.get(1);
 
@@ -200,7 +193,7 @@ public class ClusterTest
 
             final int messageCount = 10;
             cluster.sendMessages(messageCount);
-            cluster.awaitResponses(messageCount);
+            cluster.awaitResponseMessageCount(messageCount);
 
             cluster.abortCluster(leader);
             cluster.awaitNodeTermination(leader);
@@ -211,8 +204,9 @@ public class ClusterTest
         }
     }
 
-    @Test(timeout = 30_000)
-    public void shouldEchoMessagesThenContinueOnNewLeader() throws Exception
+    @Test
+    @Timeout(40)
+    public void shouldEchoMessagesThenContinueOnNewLeader()
     {
         try (TestCluster cluster = TestCluster.startThreeNodeStaticCluster(NULL_VALUE))
         {
@@ -223,30 +217,31 @@ public class ClusterTest
             final int postFailureMessageCount = 7;
 
             cluster.sendMessages(preFailureMessageCount);
-            cluster.awaitResponses(preFailureMessageCount);
-            cluster.awaitMessageCountForService(cluster.node(0), preFailureMessageCount);
-            cluster.awaitMessageCountForService(cluster.node(1), preFailureMessageCount);
-            cluster.awaitMessageCountForService(cluster.node(2), preFailureMessageCount);
+            cluster.awaitResponseMessageCount(preFailureMessageCount);
+            cluster.awaitServiceMessageCount(cluster.node(0), preFailureMessageCount);
+            cluster.awaitServiceMessageCount(cluster.node(1), preFailureMessageCount);
+            cluster.awaitServiceMessageCount(cluster.node(2), preFailureMessageCount);
 
-            assertThat(cluster.client().leaderMemberId(), is(originalLeader.index()));
+            assertEquals(originalLeader.index(), cluster.client().leaderMemberId());
 
             cluster.stopNode(originalLeader);
 
             final TestNode newLeader = cluster.awaitLeader(originalLeader.index());
 
             cluster.sendMessages(postFailureMessageCount);
-            cluster.awaitResponses(preFailureMessageCount + postFailureMessageCount);
-            assertThat(cluster.client().leaderMemberId(), is(newLeader.index()));
+            cluster.awaitResponseMessageCount(preFailureMessageCount + postFailureMessageCount);
+            assertEquals(newLeader.index(), cluster.client().leaderMemberId());
 
             final TestNode follower = cluster.followers().get(0);
 
-            cluster.awaitMessageCountForService(newLeader, preFailureMessageCount + postFailureMessageCount);
-            cluster.awaitMessageCountForService(follower, preFailureMessageCount + postFailureMessageCount);
+            cluster.awaitServiceMessageCount(newLeader, preFailureMessageCount + postFailureMessageCount);
+            cluster.awaitServiceMessageCount(follower, preFailureMessageCount + postFailureMessageCount);
         }
     }
 
-    @Test(timeout = 30_000)
-    public void shouldStopLeaderAndRestartAsFollower() throws Exception
+    @Test
+    @Timeout(40)
+    public void shouldStopLeaderAndRestartAsFollower()
     {
         try (TestCluster cluster = TestCluster.startThreeNodeStaticCluster(NULL_VALUE))
         {
@@ -257,15 +252,14 @@ public class ClusterTest
 
             final TestNode follower = cluster.startStaticNode(originalLeader.index(), false);
 
-            Thread.sleep(5_000);
-
-            assertThat(follower.role(), is(Cluster.Role.FOLLOWER));
-            assertThat(follower.electionState(), is((Election.State)null));
+            awaitElectionClosed(follower);
+            assertEquals(Cluster.Role.FOLLOWER, follower.role());
         }
     }
 
-    @Test(timeout = 30_000)
-    public void shouldStopLeaderAndRestartAsFollowerWithSendingAfter() throws Exception
+    @Test
+    @Timeout(40)
+    public void shouldStopLeaderAndRestartAsFollowerWithSendingAfter()
     {
         try (TestCluster cluster = TestCluster.startThreeNodeStaticCluster(NULL_VALUE))
         {
@@ -276,23 +270,20 @@ public class ClusterTest
 
             final TestNode follower = cluster.startStaticNode(originalLeader.index(), false);
 
-            while (follower.electionState() != null)
-            {
-                Thread.sleep(1000);
-            }
-
-            assertThat(follower.role(), is(Cluster.Role.FOLLOWER));
+            awaitElectionClosed(follower);
+            assertEquals(Cluster.Role.FOLLOWER, follower.role());
 
             cluster.connectClient();
 
             final int messageCount = 10;
             cluster.sendMessages(messageCount);
-            cluster.awaitResponses(messageCount);
+            cluster.awaitResponseMessageCount(messageCount);
         }
     }
 
-    @Test(timeout = 60_000)
-    public void shouldStopLeaderAndRestartAsFollowerWithSendingAfterThenStopLeader() throws Exception
+    @Test
+    @Timeout(60)
+    public void shouldStopLeaderAndRestartAsFollowerWithSendingAfterThenStopLeader()
     {
         try (TestCluster cluster = TestCluster.startThreeNodeStaticCluster(NULL_VALUE))
         {
@@ -302,17 +293,15 @@ public class ClusterTest
             cluster.awaitLeader(originalLeader.index());
 
             final TestNode follower = cluster.startStaticNode(originalLeader.index(), false);
+            awaitElectionClosed(follower);
 
-            Thread.sleep(5_000);
-
-            assertThat(follower.role(), is(Cluster.Role.FOLLOWER));
-            assertThat(follower.electionState(), is((Election.State)null));
+            assertEquals(Cluster.Role.FOLLOWER, follower.role());
 
             cluster.connectClient();
 
             final int messageCount = 10;
             cluster.sendMessages(messageCount);
-            cluster.awaitResponses(messageCount);
+            cluster.awaitResponseMessageCount(messageCount);
 
             final TestNode leader = cluster.awaitLeader();
 
@@ -322,8 +311,9 @@ public class ClusterTest
         }
     }
 
-    @Test(timeout = 30_000)
-    public void shouldAcceptMessagesAfterSingleNodeCleanRestart() throws Exception
+    @Test
+    @Timeout(40)
+    public void shouldAcceptMessagesAfterSingleNodeCleanRestart()
     {
         try (TestCluster cluster = TestCluster.startThreeNodeStaticCluster(NULL_VALUE))
         {
@@ -333,25 +323,25 @@ public class ClusterTest
 
             cluster.stopNode(follower);
 
-            Thread.sleep(10_000);
+            Tests.sleep(10_000);
 
             follower = cluster.startStaticNode(follower.index(), true);
 
-            Thread.sleep(1_000);
-
-            assertThat(follower.role(), is(Cluster.Role.FOLLOWER));
+            awaitElectionClosed(follower);
+            assertEquals(Cluster.Role.FOLLOWER, follower.role());
 
             cluster.connectClient();
 
             final int messageCount = 10;
             cluster.sendMessages(messageCount);
-            cluster.awaitResponses(messageCount);
-            cluster.awaitMessageCountForService(follower, messageCount);
+            cluster.awaitResponseMessageCount(messageCount);
+            cluster.awaitServiceMessageCount(follower, messageCount);
         }
     }
 
-    @Test(timeout = 30_000)
-    public void shouldReplaySnapshotTakenWhileDown() throws Exception
+    @Test
+    @Timeout(40)
+    public void shouldReplaySnapshotTakenWhileDown()
     {
         try (TestCluster cluster = TestCluster.startThreeNodeStaticCluster(NULL_VALUE))
         {
@@ -361,30 +351,31 @@ public class ClusterTest
 
             cluster.stopNode(followerB);
 
-            Thread.sleep(10_000);
+            Tests.sleep(10_000);
 
             cluster.takeSnapshot(leader);
-            cluster.awaitSnapshotCounter(leader, 1);
-            cluster.awaitSnapshotCounter(followerA, 1);
+            cluster.awaitSnapshotCount(leader, 1);
+            cluster.awaitSnapshotCount(followerA, 1);
 
             cluster.connectClient();
 
             final int messageCount = 10;
             cluster.sendMessages(messageCount);
-            cluster.awaitResponses(messageCount);
+            cluster.awaitResponseMessageCount(messageCount);
 
             followerB = cluster.startStaticNode(followerB.index(), false);
 
-            cluster.awaitSnapshotCounter(followerB, 1);
-            assertThat(followerB.role(), is(Cluster.Role.FOLLOWER));
+            cluster.awaitSnapshotCount(followerB, 1);
+            assertEquals(Cluster.Role.FOLLOWER, followerB.role());
 
-            cluster.awaitMessageCountForService(followerB, messageCount);
-            assertThat(followerB.errors(), is(0L));
+            cluster.awaitServiceMessageCount(followerB, messageCount);
+            assertEquals(0L, followerB.errors());
         }
     }
 
-    @Test(timeout = 45_000)
-    public void shouldTolerateMultipleLeaderFailures() throws Exception
+    @Test
+    @Timeout(50)
+    public void shouldTolerateMultipleLeaderFailures()
     {
         try (TestCluster cluster = TestCluster.startThreeNodeStaticCluster(NULL_VALUE))
         {
@@ -407,12 +398,13 @@ public class ClusterTest
 
             final int messageCount = 10;
             cluster.sendMessages(messageCount);
-            cluster.awaitResponses(messageCount);
+            cluster.awaitResponseMessageCount(messageCount);
         }
     }
 
-    @Test(timeout = 30_000)
-    public void shouldAcceptMessagesAfterTwoNodeCleanRestart() throws Exception
+    @Test
+    @Timeout(30)
+    public void shouldAcceptMessagesAfterTwoNodeCleanRestart()
     {
         try (TestCluster cluster = TestCluster.startThreeNodeStaticCluster(NULL_VALUE))
         {
@@ -424,28 +416,137 @@ public class ClusterTest
             cluster.stopNode(followerA);
             cluster.stopNode(followerB);
 
-            Thread.sleep(5_000);
+            Tests.sleep(1_000); // wait until existing replays can be cleaned up by conductor.
 
             followerA = cluster.startStaticNode(followerA.index(), true);
             followerB = cluster.startStaticNode(followerB.index(), true);
 
-            Thread.sleep(1_000);
+            awaitElectionClosed(followerA);
+            awaitElectionClosed(followerB);
 
-            assertThat(followerA.role(), is(Cluster.Role.FOLLOWER));
-            assertThat(followerB.role(), is(Cluster.Role.FOLLOWER));
+            assertEquals(Cluster.Role.FOLLOWER, followerA.role());
+            assertEquals(Cluster.Role.FOLLOWER, followerB.role());
 
             cluster.connectClient();
             final int messageCount = 10;
 
             cluster.sendMessages(messageCount);
-            cluster.awaitResponses(messageCount);
-            cluster.awaitMessageCountForService(followerA, messageCount);
-            cluster.awaitMessageCountForService(followerB, messageCount);
+            cluster.awaitResponseMessageCount(messageCount);
+            cluster.awaitServiceMessageCount(followerA, messageCount);
+            cluster.awaitServiceMessageCount(followerB, messageCount);
         }
     }
 
-    @Test(timeout = 30_000)
-    public void shouldHaveOnlyOneCommitPositionCounter() throws Exception
+    @Test
+    @Disabled
+    @Timeout(30)
+    public void shouldRecoverWithUncommittedMessagesAfterRestartWhenNewCommitPosExceedsPreviousAppendedPos()
+    {
+        try (TestCluster cluster = TestCluster.startThreeNodeStaticCluster(NULL_VALUE))
+        {
+            final TestNode leaderNode = cluster.awaitLeader();
+
+            final List<TestNode> followers = cluster.followers();
+            TestNode followerA = followers.get(0), followerB = followers.get(1);
+
+            cluster.connectClient();
+
+            // Makes it easier to have the leader have appended messages without consensus
+            cluster.stopNode(followerA);
+            cluster.stopNode(followerB);
+
+            cluster.sendPoisonMessages(10);
+
+            while (leaderNode.appendPosition() <= leaderNode.commitPosition())
+            {
+                Thread.yield();
+                Tests.checkInterruptStatus();
+            }
+
+            cluster.closeClient();
+
+            final long targetPosition = leaderNode.appendPosition();
+
+            cluster.stopNode(leaderNode);
+
+            followerA = cluster.startStaticNode(followerA.index(), false);
+            followerB = cluster.startStaticNode(followerB.index(), false);
+
+            cluster.awaitLeader();
+
+            cluster.connectClient();
+
+            int messageCount = 0;
+            while (followerA.commitPosition() < targetPosition)
+            {
+                cluster.sendMessage(128);
+                messageCount++;
+            }
+
+            cluster.awaitResponseMessageCount(messageCount);
+            cluster.awaitServiceMessageCount(followerA, messageCount);
+            cluster.awaitServiceMessageCount(followerB, messageCount);
+
+            final TestNode leaderNode2 = cluster.startStaticNode(leaderNode.index(), false);
+
+            cluster.awaitServiceMessageCount(leaderNode2, messageCount);
+        }
+    }
+
+    @Test
+    @Disabled
+    @Timeout(30)
+    public void shouldRecoverWithUncommittedMessagesAfterRestartWhenNewCommitPosIsLessThanPreviousAppendedPos()
+    {
+        try (TestCluster cluster = TestCluster.startThreeNodeStaticCluster(NULL_VALUE))
+        {
+            final TestNode leaderNode = cluster.awaitLeader();
+
+            final List<TestNode> followers = cluster.followers();
+            TestNode followerA = followers.get(0), followerB = followers.get(1);
+
+            cluster.connectClient();
+
+            // Makes it easier to have the leader have appended messages without consensus
+            cluster.stopNode(followerA);
+            cluster.stopNode(followerB);
+
+            cluster.sendPoisonMessages(10);
+
+            while (leaderNode.appendPosition() <= leaderNode.commitPosition())
+            {
+                Thread.yield();
+                Tests.checkInterruptStatus();
+            }
+
+            cluster.closeClient();
+
+            cluster.stopNode(leaderNode);
+
+            followerA = cluster.startStaticNode(followerA.index(), false);
+            followerB = cluster.startStaticNode(followerB.index(), false);
+
+            cluster.awaitLeader();
+
+            final TestNode leaderNode2 = cluster.startStaticNode(leaderNode.index(), false);
+
+            Tests.sleep(1000);
+
+            cluster.connectClient();
+
+            final int messageCount = 10;
+            cluster.sendMessages(messageCount);
+
+            cluster.awaitResponseMessageCount(messageCount);
+            cluster.awaitServiceMessageCount(followerA, messageCount);
+            cluster.awaitServiceMessageCount(followerB, messageCount);
+            cluster.awaitServiceMessageCount(leaderNode2, messageCount);
+        }
+    }
+
+    @Test
+    @Timeout(40)
+    public void shouldHaveOnlyOneCommitPositionCounter()
     {
         try (TestCluster cluster = TestCluster.startThreeNodeStaticCluster(NULL_VALUE))
         {
@@ -458,13 +559,14 @@ public class ClusterTest
 
             cluster.awaitLeader(leader.index());
 
-            assertThat(countersOfType(followerA.countersReader(), COMMIT_POSITION_TYPE_ID), is(1));
-            assertThat(countersOfType(followerB.countersReader(), COMMIT_POSITION_TYPE_ID), is(1));
+            assertEquals(1, countersOfType(followerA.countersReader(), COMMIT_POSITION_TYPE_ID));
+            assertEquals(1, countersOfType(followerB.countersReader(), COMMIT_POSITION_TYPE_ID));
         }
     }
 
-    @Test(timeout = 30_000)
-    public void shouldCallOnRoleChangeOnBecomingLeader() throws Exception
+    @Test
+    @Timeout(40)
+    public void shouldCallOnRoleChangeOnBecomingLeader()
     {
         try (TestCluster cluster = TestCluster.startThreeNodeStaticCluster(NULL_VALUE))
         {
@@ -474,9 +576,9 @@ public class ClusterTest
             final TestNode followerA = followers.get(0);
             final TestNode followerB = followers.get(1);
 
-            assertThat(leader.service().roleChangedTo(), is(Cluster.Role.LEADER));
-            assertThat(followerA.service().roleChangedTo(), is((Cluster.Role)null));
-            assertThat(followerB.service().roleChangedTo(), is((Cluster.Role)null));
+            assertEquals(Cluster.Role.LEADER, leader.service().roleChangedTo());
+            assertNull(followerA.service().roleChangedTo());
+            assertNull(followerB.service().roleChangedTo());
 
             cluster.stopNode(leader);
 
@@ -484,13 +586,15 @@ public class ClusterTest
             followers = cluster.followers();
             final TestNode follower = followers.get(0);
 
-            assertThat(leader.service().roleChangedTo(), is(Cluster.Role.LEADER));
-            assertThat(follower.service().roleChangedTo(), is((Cluster.Role)null));
+            assertEquals(Cluster.Role.LEADER, leader.service().roleChangedTo());
+            assertNull(follower.service().roleChangedTo());
         }
     }
 
-    @Test(timeout = 30_000)
-    public void shouldLoseLeadershipWhenNoActiveQuorumOfFollowers() throws Exception
+
+    @Test
+    @Timeout(40)
+    public void shouldLoseLeadershipWhenNoActiveQuorumOfFollowers()
     {
         try (TestCluster cluster = TestCluster.startThreeNodeStaticCluster(NULL_VALUE))
         {
@@ -500,23 +604,24 @@ public class ClusterTest
             final TestNode followerA = followers.get(0);
             final TestNode followerB = followers.get(1);
 
-            assertThat(leader.service().roleChangedTo(), is(Cluster.Role.LEADER));
+            assertEquals(Cluster.Role.LEADER, leader.service().roleChangedTo());
 
             cluster.stopNode(followerA);
             cluster.stopNode(followerB);
 
             while (leader.service().roleChangedTo() == Cluster.Role.LEADER)
             {
-                TestUtil.checkInterruptedStatus();
                 Thread.yield();
+                Tests.checkInterruptStatus();
             }
 
-            assertThat(leader.service().roleChangedTo(), is(Cluster.Role.FOLLOWER));
+            assertEquals(Cluster.Role.FOLLOWER, leader.service().roleChangedTo());
         }
     }
 
-    @Test(timeout = 60_000)
-    public void shouldRecoverWhileMessagesContinue() throws Exception
+    @Test
+    @Timeout(70)
+    public void shouldRecoverWhileMessagesContinue() throws InterruptedException
     {
         try (TestCluster cluster = TestCluster.startThreeNodeStaticCluster(NULL_VALUE))
         {
@@ -531,10 +636,10 @@ public class ClusterTest
             try
             {
                 cluster.stopNode(followerB);
-                Thread.sleep(10_000);
+                Tests.sleep(10_000);
 
                 followerB = cluster.startStaticNode(followerB.index(), false);
-                Thread.sleep(30_000);
+                Tests.sleep(30_000);
             }
             finally
             {
@@ -542,15 +647,16 @@ public class ClusterTest
                 messageThread.join();
             }
 
-            assertThat(leader.errors(), is(0L));
-            assertThat(followerA.errors(), is(0L));
-            assertThat(followerB.errors(), is(0L));
-            assertThat(followerB.electionState(), is((Election.State)null));
+            awaitElectionClosed(followerB);
+            assertEquals(0L, leader.errors());
+            assertEquals(0L, followerA.errors());
+            assertEquals(0L, followerB.errors());
         }
     }
 
-    @Test(timeout = 10_000)
-    public void shouldCatchupFromEmptyLog() throws Exception
+    @Test
+    @Timeout(30)
+    public void shouldCatchupFromEmptyLog()
     {
         try (TestCluster cluster = TestCluster.startThreeNodeStaticCluster(NULL_VALUE))
         {
@@ -564,15 +670,18 @@ public class ClusterTest
             cluster.connectClient();
             final int messageCount = 10;
             cluster.sendMessages(messageCount);
-            cluster.awaitResponses(messageCount);
+            cluster.awaitResponseMessageCount(messageCount);
+
+            Tests.sleep(1_000); // wait until existing replay can be cleaned up by conductor.
 
             followerB = cluster.startStaticNode(followerB.index(), true);
-            cluster.awaitMessageCountForService(followerB, messageCount);
+            cluster.awaitServiceMessageCount(followerB, messageCount);
         }
     }
 
-    @Test(timeout = 30_000)
-    public void shouldCatchupFromEmptyLogThenSnapshotAfterShutdownAndFollowerCleanStart() throws Exception
+    @Test
+    @Timeout(30)
+    public void shouldCatchupFromEmptyLogThenSnapshotAfterShutdownAndFollowerCleanStart()
     {
         try (TestCluster cluster = TestCluster.startThreeNodeStaticCluster(NULL_VALUE))
         {
@@ -584,7 +693,7 @@ public class ClusterTest
             cluster.connectClient();
             final int messageCount = 10;
             cluster.sendMessages(messageCount);
-            cluster.awaitResponses(messageCount);
+            cluster.awaitResponseMessageCount(messageCount);
 
             leader.terminationExpected(true);
             followerA.terminationExpected(true);
@@ -599,11 +708,7 @@ public class ClusterTest
             assertTrue(cluster.node(1).service().wasSnapshotTaken());
             assertTrue(cluster.node(2).service().wasSnapshotTaken());
 
-            cluster.stopNode(cluster.node(0));
-            cluster.stopNode(cluster.node(1));
-            cluster.stopNode(cluster.node(2));
-
-            Thread.sleep(1_000);
+            cluster.stopAllNodes();
 
             cluster.startStaticNode(0, false);
             cluster.startStaticNode(1, false);
@@ -611,32 +716,35 @@ public class ClusterTest
 
             final TestNode newLeader = cluster.awaitLeader();
 
-            assertNotEquals(newLeader.index(), is(2));
+            assertNotEquals(2, newLeader.index());
 
             assertTrue(cluster.node(0).service().wasSnapshotLoaded());
             assertTrue(cluster.node(1).service().wasSnapshotLoaded());
             assertFalse(cluster.node(2).service().wasSnapshotLoaded());
 
-            cluster.awaitMessageCountForService(cluster.node(2), messageCount);
-            cluster.awaitSnapshotCounter(cluster.node(2), 1);
+            cluster.awaitServiceMessageCount(cluster.node(2), messageCount);
+            cluster.awaitSnapshotCount(cluster.node(2), 1);
             assertTrue(cluster.node(2).service().wasSnapshotTaken());
         }
     }
 
-    @Test(timeout = 30_000)
-    public void shouldCatchUpAfterFollowerMissesOneMessage() throws Exception
+    @Test
+    @Timeout(30)
+    public void shouldCatchUpAfterFollowerMissesOneMessage()
     {
         shouldCatchUpAfterFollowerMissesMessage(TestMessages.NO_OP);
     }
 
-    @Test(timeout = 30_000)
-    public void shouldCatchUpAfterFollowerMissesTimerRegistration() throws Exception
+    @Test
+    @Timeout(30)
+    public void shouldCatchUpAfterFollowerMissesTimerRegistration()
     {
         shouldCatchUpAfterFollowerMissesMessage(TestMessages.REGISTER_TIMER);
     }
 
-    @Test(timeout = 30_000)
-    public void shouldCatchUpTwoFreshNodesAfterRestart() throws Exception
+    @Test
+    @Timeout(30)
+    public void shouldCatchUpTwoFreshNodesAfterRestart()
     {
         try (TestCluster cluster = TestCluster.startThreeNodeStaticCluster(NULL_VALUE))
         {
@@ -650,7 +758,7 @@ public class ClusterTest
                 cluster.msgBuffer().putStringWithoutLengthAscii(0, TestMessages.NO_OP);
                 cluster.sendMessage(TestMessages.NO_OP.length());
             }
-            cluster.awaitResponses(messageCount);
+            cluster.awaitResponseMessageCount(messageCount);
 
             cluster.node(0).terminationExpected(true);
             cluster.node(1).terminationExpected(true);
@@ -661,27 +769,25 @@ public class ClusterTest
             cluster.awaitNodeTermination(cluster.node(1));
             cluster.awaitNodeTermination(cluster.node(2));
 
-            cluster.stopNode(cluster.node(0));
-            cluster.stopNode(cluster.node(1));
-            cluster.stopNode(cluster.node(2));
+            cluster.stopAllNodes();
 
             final TestNode oldLeader = cluster.startStaticNode(leader.index(), false);
             final TestNode oldFollower1 = cluster.startStaticNode(followers.get(0).index(), true);
             final TestNode oldFollower2 = cluster.startStaticNode(followers.get(1).index(), true);
 
             cluster.awaitLeader();
+            awaitElectionClosed(oldFollower1);
+            awaitElectionClosed(oldFollower2);
 
-            assertThat(oldLeader.errors(), is(0L));
-            assertThat(oldFollower1.errors(), is(0L));
-            assertThat(oldFollower2.errors(), is(0L));
-
-            assertThat(oldFollower1.electionState(), is((Election.State)null));
-            assertThat(oldFollower2.electionState(), is((Election.State)null));
+            assertEquals(0L, oldLeader.errors());
+            assertEquals(0L, oldFollower1.errors());
+            assertEquals(0L, oldFollower2.errors());
         }
     }
 
-    @Test(timeout = 30_000)
-    public void shouldReplayMultipleSnapshotsWithEmptyFollowerLog() throws Exception
+    @Test
+    @Timeout(30)
+    public void shouldReplayMultipleSnapshotsWithEmptyFollowerLog()
     {
         try (TestCluster cluster = TestCluster.startThreeNodeStaticCluster(NULL_VALUE))
         {
@@ -693,22 +799,22 @@ public class ClusterTest
             cluster.connectClient();
 
             cluster.sendMessages(2);
-            cluster.awaitResponses(2);
-            cluster.awaitMessageCountForService(cluster.node(2), 2);
+            cluster.awaitResponseMessageCount(2);
+            cluster.awaitServiceMessageCount(cluster.node(2), 2);
 
             cluster.takeSnapshot(leader);
             final int memberCount = 3;
             for (int memberId = 0; memberId < memberCount; memberId++)
             {
                 final TestNode node = cluster.node(memberId);
-                cluster.awaitSnapshotCounter(node, 1);
+                cluster.awaitSnapshotCount(node, 1);
                 assertTrue(node.service().wasSnapshotTaken());
                 node.service().resetSnapshotTaken();
             }
 
             cluster.sendMessages(1);
-            cluster.awaitResponses(3);
-            cluster.awaitMessageCountForService(cluster.node(2), 3);
+            cluster.awaitResponseMessageCount(3);
+            cluster.awaitServiceMessageCount(cluster.node(2), 3);
 
             leader.terminationExpected(true);
             followerA.terminationExpected(true);
@@ -724,10 +830,7 @@ public class ClusterTest
             assertTrue(cluster.node(1).service().wasSnapshotTaken());
             assertTrue(cluster.node(2).service().wasSnapshotTaken());
 
-            cluster.stopNode(cluster.node(0));
-            cluster.stopNode(cluster.node(1));
-            cluster.stopNode(cluster.node(2));
-            Thread.sleep(1_000);
+            cluster.stopAllNodes();
 
             cluster.startStaticNode(0, false);
             cluster.startStaticNode(1, false);
@@ -750,24 +853,26 @@ public class ClusterTest
             final int msgCountAfterStart = 4;
             final int totalMsgCount = 2 + 1 + 4;
             cluster.sendMessages(msgCountAfterStart);
-            cluster.awaitResponses(totalMsgCount);
-            cluster.awaitMessageCountForService(newLeader, totalMsgCount);
+            cluster.awaitResponseMessageCount(totalMsgCount);
+            cluster.awaitServiceMessageCount(newLeader, totalMsgCount);
             assertEquals(totalMsgCount, newLeader.service().messageCount());
 
-            cluster.awaitMessageCountForService(cluster.node(1), totalMsgCount);
+            cluster.awaitServiceMessageCount(cluster.node(1), totalMsgCount);
             assertEquals(totalMsgCount, cluster.node(1).service().messageCount());
 
-            cluster.awaitMessageCountForService(cluster.node(2), totalMsgCount);
+            cluster.awaitServiceMessageCount(cluster.node(2), totalMsgCount);
             assertEquals(totalMsgCount, cluster.node(2).service().messageCount());
         }
     }
 
-    @Test(timeout = 30_000)
-    public void shouldRecoverQuicklyAfterKillingFollowersThenRestartingOne() throws Exception
+    @Test
+    @Timeout(40)
+    public void shouldRecoverQuicklyAfterKillingFollowersThenRestartingOne()
     {
         try (TestCluster cluster = TestCluster.startThreeNodeStaticCluster(NULL_VALUE))
         {
             cluster.awaitLeader();
+
             final TestNode leader = cluster.findLeader();
             final TestNode follower = cluster.followers().get(0);
             final TestNode follower2 = cluster.followers().get(1);
@@ -780,40 +885,182 @@ public class ClusterTest
 
             while (leader.role() != Cluster.Role.FOLLOWER)
             {
-                Thread.sleep(1_000);
+                Tests.sleep(1_000);
+                cluster.sendMessages(1);
             }
 
             cluster.startStaticNode(follower2.index(), true);
+            cluster.awaitLeader();
+        }
+    }
+
+    @Test
+    @Timeout(40)
+    void shouldRecoverWhenLastSnapshotIsMarkedInvalid()
+    {
+        try (TestCluster cluster = TestCluster.startThreeNodeStaticCluster(NULL_VALUE))
+        {
+            // Leadership Term 0
+            final TestNode leader0 = cluster.awaitLeader();
+            cluster.connectClient();
+
+            final int numMessages = 3;
+            cluster.sendMessages(numMessages);
+            awaitAllServiceMessageCount(cluster, 3, numMessages);
+
+            // Snapshot
+            cluster.takeSnapshot(leader0);
+            cluster.awaitSnapshotCount(leader0, 1);
+
+            cluster.sendMessages(numMessages);
+            awaitAllServiceMessageCount(cluster, 3, numMessages * 2);
+
+            // Snapshot
+            cluster.takeSnapshot(leader0);
+            cluster.awaitSnapshotCount(leader0, 2);
+
+            // Leadership Term 1
+            cluster.stopNode(leader0);
+            cluster.awaitLeader(leader0.index());
+            cluster.startStaticNode(leader0.index(), false);
+
+            cluster.sendMessages(numMessages);
+            awaitAllServiceMessageCount(cluster, 3, numMessages * 3);
+
+            // Stop without snapshot
+            cluster.node(0).terminationExpected(true);
+            cluster.node(1).terminationExpected(true);
+            cluster.node(2).terminationExpected(true);
+
+            cluster.stopAllNodes();
+
+            // Invalidate snapshot from leadershipTermId = 1
+            cluster.invalidateLatestSnapshots();
+
+            // Start, should replay from snapshot in leadershipTerm = 0.
+            cluster.restartAllNodes(false);
 
             cluster.awaitLeader();
         }
     }
 
-    private void shouldCatchUpAfterFollowerMissesMessage(final String message) throws InterruptedException
+    @Test
+    @Timeout(60)
+    void shouldHandleMultipleElections()
     {
         try (TestCluster cluster = TestCluster.startThreeNodeStaticCluster(NULL_VALUE))
         {
-            cluster.awaitLeader();
+            final TestNode leader0 = cluster.awaitLeader();
+            cluster.connectClient();
 
+            final int numMessages = 3;
+            cluster.sendMessages(numMessages);
+            cluster.awaitResponseMessageCount(numMessages);
+            awaitAllServiceMessageCount(cluster, 3, numMessages);
+
+            cluster.stopNode(leader0);
+            final TestNode leader1 = cluster.awaitLeader(leader0.index());
+            cluster.awaitLeadershipEvent(1);
+            cluster.startStaticNode(leader0.index(), false);
+
+            cluster.sendMessages(numMessages);
+            cluster.awaitResponseMessageCount(numMessages * 2);
+            awaitAllServiceMessageCount(cluster, 3, numMessages * 2);
+
+            cluster.stopNode(leader1);
+            cluster.awaitLeader(leader1.index());
+            cluster.awaitLeadershipEvent(2);
+            cluster.startStaticNode(leader1.index(), false);
+
+            cluster.sendMessages(numMessages);
+            cluster.awaitResponseMessageCount(numMessages * 3);
+            awaitAllServiceMessageCount(cluster, 3, numMessages * 3);
+        }
+    }
+
+    @Test
+    @Timeout(50)
+    void shouldRecoverWhenLastSnapshotIsInvalidAndWasBetweenTwoElections()
+    {
+        try (TestCluster cluster = TestCluster.startThreeNodeStaticCluster(NULL_VALUE))
+        {
+            // Leadership Term 0
+            final TestNode leader0 = cluster.awaitLeader();
+            cluster.connectClient();
+
+            final int numMessages = 3;
+            cluster.sendMessages(numMessages);
+            awaitAllServiceMessageCount(cluster, 3, numMessages);
+
+            // Leadership Term 1
+            cluster.stopNode(leader0);
+            final TestNode leader1 = cluster.awaitLeader(leader0.index());
+            cluster.startStaticNode(leader0.index(), false);
+
+            cluster.sendMessages(numMessages);
+            awaitAllServiceMessageCount(cluster, 3, numMessages * 2);
+
+            // Snapshot
+            cluster.takeSnapshot(leader1);
+            cluster.awaitSnapshotCount(leader1, 1);
+
+            // Leadership Term 2
+            cluster.stopNode(leader1);
+            cluster.awaitLeader(leader1.index());
+            cluster.startStaticNode(leader1.index(), false);
+
+            cluster.sendMessages(numMessages);
+            awaitAllServiceMessageCount(cluster, 3, numMessages * 3);
+
+            // No snapshot for Term 2
+
+            // Stop without snapshot
+            cluster.node(0).terminationExpected(true);
+            cluster.node(1).terminationExpected(true);
+            cluster.node(2).terminationExpected(true);
+
+            cluster.stopAllNodes();
+
+            // Invalidate snapshot from leadershipTermId = 1
+            cluster.invalidateLatestSnapshots();
+
+            // Start, should replay from snapshot in leadershipTerm = 0.
+            cluster.restartAllNodes(false);
+
+            cluster.awaitLeader();
+        }
+    }
+
+    private void awaitAllServiceMessageCount(final TestCluster cluster, final int numNodes, final int numMessages)
+    {
+        for (int i = 0; i < numNodes; i++)
+        {
+            cluster.awaitServiceMessageCount(cluster.node(i), numMessages);
+        }
+    }
+
+    private void shouldCatchUpAfterFollowerMissesMessage(final String message)
+    {
+        try (TestCluster cluster = TestCluster.startThreeNodeStaticCluster(NULL_VALUE))
+        {
+            final TestNode leader = cluster.awaitLeader();
             TestNode follower = cluster.followers().get(0);
 
             cluster.stopNode(follower);
 
-            Thread.sleep(1_000);
+            awaitElectionClosed(leader);
 
             cluster.connectClient();
             cluster.msgBuffer().putStringWithoutLengthAscii(0, message);
             cluster.sendMessage(message.length());
-            cluster.awaitResponses(1);
+            cluster.awaitResponseMessageCount(1);
 
-            Thread.sleep(1_000);
+            Tests.sleep(1_000); // wait until existing replay can be cleaned up by conductor.
 
             follower = cluster.startStaticNode(follower.index(), false);
 
-            Thread.sleep(1_000);
-
-            assertThat(follower.role(), is(Cluster.Role.FOLLOWER));
-            assertThat(follower.electionState(), is((Election.State)null));
+            awaitElectionClosed(follower);
+            assertEquals(Cluster.Role.FOLLOWER, follower.role());
         }
     }
 
@@ -839,16 +1086,18 @@ public class ClusterTest
             () ->
             {
                 final IdleStrategy idleStrategy = YieldingIdleStrategy.INSTANCE;
-                cluster.msgBuffer().putStringWithoutLengthAscii(0, MSG);
+                final AeronCluster client = cluster.client();
+                final ExpandableArrayBuffer msgBuffer = cluster.msgBuffer();
+                msgBuffer.putStringWithoutLengthAscii(0, MSG);
 
                 while (!Thread.interrupted())
                 {
-                    if (cluster.client().offer(cluster.msgBuffer(), 0, MSG.length()) < 0)
+                    if (client.offer(msgBuffer, 0, MSG.length()) < 0)
                     {
                         LockSupport.parkNanos(intervalNs);
                     }
 
-                    idleStrategy.idle(cluster.client().pollEgress());
+                    idleStrategy.idle(client.pollEgress());
                 }
             });
 

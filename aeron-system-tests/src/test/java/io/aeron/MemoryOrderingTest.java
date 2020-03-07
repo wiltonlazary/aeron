@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,20 +19,25 @@ import io.aeron.driver.MediaDriver;
 import io.aeron.driver.ThreadingMode;
 import io.aeron.logbuffer.FragmentHandler;
 import io.aeron.logbuffer.Header;
+import io.aeron.test.TestMediaDriver;
+import io.aeron.test.Tests;
 import org.agrona.CloseHelper;
 import org.agrona.DirectBuffer;
-import org.agrona.concurrent.*;
-import org.junit.After;
-import org.junit.Test;
+import org.agrona.concurrent.IdleStrategy;
+import org.agrona.concurrent.UnsafeBuffer;
+import org.agrona.concurrent.YieldingIdleStrategy;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 import java.nio.ByteBuffer;
 
-import static org.junit.Assert.fail;
+import static org.junit.jupiter.api.Assertions.fail;
 
 public class MemoryOrderingTest
 {
-    private static final String CHANNEL = "aeron:udp?endpoint=localhost:54325";
-    private static final int STREAM_ID = 1;
+    private static final String CHANNEL = "aeron:udp?endpoint=localhost:24325";
+    private static final int STREAM_ID = 1001;
     private static final int FRAGMENT_COUNT_LIMIT = 10;
     private static final int MESSAGE_LENGTH = 2000;
     private static final int TERM_BUFFER_LENGTH = 1024 * 64;
@@ -42,32 +47,32 @@ public class MemoryOrderingTest
 
     private static volatile String failedMessage = null;
 
-    private final MediaDriver driver = MediaDriver.launch(new MediaDriver.Context()
+    private final TestMediaDriver driver = TestMediaDriver.launch(new MediaDriver.Context()
         .errorHandler(Throwable::printStackTrace)
-        .dirDeleteOnShutdown(true)
+        .dirDeleteOnStart(true)
         .threadingMode(ThreadingMode.SHARED)
         .publicationTermBufferLength(TERM_BUFFER_LENGTH));
 
     private final Aeron aeron = Aeron.connect();
 
-    @After
+    @AfterEach
     public void after()
     {
-        CloseHelper.close(aeron);
-        CloseHelper.close(driver);
+        CloseHelper.closeAll(aeron, driver);
+        driver.context().deleteDirectory();
     }
 
-    @Test(timeout = 20_000)
+    @Test
+    @Timeout(10)
     public void shouldReceiveMessagesInOrderWithFirstLongWordIntact() throws Exception
     {
-        final UnsafeBuffer srcBuffer = new UnsafeBuffer(ByteBuffer.allocateDirect(MESSAGE_LENGTH));
+        final UnsafeBuffer srcBuffer = new UnsafeBuffer(ByteBuffer.allocate(MESSAGE_LENGTH));
         srcBuffer.setMemory(0, MESSAGE_LENGTH, (byte)7);
 
         try (Subscription subscription = aeron.addSubscription(CHANNEL, STREAM_ID);
             Publication publication = aeron.addPublication(CHANNEL, STREAM_ID))
         {
-            final BusySpinIdleStrategy idleStrategy = BusySpinIdleStrategy.INSTANCE;
-
+            final IdleStrategy idleStrategy = YieldingIdleStrategy.INSTANCE;
             final Thread subscriberThread = new Thread(new Subscriber(subscription));
             subscriberThread.setDaemon(true);
             subscriberThread.start();
@@ -88,8 +93,8 @@ public class MemoryOrderingTest
                         fail(failedMessage);
                     }
 
-                    SystemTest.checkInterruptedStatus();
                     idleStrategy.idle();
+                    Tests.checkInterruptStatus();
                 }
 
                 if (i % BURST_LENGTH == 0)
@@ -100,7 +105,7 @@ public class MemoryOrderingTest
                     {
                         nowNs = System.nanoTime();
                     }
-                    while ((timeoutNs - nowNs) < 0);
+                    while ((timeoutNs - nowNs) > 0);
                 }
             }
 
@@ -108,17 +113,17 @@ public class MemoryOrderingTest
         }
     }
 
-    @Test(timeout = 20_000)
+    @Test
+    @Timeout(10)
     public void shouldReceiveMessagesInOrderWithFirstLongWordIntactFromExclusivePublication() throws Exception
     {
-        final UnsafeBuffer srcBuffer = new UnsafeBuffer(ByteBuffer.allocateDirect(MESSAGE_LENGTH));
+        final UnsafeBuffer srcBuffer = new UnsafeBuffer(ByteBuffer.allocate(MESSAGE_LENGTH));
         srcBuffer.setMemory(0, MESSAGE_LENGTH, (byte)7);
 
         try (Subscription subscription = aeron.addSubscription(CHANNEL, STREAM_ID);
             ExclusivePublication publication = aeron.addExclusivePublication(CHANNEL, STREAM_ID))
         {
-            final BusySpinIdleStrategy idleStrategy = BusySpinIdleStrategy.INSTANCE;
-
+            final IdleStrategy idleStrategy = YieldingIdleStrategy.INSTANCE;
             final Thread subscriberThread = new Thread(new Subscriber(subscription));
             subscriberThread.setDaemon(true);
             subscriberThread.start();
@@ -134,13 +139,13 @@ public class MemoryOrderingTest
 
                 while (publication.offer(srcBuffer) < 0L)
                 {
-                    SystemTest.checkInterruptedStatus();
                     if (null != failedMessage)
                     {
                         fail(failedMessage);
                     }
 
                     idleStrategy.idle();
+                    Tests.checkInterruptStatus();
                 }
 
                 if (i % BURST_LENGTH == 0)
@@ -174,7 +179,7 @@ public class MemoryOrderingTest
 
         public void run()
         {
-            final BusySpinIdleStrategy idleStrategy = BusySpinIdleStrategy.INSTANCE;
+            final IdleStrategy idleStrategy = YieldingIdleStrategy.INSTANCE;
 
             while (messageNum < NUM_MESSAGES && null == failedMessage)
             {

@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,6 +19,10 @@
 #include <errno.h>
 #include "util/aeron_bitutil.h"
 #include "aeron_alloc.h"
+
+#if defined(AERON_COMPILER_MSVC)
+#include <windows.h>
+#endif
 
 int aeron_alloc_no_err(void **ptr, size_t size)
 {
@@ -41,6 +45,9 @@ int aeron_alloc(void **ptr, size_t size)
     if (NULL == *ptr)
     {
         errno = ENOMEM;
+#if defined(AERON_COMPILER_MSVC)
+        SetLastError(ERROR_OUTOFMEMORY);
+#endif
         return -1;
     }
 
@@ -54,6 +61,9 @@ int aeron_alloc_aligned(void **ptr, size_t *offset, size_t size, size_t alignmen
     if (!(AERON_IS_POWER_OF_TWO(alignment)))
     {
         errno = EINVAL;
+#if defined(AERON_COMPILER_MSVC)
+        SetLastError(ERROR_INCORRECT_SIZE);
+#endif
         return -1;
     }
 
@@ -83,6 +93,9 @@ int aeron_reallocf(void **ptr, size_t size)
         {
             free(*ptr);
             errno = ENOMEM;
+#if defined(AERON_COMPILER_MSVC)
+            SetLastError(ERROR_OUTOFMEMORY);
+#endif
             return -1;
         }
     }
@@ -101,4 +114,3 @@ void aeron_free(void *ptr)
 {
     free(ptr);
 }
-

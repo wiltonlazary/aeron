@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,17 +15,30 @@
  */
 package io.aeron.driver;
 
-import io.aeron.driver.buffer.*;
+import io.aeron.driver.buffer.RawLog;
+import io.aeron.driver.buffer.TestLogFactory;
 import io.aeron.driver.media.*;
 import io.aeron.driver.reports.LossReport;
 import io.aeron.driver.status.SystemCounters;
-import io.aeron.logbuffer.*;
-import io.aeron.protocol.*;
+import io.aeron.logbuffer.FrameDescriptor;
+import io.aeron.logbuffer.Header;
+import io.aeron.logbuffer.LogBufferDescriptor;
+import io.aeron.logbuffer.TermReader;
+import io.aeron.protocol.DataHeaderFlyweight;
+import io.aeron.protocol.HeaderFlyweight;
+import io.aeron.protocol.SetupFlyweight;
+import io.aeron.protocol.StatusMessageFlyweight;
 import org.agrona.ErrorHandler;
 import org.agrona.concurrent.*;
-import org.agrona.concurrent.status.*;
-import org.junit.*;
+import org.agrona.concurrent.status.AtomicCounter;
+import org.agrona.concurrent.status.AtomicLongPosition;
+import org.agrona.concurrent.status.Position;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
+import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 import java.nio.channels.DatagramChannel;
@@ -35,7 +48,7 @@ import static io.aeron.logbuffer.LogBufferDescriptor.*;
 import static org.agrona.BitUtil.align;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.core.Is.is;
-import static org.junit.Assert.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.Mockito.*;
 
 public class ReceiverTest
@@ -48,7 +61,7 @@ public class ReceiverTest
     private static final long UNTETHERED_WINDOW_LIMIT_TIMEOUT_NS = Configuration.untetheredWindowLimitTimeoutNs();
     private static final long UNTETHERED_RESTING_TIMEOUT_NS = Configuration.untetheredRestingTimeoutNs();
     private static final long CORRELATION_ID = 20;
-    private static final int STREAM_ID = 10;
+    private static final int STREAM_ID = 1010;
     private static final int INITIAL_TERM_ID = 3;
     private static final int ACTIVE_TERM_ID = 3;
     private static final int SESSION_ID = 1;
@@ -81,9 +94,8 @@ public class ReceiverTest
     private final StatusMessageFlyweight statusHeader = new StatusMessageFlyweight();
     private final SetupFlyweight setupHeader = new SetupFlyweight();
 
-    private long currentTime = 0;
-    private final NanoClock nanoClock = () -> currentTime;
-    private final EpochClock epochClock = mock(EpochClock.class);
+    private final CachedNanoClock nanoClock = new CachedNanoClock();
+    private final CachedEpochClock epochClock = new CachedEpochClock();
     private final LossReport lossReport = mock(LossReport.class);
 
     private final RawLog rawLog = TestLogFactory.newLogBuffers(TERM_BUFFER_LENGTH);
@@ -97,11 +109,11 @@ public class ReceiverTest
     private ReceiverProxy receiverProxy;
     private final ManyToOneConcurrentArrayQueue<Runnable> toConductorQueue =
         new ManyToOneConcurrentArrayQueue<>(Configuration.CMD_QUEUE_CAPACITY);
-
-    private ReceiveChannelEndpoint receiveChannelEndpoint;
     private final CongestionControl congestionControl = mock(CongestionControl.class);
 
-    @Before
+    private ReceiveChannelEndpoint receiveChannelEndpoint;
+
+    @BeforeEach
     public void setUp() throws Exception
     {
         final SubscriptionLink subscriptionLink = mock(SubscriptionLink.class);
@@ -117,23 +129,18 @@ public class ReceiverTest
             .thenReturn(CongestionControl.packOutcome(INITIAL_WINDOW_LENGTH, false));
         when(congestionControl.initialWindowLength()).thenReturn(INITIAL_WINDOW_LENGTH);
 
-        final CachedNanoClock mockCachedNanoClock = mock(CachedNanoClock.class);
-        when(mockCachedNanoClock.nanoTime()).thenAnswer((invocation) -> currentTime);
-
         final DriverConductorProxy driverConductorProxy =
             new DriverConductorProxy(ThreadingMode.DEDICATED, toConductorQueue, mock(AtomicCounter.class));
 
         final MediaDriver.Context ctx = new MediaDriver.Context()
-            .applicationSpecificFeedback(Configuration.applicationSpecificFeedback())
             .driverCommandQueue(toConductorQueue)
             .dataTransportPoller(mockDataTransportPoller)
             .controlTransportPoller(mockControlTransportPoller)
             .logFactory(new TestLogFactory())
             .systemCounters(mockSystemCounters)
-            .applicationSpecificFeedback(Configuration.applicationSpecificFeedback())
             .receiverCommandQueue(new OneToOneConcurrentArrayQueue<>(Configuration.CMD_QUEUE_CAPACITY))
-            .nanoClock(() -> currentTime)
-            .cachedNanoClock(mockCachedNanoClock)
+            .nanoClock(nanoClock)
+            .cachedNanoClock(nanoClock)
             .driverConductorProxy(driverConductorProxy);
 
         receiverProxy = new ReceiverProxy(
@@ -151,8 +158,8 @@ public class ReceiverTest
         termBuffers = rawLog.termBuffers();
 
         final MediaDriver.Context context = new MediaDriver.Context()
-            .applicationSpecificFeedback(Configuration.applicationSpecificFeedback())
-            .systemCounters(mockSystemCounters);
+            .systemCounters(mockSystemCounters)
+            .cachedNanoClock(nanoClock);
 
         context.receiveChannelEndpointThreadLocals(new ReceiveChannelEndpointThreadLocals(context));
 
@@ -163,7 +170,7 @@ public class ReceiverTest
             context);
     }
 
-    @After
+    @AfterEach
     public void tearDown() throws Exception
     {
         receiveChannelEndpoint.close();
@@ -171,8 +178,9 @@ public class ReceiverTest
         receiver.onClose();
     }
 
-    @Test(timeout = 10000)
-    public void shouldCreateRcvTermAndSendSmOnSetup() throws Exception
+    @Test
+    @Timeout(10)
+    public void shouldCreateRcvTermAndSendSmOnSetup() throws IOException
     {
         receiverProxy.registerReceiveChannelEndpoint(receiveChannelEndpoint);
         receiverProxy.addSubscription(receiveChannelEndpoint, STREAM_ID);
@@ -180,7 +188,8 @@ public class ReceiverTest
         receiver.doWork();
 
         fillSetupFrame(setupHeader);
-        receiveChannelEndpoint.onSetupMessage(setupHeader, setupBuffer, SetupFlyweight.HEADER_LENGTH, senderAddress, 0);
+        receiveChannelEndpoint
+            .onSetupMessage(setupHeader, setupBuffer, SetupFlyweight.HEADER_LENGTH, senderAddress, 0);
 
         final PublicationImage image = new PublicationImage(
             CORRELATION_ID,
@@ -206,7 +215,8 @@ public class ReceiverTest
             mockSystemCounters,
             SOURCE_ADDRESS,
             congestionControl,
-            lossReport);
+            lossReport,
+            mockErrorHandler);
 
         final int messagesRead = toConductorQueue.drain((e) ->
         {
@@ -218,7 +228,7 @@ public class ReceiverTest
 
         receiver.doWork();
 
-        image.trackRebuild(currentTime + (2 * STATUS_MESSAGE_TIMEOUT), STATUS_MESSAGE_TIMEOUT);
+        image.trackRebuild(nanoClock.nanoTime() + (2 * STATUS_MESSAGE_TIMEOUT), STATUS_MESSAGE_TIMEOUT);
         image.sendPendingStatusMessage();
 
         final ByteBuffer rcvBuffer = ByteBuffer.allocateDirect(256);
@@ -279,7 +289,8 @@ public class ReceiverTest
                     mockSystemCounters,
                     SOURCE_ADDRESS,
                     congestionControl,
-                    lossReport);
+                    lossReport,
+                    mockErrorHandler);
 
                 receiverProxy.newPublicationImage(receiveChannelEndpoint, image);
             });
@@ -350,7 +361,8 @@ public class ReceiverTest
                     mockSystemCounters,
                     SOURCE_ADDRESS,
                     congestionControl,
-                    lossReport);
+                    lossReport,
+                    mockErrorHandler);
 
                 receiverProxy.newPublicationImage(receiveChannelEndpoint, image);
             });
@@ -424,7 +436,8 @@ public class ReceiverTest
                     mockSystemCounters,
                     SOURCE_ADDRESS,
                     congestionControl,
-                    lossReport);
+                    lossReport,
+                    mockErrorHandler);
 
                 receiverProxy.newPublicationImage(receiveChannelEndpoint, image);
             });
@@ -502,7 +515,8 @@ public class ReceiverTest
                     mockSystemCounters,
                     SOURCE_ADDRESS,
                     congestionControl,
-                    lossReport);
+                    lossReport,
+                    mockErrorHandler);
 
                 receiverProxy.newPublicationImage(receiveChannelEndpoint, image);
             });

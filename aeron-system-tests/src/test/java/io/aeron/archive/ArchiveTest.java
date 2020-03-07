@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,55 +24,46 @@ import io.aeron.archive.codecs.SourceLocation;
 import io.aeron.driver.MediaDriver;
 import io.aeron.driver.ThreadingMode;
 import io.aeron.driver.status.SystemCounterDescriptor;
+import io.aeron.logbuffer.FragmentHandler;
 import io.aeron.logbuffer.FrameDescriptor;
 import io.aeron.logbuffer.Header;
+import io.aeron.test.Tests;
 import org.agrona.*;
 import org.agrona.collections.MutableBoolean;
 import org.agrona.concurrent.UnsafeBuffer;
 import org.agrona.concurrent.YieldingIdleStrategy;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Rule;
-import org.junit.Test;
-import org.junit.rules.TestWatcher;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.extension.RegisterExtension;
+import org.junit.jupiter.api.extension.TestWatcher;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import java.io.File;
-import java.util.Arrays;
-import java.util.Collection;
 import java.util.Random;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.stream.Stream;
 
-import static io.aeron.archive.TestUtil.awaitConnectedReply;
+import static io.aeron.archive.ArchiveTests.awaitConnectedReply;
 import static io.aeron.archive.client.AeronArchive.NULL_POSITION;
 import static io.aeron.protocol.DataHeaderFlyweight.HEADER_LENGTH;
 import static org.agrona.BufferUtil.allocateDirectAligned;
-import static org.hamcrest.core.Is.is;
-import static org.junit.Assert.*;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.params.provider.Arguments.arguments;
 
-@RunWith(value = Parameterized.class)
 public class ArchiveTest
 {
-    @Parameterized.Parameter
-    public ThreadingMode threadingMode;
-
-    @Parameterized.Parameter(value = 1)
-    public ArchiveThreadingMode archiveThreadingMode;
-    private long controlSessionId;
-
-    @Parameterized.Parameters(name = "threading modes: driver={0} archive={1}")
-    public static Collection<Object[]> data()
+    private static Stream<Arguments> threadingModes()
     {
-        return Arrays.asList(
-            new Object[][]
-            {
-                { ThreadingMode.INVOKER, ArchiveThreadingMode.SHARED },
-                { ThreadingMode.SHARED, ArchiveThreadingMode.SHARED },
-                { ThreadingMode.DEDICATED, ArchiveThreadingMode.DEDICATED },
-            });
+        return Stream.of(
+            arguments(ThreadingMode.INVOKER, ArchiveThreadingMode.SHARED),
+            arguments(ThreadingMode.SHARED, ArchiveThreadingMode.SHARED),
+            arguments(ThreadingMode.DEDICATED, ArchiveThreadingMode.DEDICATED));
     }
 
+    private static final long TIMEOUT_NS = TimeUnit.SECONDS.toNanos(5);
     private static final long MAX_CATALOG_ENTRIES = 1024;
     private static final String CONTROL_RESPONSE_URI = CommonContext.IPC_CHANNEL;
     private static final int CONTROL_RESPONSE_STREAM_ID = 100;
@@ -87,9 +78,10 @@ public class ArchiveTest
     private final Random rnd = new Random();
     private final long seed = System.nanoTime();
 
-    @Rule
-    public final TestWatcher testWatcher = TestUtil.newWatcher(this.getClass(), seed);
+    @RegisterExtension
+    public final TestWatcher testWatcher = ArchiveTests.newWatcher(seed);
 
+    private long controlSessionId;
     private String publishUri;
     private Aeron client;
     private Archive archive;
@@ -113,8 +105,7 @@ public class ArchiveTest
     private Thread replayConsumer = null;
     private Thread progressTracker = null;
 
-    @Before
-    public void before()
+    private void before(final ThreadingMode threadingMode, final ArchiveThreadingMode archiveThreadingMode)
     {
         rnd.setSeed(seed);
         requestedInitialTermId = rnd.nextInt(1234);
@@ -127,7 +118,7 @@ public class ArchiveTest
 
         publishUri = new ChannelUriStringBuilder()
             .media("udp")
-            .endpoint("localhost:54325")
+            .endpoint("localhost:24325")
             .termLength(termLength)
             .mtu(mtu)
             .initialTermId(requestedInitialTermId)
@@ -145,7 +136,6 @@ public class ArchiveTest
                 .sharedIdleStrategy(YieldingIdleStrategy.INSTANCE)
                 .spiesSimulateConnection(true)
                 .errorHandler(Throwable::printStackTrace)
-                .dirDeleteOnShutdown(true)
                 .dirDeleteOnStart(true));
 
         archive = Archive.launch(
@@ -166,7 +156,7 @@ public class ArchiveTest
         recorded = 0;
     }
 
-    @After
+    @AfterEach
     public void after()
     {
         if (null != replayConsumer)
@@ -179,16 +169,20 @@ public class ArchiveTest
             progressTracker.interrupt();
         }
 
-        CloseHelper.close(client);
-        CloseHelper.close(archive);
-        CloseHelper.close(driver);
+        CloseHelper.closeAll(client, archive, driver);
 
-        archive.context().deleteArchiveDirectory();
+        archive.context().deleteDirectory();
+        driver.context().deleteDirectory();
     }
 
-    @Test(timeout = 10_000)
-    public void recordAndReplayExclusivePublication()
+    @ParameterizedTest
+    @MethodSource("threadingModes")
+    @Timeout(10)
+    public void recordAndReplayExclusivePublication(
+        final ThreadingMode threadingMode, final ArchiveThreadingMode archiveThreadingMode)
     {
+        before(threadingMode, archiveThreadingMode);
+
         final String controlChannel = archive.context().localControlChannel();
         final int controlStreamId = archive.context().localControlStreamId();
 
@@ -210,8 +204,8 @@ public class ArchiveTest
         final int maxPayloadLength = recordedPublication.maxPayloadLength();
         final long startPosition = recordedPublication.position();
 
-        assertThat(startPosition, is(requestedStartPosition));
-        assertThat(recordedPublication.initialTermId(), is(requestedInitialTermId));
+        assertEquals(requestedStartPosition, startPosition);
+        assertEquals(requestedInitialTermId, recordedPublication.initialTermId());
         preSendChecks(archiveProxy, recordingEvents, sessionId, termBufferLength, startPosition);
 
         final int messageCount = prepAndSendMessages(recordingEvents, recordedPublication);
@@ -225,9 +219,14 @@ public class ArchiveTest
             messageCount);
     }
 
-    @Test(timeout = 10_000)
-    public void replayExclusivePublicationWhileRecording()
+    @ParameterizedTest
+    @MethodSource("threadingModes")
+    @Timeout(10)
+    public void replayExclusivePublicationWhileRecording(
+        final ThreadingMode threadingMode, final ArchiveThreadingMode archiveThreadingMode)
     {
+        before(threadingMode, archiveThreadingMode);
+
         final String controlChannel = archive.context().localControlChannel();
         final int controlStreamId = archive.context().localControlStreamId();
 
@@ -249,8 +248,8 @@ public class ArchiveTest
         final int maxPayloadLength = recordedPublication.maxPayloadLength();
         final long startPosition = recordedPublication.position();
 
-        assertThat(startPosition, is(requestedStartPosition));
-        assertThat(recordedPublication.initialTermId(), is(requestedInitialTermId));
+        assertEquals(requestedStartPosition, startPosition);
+        assertEquals(requestedInitialTermId, recordedPublication.initialTermId());
         preSendChecks(archiveProxy, recordingEvents, sessionId, termBufferLength, startPosition);
 
         final int messageCount = MESSAGE_COUNT;
@@ -269,9 +268,14 @@ public class ArchiveTest
         await(streamConsumed);
     }
 
-    @Test(timeout = 10_000)
-    public void recordAndReplayRegularPublication()
+    @ParameterizedTest
+    @MethodSource("threadingModes")
+    @Timeout(10)
+    public void recordAndReplayRegularPublication(
+        final ThreadingMode threadingMode, final ArchiveThreadingMode archiveThreadingMode)
     {
+        before(threadingMode, archiveThreadingMode);
+
         final String controlChannel = archive.context().localControlChannel();
         final int controlStreamId = archive.context().localControlStreamId();
 
@@ -284,7 +288,7 @@ public class ArchiveTest
 
         prePublicationActionsAndVerifications(archiveProxy, controlPublication, recordingEvents);
 
-        final Publication recordedPublication = client.addPublication(publishUri, PUBLISH_STREAM_ID);
+        final Publication recordedPublication = client.addExclusivePublication(publishUri, PUBLISH_STREAM_ID);
 
         final int sessionId = recordedPublication.sessionId();
         final int termBufferLength = recordedPublication.termBufferLength();
@@ -325,9 +329,9 @@ public class ArchiveTest
                     final String sourceIdentity)
                 {
                     recordingId = recordingId0;
-                    assertThat(streamId0, is(PUBLISH_STREAM_ID));
-                    assertThat(sessionId0, is(sessionId));
-                    assertThat(startPosition0, is(startPosition));
+                    assertEquals(PUBLISH_STREAM_ID, streamId0);
+                    assertEquals(sessionId, sessionId0);
+                    assertEquals(startPosition, startPosition0);
                     recordingStarted.set(true);
                 }
             },
@@ -338,8 +342,8 @@ public class ArchiveTest
         {
             if (recordingEventsAdapter.poll() == 0)
             {
-                SystemTest.checkInterruptedStatus();
                 Thread.yield();
+                Tests.checkInterruptStatus();
             }
         }
 
@@ -363,7 +367,7 @@ public class ArchiveTest
             throw new IllegalStateException("Failed to stop recording");
         }
 
-        TestUtil.awaitOk(controlResponse, requestStopCorrelationId);
+        ArchiveTests.awaitOk(controlResponse, requestStopCorrelationId);
 
         final MutableBoolean recordingStopped = new MutableBoolean();
         final RecordingEventsAdapter recordingEventsAdapter = new RecordingEventsAdapter(
@@ -371,7 +375,7 @@ public class ArchiveTest
             {
                 public void onStop(final long id, final long startPosition, final long stopPosition)
                 {
-                    assertThat(id, is(recordingId));
+                    assertEquals(recordingId, id);
                     recordingStopped.set(true);
                 }
             },
@@ -382,8 +386,8 @@ public class ArchiveTest
         {
             if (recordingEventsAdapter.poll() == 0)
             {
-                SystemTest.checkInterruptedStatus();
                 Thread.yield();
+                Tests.checkInterruptStatus();
             }
         }
 
@@ -397,14 +401,14 @@ public class ArchiveTest
         final Publication controlPublication,
         final Subscription recordingEvents)
     {
-        TestUtil.await(controlPublication::isConnected);
-        TestUtil.await(recordingEvents::isConnected);
+        Tests.await(controlPublication::isConnected, TIMEOUT_NS);
+        Tests.await(recordingEvents::isConnected, TIMEOUT_NS);
 
         controlResponse = client.addSubscription(CONTROL_RESPONSE_URI, CONTROL_RESPONSE_STREAM_ID);
         final long connectCorrelationId = correlationId++;
         assertTrue(archiveProxy.connect(CONTROL_RESPONSE_URI, CONTROL_RESPONSE_STREAM_ID, connectCorrelationId));
 
-        TestUtil.await(controlResponse::isConnected);
+        Tests.await(controlResponse::isConnected, TIMEOUT_NS);
         awaitConnectedReply(controlResponse, connectCorrelationId, (sessionId) -> controlSessionId = sessionId);
         verifyEmptyDescriptorList(archiveProxy);
 
@@ -419,14 +423,14 @@ public class ArchiveTest
             throw new IllegalStateException("Failed to start recording");
         }
 
-        TestUtil.awaitOk(controlResponse, startRecordingCorrelationId);
+        ArchiveTests.awaitOk(controlResponse, startRecordingCorrelationId);
     }
 
     private void verifyEmptyDescriptorList(final ArchiveProxy client)
     {
         final long requestRecordingsCorrelationId = correlationId++;
         client.listRecordings(0, 100, requestRecordingsCorrelationId, controlSessionId);
-        TestUtil.awaitResponse(controlResponse, requestRecordingsCorrelationId);
+        ArchiveTests.awaitResponse(controlResponse, requestRecordingsCorrelationId);
     }
 
     private void verifyDescriptorListOngoingArchive(
@@ -457,11 +461,11 @@ public class ArchiveTest
                     final String originalChannel,
                     final String sourceIdentity)
                 {
-                    assertThat(correlationId, is(requestRecordingsCorrelationId));
-                    assertThat(recordingId, is(ArchiveTest.this.recordingId));
-                    assertThat(termBufferLength, is(publicationTermBufferLength));
-                    assertThat(streamId, is(PUBLISH_STREAM_ID));
-                    assertThat(originalChannel, is(publishUri));
+                    assertEquals(requestRecordingsCorrelationId, correlationId);
+                    assertEquals(ArchiveTest.this.recordingId, recordingId);
+                    assertEquals(publicationTermBufferLength, termBufferLength);
+                    assertEquals(PUBLISH_STREAM_ID, streamId);
+                    assertEquals(publishUri, originalChannel);
 
                     isDone.set(true);
                 }
@@ -474,8 +478,8 @@ public class ArchiveTest
         {
             if (controlResponseAdapter.poll() == 0)
             {
-                SystemTest.checkInterruptedStatus();
                 Thread.yield();
+                Tests.checkInterruptStatus();
             }
         }
     }
@@ -553,8 +557,8 @@ public class ArchiveTest
                     throw new IllegalStateException("Publication not connected: result=" + result);
                 }
 
-                SystemTest.checkInterruptedStatus();
                 Thread.yield();
+                Tests.checkInterruptStatus();
             }
         }
 
@@ -586,14 +590,14 @@ public class ArchiveTest
                 throw new IllegalStateException("Failed to replay");
             }
 
-            TestUtil.awaitOk(controlResponse, replayCorrelationId);
-            TestUtil.await(replay::isConnected);
+            ArchiveTests.awaitOk(controlResponse, replayCorrelationId);
+            Tests.await(replay::isConnected, TIMEOUT_NS);
 
             final Image image = replay.images().get(0);
-            assertThat(image.initialTermId(), is(initialTermId));
-            assertThat(image.mtuLength(), is(maxPayloadLength + HEADER_LENGTH));
-            assertThat(image.termBufferLength(), is(termBufferLength));
-            assertThat(image.position(), is(startPosition));
+            assertEquals(initialTermId, image.initialTermId());
+            assertEquals(maxPayloadLength + HEADER_LENGTH, image.mtuLength());
+            assertEquals(termBufferLength, image.termBufferLength());
+            assertEquals(startPosition, image.position());
 
             this.messageCount = 0;
             remaining = totalDataLength;
@@ -603,13 +607,13 @@ public class ArchiveTest
                 final int fragments = replay.poll(this::validateFragment, 10);
                 if (0 == fragments)
                 {
-                    SystemTest.checkInterruptedStatus();
                     Thread.yield();
+                    Tests.checkInterruptStatus();
                 }
             }
 
-            assertThat(this.messageCount, is(messageCount));
-            assertThat(remaining, is(0L));
+            assertEquals(messageCount, this.messageCount);
+            assertEquals(0L, remaining);
         }
     }
 
@@ -622,8 +626,8 @@ public class ArchiveTest
 
         while (catalog.stopPosition(recordingId) != stopPosition)
         {
-            SystemTest.checkInterruptedStatus();
             Thread.yield();
+            Tests.checkInterruptStatus();
         }
 
         try (RecordingReader recordingReader = new RecordingReader(
@@ -635,12 +639,12 @@ public class ArchiveTest
             while (!recordingReader.isDone())
             {
                 recordingReader.poll(this::validateRecordingFragment, messageCount);
-                SystemTest.checkInterruptedStatus();
+                Tests.checkInterruptStatus();
             }
         }
 
-        assertThat(remaining, is(0L));
-        assertThat(this.messageCount, is(messageCount));
+        assertEquals(0L, remaining);
+        assertEquals(messageCount, this.messageCount);
     }
 
     private void validateRecordingFragment(
@@ -659,8 +663,8 @@ public class ArchiveTest
                 fail("Message length=" + length + " expected=" + expectedLength + " messageCount=" + messageCount);
             }
 
-            assertThat(buffer.getInt(offset), is(messageCount));
-            assertThat(buffer.getByte(offset + 4), is((byte)'z'));
+            assertEquals(messageCount, buffer.getInt(offset));
+            assertEquals((byte)'z', buffer.getByte(offset + 4));
 
             remaining -= BitUtil.align(messageLengths[messageCount], FrameDescriptor.FRAME_ALIGNMENT);
             messageCount++;
@@ -670,9 +674,9 @@ public class ArchiveTest
     @SuppressWarnings("unused")
     private void validateFragment(final DirectBuffer buffer, final int offset, final int length, final Header header)
     {
-        assertThat(length, is(messageLengths[messageCount] - HEADER_LENGTH));
-        assertThat(buffer.getInt(offset), is(messageCount));
-        assertThat(buffer.getByte(offset + 4), is((byte)'z'));
+        assertEquals(messageLengths[messageCount] - HEADER_LENGTH, length);
+        assertEquals(messageCount, buffer.getInt(offset));
+        assertEquals((byte)'z', buffer.getByte(offset + 4));
 
         remaining -= BitUtil.align(messageLengths[messageCount], FrameDescriptor.FRAME_ALIGNMENT);
         messageCount++;
@@ -685,7 +689,7 @@ public class ArchiveTest
             {
                 public void onProgress(final long recordingId0, final long startPosition, final long position)
                 {
-                    assertThat(recordingId0, is(recordingId));
+                    assertEquals(recordingId, recordingId0);
                     recorded = position - startPosition;
                 }
             },
@@ -703,8 +707,8 @@ public class ArchiveTest
                     {
                         if (recordingEventsAdapter.poll() == 0)
                         {
-                            SystemTest.checkInterruptedStatus();
-                            SystemTest.sleep(1);
+                            Tests.sleep(1);
+                            Tests.checkInterruptStatus();
                         }
                     }
                 }
@@ -737,7 +741,7 @@ public class ArchiveTest
             {
                 while (0 == recorded)
                 {
-                    SystemTest.sleep(1);
+                    Tests.sleep(1);
                 }
 
                 try (Subscription replay = client.addSubscription(REPLAY_URI, REPLAY_STREAM_ID))
@@ -756,25 +760,26 @@ public class ArchiveTest
                         throw new IllegalStateException("failed to start replay");
                     }
 
-                    TestUtil.awaitOk(controlResponse, replayCorrelationId);
-                    TestUtil.await(replay::isConnected);
+                    ArchiveTests.awaitOk(controlResponse, replayCorrelationId);
+                    Tests.await(replay::isConnected, TIMEOUT_NS);
 
                     final Image image = replay.images().get(0);
-                    assertThat(image.initialTermId(), is(initialTermId));
-                    assertThat(image.mtuLength(), is(maxPayloadLength + HEADER_LENGTH));
-                    assertThat(image.termBufferLength(), is(termBufferLength));
-                    assertThat(image.position(), is(startPosition));
+                    assertEquals(initialTermId, image.initialTermId());
+                    assertEquals(maxPayloadLength + HEADER_LENGTH, image.mtuLength());
+                    assertEquals(termBufferLength, image.termBufferLength());
+                    assertEquals(startPosition, image.position());
 
                     this.messageCount = 0;
                     remaining = totalDataLength;
 
+                    final FragmentHandler fragmentHandler = this::validateFragment;
                     while (this.messageCount < messageCount)
                     {
-                        final int fragments = replay.poll(this::validateFragment, 10);
+                        final int fragments = replay.poll(fragmentHandler, 10);
                         if (0 == fragments)
                         {
-                            SystemTest.checkInterruptedStatus();
                             Thread.yield();
+                            Tests.checkInterruptStatus();
                         }
                     }
                 }

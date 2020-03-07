@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,17 +15,59 @@
  */
 package io.aeron.driver;
 
+import io.aeron.CommonContext;
 import io.aeron.driver.media.UdpChannel;
 import org.agrona.LangUtil;
 
+import static io.aeron.driver.Configuration.MULTICAST_FLOW_CONTROL_STRATEGY;
+
+/**
+ * Default supplier of {@link FlowControl} strategies for multicast streams which supports defining the strategy in
+ * the channel URI as a priority over {@link Configuration#MULTICAST_FLOW_CONTROL_STRATEGY_PROP_NAME}.
+ */
 public class DefaultMulticastFlowControlSupplier implements FlowControlSupplier
 {
     public FlowControl newInstance(final UdpChannel udpChannel, final int streamId, final long registrationId)
     {
+        final String fcStr = udpChannel.channelUri().get(CommonContext.FLOW_CONTROL_PARAM_NAME);
+        if (null != fcStr)
+        {
+            final int delimiter = fcStr.indexOf(',');
+            final String strategyStr = -1 == delimiter ? fcStr : fcStr.substring(0, delimiter);
+
+            switch (strategyStr)
+            {
+                case MaxMulticastFlowControl.FC_PARAM_VALUE:
+                    return MaxMulticastFlowControl.INSTANCE;
+
+                case MinMulticastFlowControl.FC_PARAM_VALUE:
+                    return new MinMulticastFlowControl();
+
+                case TaggedMulticastFlowControl.FC_PARAM_VALUE:
+                    return new TaggedMulticastFlowControl();
+
+                default:
+                    throw new IllegalArgumentException("unsupported multicast flow control strategy : fc=" + fcStr);
+            }
+        }
+
+        if (MaxMulticastFlowControl.class.getName().equals(MULTICAST_FLOW_CONTROL_STRATEGY))
+        {
+            return MaxMulticastFlowControl.INSTANCE;
+        }
+        else if (MinMulticastFlowControl.class.getName().equals(MULTICAST_FLOW_CONTROL_STRATEGY))
+        {
+            return new MinMulticastFlowControl();
+        }
+        else if (TaggedMulticastFlowControl.class.getName().equals(MULTICAST_FLOW_CONTROL_STRATEGY))
+        {
+            return new TaggedMulticastFlowControl();
+        }
+
         FlowControl flowControl = null;
         try
         {
-            flowControl = (FlowControl)Class.forName(Configuration.MULTICAST_FLOW_CONTROL_STRATEGY)
+            flowControl = (FlowControl)Class.forName(MULTICAST_FLOW_CONTROL_STRATEGY)
                 .getConstructor()
                 .newInstance();
         }
@@ -40,6 +82,6 @@ public class DefaultMulticastFlowControlSupplier implements FlowControlSupplier
     public String toString()
     {
         return "DefaultMulticastFlowControlSupplier{flowControlClass=" +
-            Configuration.MULTICAST_FLOW_CONTROL_STRATEGY + "}";
+            MULTICAST_FLOW_CONTROL_STRATEGY + "}";
     }
 }

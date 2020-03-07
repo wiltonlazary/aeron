@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,17 +25,18 @@
 #include "RecordingSubscriptionDescriptorPoller.h"
 #include "concurrent/BackOffIdleStrategy.h"
 #include "concurrent/YieldingIdleStrategy.h"
+#include "util/ScopeUtils.h"
 #include "ArchiveException.h"
 
 namespace aeron { namespace archive { namespace client {
 
 /**
- * Client is not currently connected to an active archive.
+ * Client is not currently connected to an active archive error message.
  */
 constexpr const char NOT_CONNECTED_MSG[] = "not connected";
 
 /**
- * Client for interacting with a local or remote Aeron Archive that records and replays message streams.
+ * Client for interacting with a local or remote Aeron Archive for requesting the recording and replay message streams.
  * <p>
  * This client provides a simple interaction model which is mostly synchronous and may not be optimal.
  * The underlying components such as the ArchiveProxy and the ControlResponsePoller or
@@ -94,7 +95,9 @@ public:
         const std::int64_t m_subscriptionId;
         const std::int64_t m_publicationId;
         std::int64_t m_correlationId = aeron::NULL_VALUE;
+        std::int64_t m_challengeControlSessionId = aeron::NULL_VALUE;
         std::uint8_t m_step = 0;
+        std::pair<const char *, std::uint32_t> m_encodedCredentialsFromChallenge = { nullptr, 0};
     };
 
     /**
@@ -170,13 +173,23 @@ public:
     }
 
     /**
-     * The control session id allocated for this connection to the archive.
+     * The control session id allocated for this control session to the archive.
      *
-     * @return control session id allocated for this connection to the archive.
+     * @return control session id allocated for this control session to the archive.
      */
-    inline std::int64_t controlSessionId()
+    inline std::int64_t controlSessionId() const
     {
         return m_controlSessionId;
+    }
+
+    /**
+     * The last used correlation id for this control session to the archive.
+     *
+     * @return last used correlation id for this connection to the archive.
+     */
+    inline std::int64_t lastCorrelationId() const
+    {
+        return m_lastCorrelationId;
     }
 
     /**
@@ -184,7 +197,7 @@ public:
      *
      * @return the ArchiveProxy for send asynchronous messages to the connected archive.
      */
-    inline ArchiveProxy& archiveProxy()
+    inline ArchiveProxy& archiveProxy() const
     {
         return *m_archiveProxy;
     }
@@ -194,7 +207,7 @@ public:
      *
      * @return the ControlResponsePoller for polling additional events on the control channel.
      */
-    inline ControlResponsePoller& controlResponsePoller()
+    inline ControlResponsePoller& controlResponsePoller() const
     {
         return *m_controlResponsePoller;
     }
@@ -204,7 +217,7 @@ public:
      *
      * @return the RecordingDescriptorPoller for polling recording descriptors on the control channel.
      */
-    inline RecordingDescriptorPoller& recordingDescriptorPoller()
+    inline RecordingDescriptorPoller& recordingDescriptorPoller() const
     {
         return *m_recordingDescriptorPoller;
     }
@@ -215,7 +228,7 @@ public:
      * @return the RecordingSubscriptionDescriptorPoller for polling subscription descriptors on the control
      * channel.
      */
-    inline RecordingSubscriptionDescriptorPoller& recordingSubscriptionDescriptorPoller()
+    inline RecordingSubscriptionDescriptorPoller& recordingSubscriptionDescriptorPoller() const
     {
         return *m_recordingSubscriptionDescriptorPoller;
     }
@@ -229,7 +242,6 @@ public:
     inline std::string pollForErrorResponse()
     {
         std::lock_guard<std::recursive_mutex> lock(m_lock);
-
         ensureOpen();
 
         if (!m_controlResponsePoller->subscription()->isConnected())
@@ -261,23 +273,21 @@ public:
     inline void checkForErrorResponse()
     {
         std::lock_guard<std::recursive_mutex> lock(m_lock);
-
         ensureOpen();
 
         if (!m_controlResponsePoller->subscription()->isConnected())
         {
-                if (m_ctx->errorHandler() != nullptr)
-                {
-                    ArchiveException ex(NOT_CONNECTED_MSG, SOURCEINFO);
-                    m_ctx->errorHandler()(ex);
-                }
-                else
-                {
-                    throw ArchiveException(NOT_CONNECTED_MSG, SOURCEINFO);
-                }
+            if (m_ctx->errorHandler() != nullptr)
+            {
+                ArchiveException ex(NOT_CONNECTED_MSG, SOURCEINFO);
+                m_ctx->errorHandler()(ex);
+            }
+            else
+            {
+                throw ArchiveException(NOT_CONNECTED_MSG, SOURCEINFO);
+            }
         }
-
-        if (m_controlResponsePoller->poll() != 0 && m_controlResponsePoller->isPollComplete())
+        else if (m_controlResponsePoller->poll() != 0 && m_controlResponsePoller->isPollComplete())
         {
             if (m_controlResponsePoller->controlSessionId() == m_controlSessionId &&
                 m_controlResponsePoller->isControlResponse() &&
@@ -287,6 +297,7 @@ public:
                 {
                     ArchiveException ex(
                         static_cast<std::int32_t>(m_controlResponsePoller->relevantId()),
+                        m_controlResponsePoller->correlationId(),
                         m_controlResponsePoller->errorMessage(),
                         SOURCEINFO);
                     m_ctx->errorHandler()(ex);
@@ -295,6 +306,7 @@ public:
                 {
                     throw ArchiveException(
                         static_cast<std::int32_t>(m_controlResponsePoller->relevantId()),
+                        m_controlResponsePoller->correlationId(),
                         m_controlResponsePoller->errorMessage(),
                         SOURCEINFO);
                 }
@@ -321,8 +333,8 @@ public:
         IdleStrategy idle;
 
         std::lock_guard<std::recursive_mutex> lock(m_lock);
-
         ensureOpen();
+        ensureNotReentrant();
 
         const std::int64_t publicationId = m_aeron->addPublication(channel, streamId);
         publication = m_aeron->findPublication(publicationId);
@@ -363,8 +375,8 @@ public:
         IdleStrategy idle;
 
         std::lock_guard<std::recursive_mutex> lock(m_lock);
-
         ensureOpen();
+        ensureNotReentrant();
 
         const std::int64_t publicationId = m_aeron->addExclusivePublication(channel, streamId);
         publication = m_aeron->findExclusivePublication(publicationId);
@@ -398,18 +410,18 @@ public:
         const std::string& channel, std::int32_t streamId, SourceLocation sourceLocation)
     {
         std::lock_guard<std::recursive_mutex> lock(m_lock);
-
         ensureOpen();
+        ensureNotReentrant();
 
-        const std::int64_t correlationId = m_aeron->nextCorrelationId();
+        m_lastCorrelationId = m_aeron->nextCorrelationId();
 
         if (!m_archiveProxy->startRecording<IdleStrategy>(
-            channel, streamId, sourceLocation == SourceLocation::LOCAL, correlationId, m_controlSessionId))
+            channel, streamId, sourceLocation == SourceLocation::LOCAL, m_lastCorrelationId, m_controlSessionId))
         {
             throw ArchiveException("failed to send start recording request", SOURCEINFO);
         }
 
-        return pollForResponse<IdleStrategy>(correlationId);
+        return pollForResponse<IdleStrategy>(m_lastCorrelationId);
     }
 
     /**
@@ -431,18 +443,23 @@ public:
         std::int64_t recordingId, const std::string& channel, std::int32_t streamId, SourceLocation sourceLocation)
     {
         std::lock_guard<std::recursive_mutex> lock(m_lock);
-
         ensureOpen();
+        ensureNotReentrant();
 
-        const std::int64_t correlationId = m_aeron->nextCorrelationId();
+        m_lastCorrelationId = m_aeron->nextCorrelationId();
 
         if (!m_archiveProxy->extendRecording<IdleStrategy>(
-            channel, streamId, sourceLocation == SourceLocation::LOCAL, recordingId, correlationId, m_controlSessionId))
+            channel,
+            streamId,
+            sourceLocation == SourceLocation::LOCAL,
+            recordingId,
+            m_lastCorrelationId,
+            m_controlSessionId))
         {
             throw ArchiveException("failed to send extend recording request", SOURCEINFO);
         }
 
-        return pollForResponse<IdleStrategy>(correlationId);
+        return pollForResponse<IdleStrategy>(m_lastCorrelationId);
     }
 
     /**
@@ -460,18 +477,17 @@ public:
     inline void stopRecording(const std::string& channel, std::int32_t streamId)
     {
         std::lock_guard<std::recursive_mutex> lock(m_lock);
-
         ensureOpen();
+        ensureNotReentrant();
 
-        const std::int64_t correlationId = m_aeron->nextCorrelationId();
+        m_lastCorrelationId = m_aeron->nextCorrelationId();
 
-        if (!m_archiveProxy->stopRecording<IdleStrategy>(
-            channel, streamId, correlationId, m_controlSessionId))
+        if (!m_archiveProxy->stopRecording<IdleStrategy>(channel, streamId, m_lastCorrelationId, m_controlSessionId))
         {
             throw ArchiveException("failed to send stop recording request", SOURCEINFO);
         }
 
-        pollForResponse<IdleStrategy>(correlationId);
+        pollForResponse<IdleStrategy>(m_lastCorrelationId);
     }
 
     /**
@@ -516,17 +532,17 @@ public:
     inline void stopRecording(std::int64_t subscriptionId)
     {
         std::lock_guard<std::recursive_mutex> lock(m_lock);
-
         ensureOpen();
+        ensureNotReentrant();
 
-        const std::int64_t correlationId = m_aeron->nextCorrelationId();
+        m_lastCorrelationId = m_aeron->nextCorrelationId();
 
-        if (!m_archiveProxy->stopRecording<IdleStrategy>(subscriptionId, correlationId, m_controlSessionId))
+        if (!m_archiveProxy->stopRecording<IdleStrategy>(subscriptionId, m_lastCorrelationId, m_controlSessionId))
         {
             throw ArchiveException("failed to send stop recording request", SOURCEINFO);
         }
 
-        pollForResponse<IdleStrategy>(correlationId);
+        pollForResponse<IdleStrategy>(m_lastCorrelationId);
     }
 
     /**
@@ -556,18 +572,18 @@ public:
         std::int32_t replayStreamId)
     {
         std::lock_guard<std::recursive_mutex> lock(m_lock);
-
         ensureOpen();
+        ensureNotReentrant();
 
-        const std::int64_t correlationId = m_aeron->nextCorrelationId();
+        m_lastCorrelationId = m_aeron->nextCorrelationId();
 
         if (!m_archiveProxy->replay<IdleStrategy>(
-            recordingId, position, length, replayChannel, replayStreamId, correlationId, m_controlSessionId))
+            recordingId, position, length, replayChannel, replayStreamId, m_lastCorrelationId, m_controlSessionId))
         {
             throw ArchiveException("failed to send replay request", SOURCEINFO);
         }
 
-        return pollForResponse<IdleStrategy>(correlationId);
+        return pollForResponse<IdleStrategy>(m_lastCorrelationId);
     }
 
     /**
@@ -599,10 +615,10 @@ public:
         std::int32_t replayStreamId)
     {
         std::lock_guard<std::recursive_mutex> lock(m_lock);
-
         ensureOpen();
+        ensureNotReentrant();
 
-        const std::int64_t correlationId = m_aeron->nextCorrelationId();
+        m_lastCorrelationId = m_aeron->nextCorrelationId();
 
         if (!m_archiveProxy->boundedReplay<IdleStrategy>(
             recordingId,
@@ -611,13 +627,13 @@ public:
             limitCounterId,
             replayChannel,
             replayStreamId,
-            correlationId,
+            m_lastCorrelationId,
             m_controlSessionId))
         {
             throw ArchiveException("failed to send bounded replay request", SOURCEINFO);
         }
 
-        return pollForResponse<IdleStrategy>(correlationId);
+        return pollForResponse<IdleStrategy>(m_lastCorrelationId);
     }
 
     /**
@@ -630,17 +646,17 @@ public:
     inline void stopReplay(std::int64_t replaySessionId)
     {
         std::lock_guard<std::recursive_mutex> lock(m_lock);
-
         ensureOpen();
+        ensureNotReentrant();
 
-        const std::int64_t correlationId = m_aeron->nextCorrelationId();
+        m_lastCorrelationId = m_aeron->nextCorrelationId();
 
-        if (!m_archiveProxy->stopReplay<IdleStrategy>(replaySessionId, correlationId, m_controlSessionId))
+        if (!m_archiveProxy->stopReplay<IdleStrategy>(replaySessionId, m_lastCorrelationId, m_controlSessionId))
         {
             throw ArchiveException("failed to send stop replay request", SOURCEINFO);
         }
 
-        pollForResponse<IdleStrategy>(correlationId);
+        pollForResponse<IdleStrategy>(m_lastCorrelationId);
     }
 
     /**
@@ -653,17 +669,17 @@ public:
     inline void stopAllReplays(std::int64_t recordingId)
     {
         std::lock_guard<std::recursive_mutex> lock(m_lock);
-
         ensureOpen();
+        ensureNotReentrant();
 
-        const std::int64_t correlationId = m_aeron->nextCorrelationId();
+        m_lastCorrelationId = m_aeron->nextCorrelationId();
 
-        if (!m_archiveProxy->stopAllReplays<IdleStrategy>(recordingId, correlationId, m_controlSessionId))
+        if (!m_archiveProxy->stopAllReplays<IdleStrategy>(recordingId, m_lastCorrelationId, m_controlSessionId))
         {
             throw ArchiveException("failed to send stop all replays request", SOURCEINFO);
         }
 
-        pollForResponse<IdleStrategy>(correlationId);
+        pollForResponse<IdleStrategy>(m_lastCorrelationId);
     }
 
     /**
@@ -688,19 +704,19 @@ public:
         std::int32_t replayStreamId)
     {
         std::lock_guard<std::recursive_mutex> lock(m_lock);
-
         ensureOpen();
+        ensureNotReentrant();
 
         std::shared_ptr<ChannelUri> replayChannelUri = ChannelUri::parse(replayChannel);
-        const std::int64_t correlationId = m_aeron->nextCorrelationId();
+        m_lastCorrelationId = m_aeron->nextCorrelationId();
 
         if (!m_archiveProxy->replay<IdleStrategy>(
-            recordingId, position, length, replayChannel, replayStreamId, correlationId, m_controlSessionId))
+            recordingId, position, length, replayChannel, replayStreamId, m_lastCorrelationId, m_controlSessionId))
         {
             throw ArchiveException("failed to send replay request", SOURCEINFO);
         }
 
-        auto replaySessionId = static_cast<std::int32_t>(pollForResponse<IdleStrategy>(correlationId));
+        auto replaySessionId = static_cast<std::int32_t>(pollForResponse<IdleStrategy>(m_lastCorrelationId));
         replayChannelUri->put(SESSION_ID_PARAM_NAME, std::to_string(replaySessionId));
 
         const std::int64_t subscriptionId = m_aeron->addSubscription(replayChannelUri->toString(), replayStreamId);
@@ -742,19 +758,19 @@ public:
         const on_unavailable_image_t& unavailableImageHandler)
     {
         std::lock_guard<std::recursive_mutex> lock(m_lock);
-
         ensureOpen();
+        ensureNotReentrant();
 
         std::shared_ptr<ChannelUri> replayChannelUri = ChannelUri::parse(replayChannel);
-        const std::int64_t correlationId = m_aeron->nextCorrelationId();
+        m_lastCorrelationId = m_aeron->nextCorrelationId();
 
         if (!m_archiveProxy->replay<IdleStrategy>(
-            recordingId, position, length, replayChannel, replayStreamId, correlationId, m_controlSessionId))
+            recordingId, position, length, replayChannel, replayStreamId, m_lastCorrelationId, m_controlSessionId))
         {
             throw ArchiveException("failed to send replay request", SOURCEINFO);
         }
 
-        auto replaySessionId = static_cast<std::int32_t>(pollForResponse<IdleStrategy>(correlationId));
+        auto replaySessionId = static_cast<std::int32_t>(pollForResponse<IdleStrategy>(m_lastCorrelationId));
         replayChannelUri->put(SESSION_ID_PARAM_NAME, std::to_string(replaySessionId));
 
         const std::int64_t subscriptionId = m_aeron->addSubscription(
@@ -787,18 +803,19 @@ public:
         std::int64_t fromRecordingId, std::int32_t recordCount, const recording_descriptor_consumer_t& consumer)
     {
         std::lock_guard<std::recursive_mutex> lock(m_lock);
-
         ensureOpen();
+        ensureNotReentrant();
 
-        const std::int64_t correlationId = m_aeron->nextCorrelationId();
+        m_lastCorrelationId = m_aeron->nextCorrelationId();
+        CallbackGuard callbackGuard(m_isInCallback);
 
         if (!m_archiveProxy->listRecordings<IdleStrategy>(
-            fromRecordingId, recordCount, correlationId, m_controlSessionId))
+            fromRecordingId, recordCount, m_lastCorrelationId, m_controlSessionId))
         {
             throw ArchiveException("failed to send list recordings request", SOURCEINFO);
         }
 
-        return pollForDescriptors<IdleStrategy>(correlationId, recordCount, consumer);
+        return pollForDescriptors<IdleStrategy>(m_lastCorrelationId, recordCount, consumer);
     }
 
     /**
@@ -824,18 +841,19 @@ public:
         const recording_descriptor_consumer_t& consumer)
     {
         std::lock_guard<std::recursive_mutex> lock(m_lock);
-
         ensureOpen();
+        ensureNotReentrant();
 
-        const std::int64_t correlationId = m_aeron->nextCorrelationId();
+        m_lastCorrelationId = m_aeron->nextCorrelationId();
+        CallbackGuard callbackGuard(m_isInCallback);
 
         if (!m_archiveProxy->listRecordingsForUri<IdleStrategy>(
-            fromRecordingId, recordCount, channelFragment, streamId, correlationId, m_controlSessionId))
+            fromRecordingId, recordCount, channelFragment, streamId, m_lastCorrelationId, m_controlSessionId))
         {
             throw ArchiveException("failed to send list recordings request", SOURCEINFO);
         }
 
-        return pollForDescriptors<IdleStrategy>(correlationId, recordCount, consumer);
+        return pollForDescriptors<IdleStrategy>(m_lastCorrelationId, recordCount, consumer);
     }
 
     /**
@@ -852,17 +870,44 @@ public:
     inline std::int32_t listRecording(std::int64_t recordingId, const recording_descriptor_consumer_t& consumer)
     {
         std::lock_guard<std::recursive_mutex> lock(m_lock);
-
         ensureOpen();
+        ensureNotReentrant();
 
-        const std::int64_t correlationId = m_aeron->nextCorrelationId();
+        m_lastCorrelationId = m_aeron->nextCorrelationId();
+        CallbackGuard callbackGuard(m_isInCallback);
 
-        if (!m_archiveProxy->listRecording<IdleStrategy>(recordingId, correlationId, m_controlSessionId))
+        if (!m_archiveProxy->listRecording<IdleStrategy>(recordingId, m_lastCorrelationId, m_controlSessionId))
         {
             throw ArchiveException("failed to send list recording request", SOURCEINFO);
         }
 
-        return pollForDescriptors<IdleStrategy>(correlationId, 1, consumer);
+        return pollForDescriptors<IdleStrategy>(m_lastCorrelationId, 1, consumer);
+    }
+
+    /**
+     * Get the start position for a recording.
+     *
+     * @param recordingId of the active recording for which the position is required.
+     * @tparam IdleStrategy to use for polling operations.
+     * @return the start position
+     * @see #getRecordingPosition
+     * @see #getStopPosition
+     */
+    template<typename IdleStrategy = aeron::concurrent::BackoffIdleStrategy>
+    inline std::int64_t getStartPosition(std::int64_t recordingId)
+    {
+        std::lock_guard<std::recursive_mutex> lock(m_lock);
+        ensureOpen();
+        ensureNotReentrant();
+
+        m_lastCorrelationId = m_aeron->nextCorrelationId();
+
+        if (!m_archiveProxy->getStartPosition<IdleStrategy>(recordingId, m_lastCorrelationId, m_controlSessionId))
+        {
+            throw ArchiveException("failed to send get start position request", SOURCEINFO);
+        }
+
+        return pollForResponse<IdleStrategy>(m_lastCorrelationId);
     }
 
     /**
@@ -877,17 +922,17 @@ public:
     inline std::int64_t getRecordingPosition(std::int64_t recordingId)
     {
         std::lock_guard<std::recursive_mutex> lock(m_lock);
-
         ensureOpen();
+        ensureNotReentrant();
 
-        const std::int64_t correlationId = m_aeron->nextCorrelationId();
+        m_lastCorrelationId = m_aeron->nextCorrelationId();
 
-        if (!m_archiveProxy->getRecordingPosition<IdleStrategy>(recordingId, correlationId, m_controlSessionId))
+        if (!m_archiveProxy->getRecordingPosition<IdleStrategy>(recordingId, m_lastCorrelationId, m_controlSessionId))
         {
             throw ArchiveException("failed to send get recording position request", SOURCEINFO);
         }
 
-        return pollForResponse<IdleStrategy>(correlationId);
+        return pollForResponse<IdleStrategy>(m_lastCorrelationId);
     }
 
     /**
@@ -902,17 +947,17 @@ public:
     inline std::int64_t getStopPosition(std::int64_t recordingId)
     {
         std::lock_guard<std::recursive_mutex> lock(m_lock);
-
         ensureOpen();
+        ensureNotReentrant();
 
-        const std::int64_t correlationId = m_aeron->nextCorrelationId();
+        m_lastCorrelationId = m_aeron->nextCorrelationId();
 
-        if (!m_archiveProxy->getStopPosition<IdleStrategy>(recordingId, correlationId, m_controlSessionId))
+        if (!m_archiveProxy->getStopPosition<IdleStrategy>(recordingId, m_lastCorrelationId, m_controlSessionId))
         {
             throw ArchiveException("failed to send get stop position request", SOURCEINFO);
         }
 
-        return pollForResponse<IdleStrategy>(correlationId);
+        return pollForResponse<IdleStrategy>(m_lastCorrelationId);
     }
 
     /**
@@ -933,18 +978,18 @@ public:
         std::int32_t sessionId)
     {
         std::lock_guard<std::recursive_mutex> lock(m_lock);
-
         ensureOpen();
+        ensureNotReentrant();
 
-        const std::int64_t correlationId = m_aeron->nextCorrelationId();
+        m_lastCorrelationId = m_aeron->nextCorrelationId();
 
         if (!m_archiveProxy->findLastMatchingRecording<IdleStrategy>(
-            minRecordingId, channelFragment, streamId, sessionId, correlationId, m_controlSessionId))
+            minRecordingId, channelFragment, streamId, sessionId, m_lastCorrelationId, m_controlSessionId))
         {
             throw ArchiveException("failed to send find last matching recording request", SOURCEINFO);
         }
 
-        return pollForResponse<IdleStrategy>(correlationId);
+        return pollForResponse<IdleStrategy>(m_lastCorrelationId);
     }
 
     /**
@@ -959,17 +1004,18 @@ public:
     inline void truncateRecording(std::int64_t recordingId, std::int64_t position)
     {
         std::lock_guard<std::recursive_mutex> lock(m_lock);
-
         ensureOpen();
+        ensureNotReentrant();
 
-        const std::int64_t correlationId = m_aeron->nextCorrelationId();
+        m_lastCorrelationId= m_aeron->nextCorrelationId();
 
-        if (!m_archiveProxy->truncateRecording<IdleStrategy>(recordingId, position, correlationId, m_controlSessionId))
+        if (!m_archiveProxy->truncateRecording<IdleStrategy>(
+            recordingId, position, m_lastCorrelationId, m_controlSessionId))
         {
             throw ArchiveException("failed to send truncate recording request", SOURCEINFO);
         }
 
-        pollForResponse<IdleStrategy>(correlationId);
+        pollForResponse<IdleStrategy>(m_lastCorrelationId);
     }
 
     /**
@@ -997,18 +1043,25 @@ public:
         const recording_subscription_descriptor_consumer_t& consumer)
     {
         std::lock_guard<std::recursive_mutex> lock(m_lock);
-
         ensureOpen();
+        ensureNotReentrant();
 
-        const std::int64_t correlationId = m_aeron->nextCorrelationId();
+        m_lastCorrelationId = m_aeron->nextCorrelationId();
+        CallbackGuard callbackGuard(m_isInCallback);
 
         if (!m_archiveProxy->listRecordingSubscriptions<IdleStrategy>(
-            pseudoIndex, subscriptionCount, channelFragment, streamId, applyStreamId, correlationId, m_controlSessionId))
+            pseudoIndex,
+            subscriptionCount,
+            channelFragment,
+            streamId,
+            applyStreamId,
+            m_lastCorrelationId,
+            m_controlSessionId))
         {
             throw ArchiveException("failed to send list recording subscriptions request", SOURCEINFO);
         }
 
-        return pollForSubscriptionDescriptors<IdleStrategy>(correlationId, subscriptionCount, consumer);
+        return pollForSubscriptionDescriptors<IdleStrategy>(m_lastCorrelationId, subscriptionCount, consumer);
     }
 
     /**
@@ -1040,10 +1093,10 @@ public:
         const std::string& liveDestination)
     {
         std::lock_guard<std::recursive_mutex> lock(m_lock);
-
         ensureOpen();
+        ensureNotReentrant();
 
-        const std::int64_t correlationId = m_aeron->nextCorrelationId();
+        m_lastCorrelationId = m_aeron->nextCorrelationId();
 
         if (!m_archiveProxy->replicate<IdleStrategy>(
             srcRecordingId,
@@ -1051,13 +1104,68 @@ public:
             srcControlStreamId,
             srcControlChannel,
             liveDestination,
-            correlationId,
+            m_lastCorrelationId,
             m_controlSessionId))
         {
             throw ArchiveException("failed to send replicate request", SOURCEINFO);
         }
 
-        pollForResponse<IdleStrategy>(correlationId);
+        pollForResponse<IdleStrategy>(m_lastCorrelationId);
+    }
+
+    /**
+     * Replicate a recording from a source archive to a destination which can be considered a backup for a primary
+     * archive. The source recording will be replayed via the provided replay channel and use the original stream id.
+     * If the destination recording id is Aeron#NULL_VALUE then a new destination recording is created,
+     * otherwise the provided destination recording id will be extended. The details of the source recording
+     * descriptor will be replicated. The subscription used in the archive will be tagged with the provided tags.
+     * <p>
+     * For a source recording that is still active the replay can merge with the live stream and then follow it
+     * directly and no longer require the replay from the source. This would require a multicast live destination.
+     * <p>
+     * Errors will be reported asynchronously and can be checked for with AeronArchive#pollForErrorResponse()
+     * or AeronArchive#checkForErrorResponse(). Follow progress with RecordingSignalAdapter.
+     *
+     * @param srcRecordingId     recording id which must exist in the source archive.
+     * @param dstRecordingId     recording to extend in the destination, otherwise Aeron#NULL_VALUE.
+     * @param channelTagId       used to tag the replication subscription.
+     * @param subscriptionTagId  used to tag the replication subscription.
+     * @param srcControlStreamId remote control stream id for the source archive to instruct the replay on.
+     * @param srcControlChannel  remote control channel for the source archive to instruct the replay on.
+     * @param liveDestination    destination for the live stream if merge is required. Empty string for no merge.
+     * @tparam IdleStrategy to use for polling operations.
+     */
+    template<typename IdleStrategy = aeron::concurrent::BackoffIdleStrategy>
+    inline void taggedReplicate(
+        std::int64_t srcRecordingId,
+        std::int64_t dstRecordingId,
+        std::int64_t channelTagId,
+        std::int64_t subscriptionTagId,
+        std::int32_t srcControlStreamId,
+        const std::string& srcControlChannel,
+        const std::string& liveDestination)
+    {
+        std::lock_guard<std::recursive_mutex> lock(m_lock);
+        ensureOpen();
+        ensureNotReentrant();
+
+        m_lastCorrelationId = m_aeron->nextCorrelationId();
+
+        if (!m_archiveProxy->taggedReplicate<IdleStrategy>(
+            srcRecordingId,
+            dstRecordingId,
+            channelTagId,
+            subscriptionTagId,
+            srcControlStreamId,
+            srcControlChannel,
+            liveDestination,
+            m_lastCorrelationId,
+            m_controlSessionId))
+        {
+            throw ArchiveException("failed to send tagged replicate request", SOURCEINFO);
+        }
+
+        pollForResponse<IdleStrategy>(m_lastCorrelationId);
     }
 
     /**
@@ -1070,17 +1178,159 @@ public:
     inline void stopReplication(std::int64_t replicationId)
     {
         std::lock_guard<std::recursive_mutex> lock(m_lock);
-
         ensureOpen();
+        ensureNotReentrant();
 
-        const std::int64_t correlationId = m_aeron->nextCorrelationId();
+        m_lastCorrelationId = m_aeron->nextCorrelationId();
 
-        if (!m_archiveProxy->stopReplication<IdleStrategy>(replicationId, correlationId, m_controlSessionId))
+        if (!m_archiveProxy->stopReplication<IdleStrategy>(replicationId, m_lastCorrelationId, m_controlSessionId))
         {
             throw ArchiveException("failed to send stop replication request", SOURCEINFO);
         }
 
-        pollForResponse<IdleStrategy>(correlationId);
+        pollForResponse<IdleStrategy>(m_lastCorrelationId);
+    }
+
+    /**
+     * Detach segments from the beginning of a recording up to the provided new start position.
+     * <p>
+     * The new start position must be first byte position of a segment after the existing start position.
+     * <p>
+     * It is not possible to detach segments which are active for recording or being replayed.
+     *
+     * @param recordingId      of the recording to detach segments from.
+     * @param newStartPosition for the recording after segments are detached.
+     * @tparam IdleStrategy to use for polling operations.
+     */
+    template<typename IdleStrategy = aeron::concurrent::BackoffIdleStrategy>
+    inline void detachSegments(std::int64_t recordingId, std::int64_t newStartPosition)
+    {
+        std::lock_guard<std::recursive_mutex> lock(m_lock);
+        ensureOpen();
+        ensureNotReentrant();
+
+        m_lastCorrelationId = m_aeron->nextCorrelationId();
+
+        if (!m_archiveProxy->detachSegments<IdleStrategy>(
+            recordingId, newStartPosition, m_lastCorrelationId, m_controlSessionId))
+        {
+            throw ArchiveException("failed to send detach segments request", SOURCEINFO);
+        }
+
+        pollForResponse<IdleStrategy>(m_lastCorrelationId);
+    }
+
+    /**
+     * Delete detached segments which have been previously detached from a recording.
+     *
+     * @param recordingId of the recording to delete previously detached segments from.
+     * @tparam IdleStrategy to use for polling operations.
+     * @return the count of segments deleted.
+     */
+    template<typename IdleStrategy = aeron::concurrent::BackoffIdleStrategy>
+    inline std::uint64_t deleteDetachedSegments(std::int64_t recordingId)
+    {
+        std::lock_guard<std::recursive_mutex> lock(m_lock);
+        ensureOpen();
+        ensureNotReentrant();
+
+        m_lastCorrelationId = m_aeron->nextCorrelationId();
+
+        if (!m_archiveProxy->deleteDetachedSegments<IdleStrategy>(recordingId, m_lastCorrelationId, m_controlSessionId))
+        {
+            throw ArchiveException("failed to send delete segments request", SOURCEINFO);
+        }
+
+        return pollForResponse<IdleStrategy>(m_lastCorrelationId);
+    }
+
+    /**
+     * Purge (detach and delete) segments from the beginning of a recording up to the provided new start position.
+     * <p>
+     * The new start position must be first byte position of a segment after the existing start position.
+     * <p>
+     * It is not possible to detach segments which are active for recording or being replayed.
+     *
+     * @param recordingId      of the recording to purge segments from.
+     * @param newStartPosition for the recording after segments are purged.
+     * @tparam IdleStrategy to use for polling operations.
+     * @return the count of segments purged.
+     */
+    template<typename IdleStrategy = aeron::concurrent::BackoffIdleStrategy>
+    inline std::uint64_t purgeSegments(std::int64_t recordingId, std::int64_t newStartPosition)
+    {
+        std::lock_guard<std::recursive_mutex> lock(m_lock);
+        ensureOpen();
+        ensureNotReentrant();
+
+        m_lastCorrelationId = m_aeron->nextCorrelationId();
+
+        if (!m_archiveProxy->purgeSegments<IdleStrategy>(
+            recordingId, newStartPosition, m_lastCorrelationId, m_controlSessionId))
+        {
+            throw ArchiveException("failed to send purge segments request", SOURCEINFO);
+        }
+
+        return pollForResponse<IdleStrategy>(m_lastCorrelationId);
+    }
+
+    /**
+     * Attach segments to the beginning of a recording to restore history that was previously detached.
+     * <p>
+     * Segment files must match the existing recording and join exactly to the start position of the recording
+     * they are being attached to.
+     *
+     * @param recordingId of the recording to attach segments to.
+     * @tparam IdleStrategy to use for polling operations.
+     * @return the count of segments attached.
+     */
+    template<typename IdleStrategy = aeron::concurrent::BackoffIdleStrategy>
+    inline std::uint64_t attachSegments(std::int64_t recordingId)
+    {
+        std::lock_guard<std::recursive_mutex> lock(m_lock);
+        ensureOpen();
+        ensureNotReentrant();
+
+        m_lastCorrelationId = m_aeron->nextCorrelationId();
+
+        if (!m_archiveProxy->attachSegments<IdleStrategy>(recordingId, m_lastCorrelationId, m_controlSessionId))
+        {
+            throw ArchiveException("failed to send attach segments request", SOURCEINFO);
+        }
+
+        return pollForResponse<IdleStrategy>(m_lastCorrelationId);
+    }
+
+    /**
+     * Migrate segments from a source recording and attach them to the beginning of a destination recording.
+     * <p>
+     * The source recording must match the destination recording for segment length, term length, mtu length,
+     * stream id, plus the stop position and term id of the source must join with the start position of the destination
+     * and be on a segment boundary.
+     * <p>
+     * The source recording will be effectively truncated back to its start position after the migration.
+     *
+     * @param srcRecordingId source recording from which the segments will be migrated.
+     * @param dstRecordingId destination recording to which the segments will be attached.
+     * @tparam IdleStrategy to use for polling operations.
+     * @return the count of segments purged.
+     */
+    template<typename IdleStrategy = aeron::concurrent::BackoffIdleStrategy>
+    inline std::uint64_t migrateSegments(std::int64_t srcRecordingId, std::int64_t dstRecordingId)
+    {
+        std::lock_guard<std::recursive_mutex> lock(m_lock);
+        ensureOpen();
+        ensureNotReentrant();
+
+        m_lastCorrelationId = m_aeron->nextCorrelationId();
+
+        if (!m_archiveProxy->migrateSegments<IdleStrategy>(
+            srcRecordingId, dstRecordingId, m_lastCorrelationId, m_controlSessionId))
+        {
+            throw ArchiveException("failed to send migrate segments request", SOURCEINFO);
+        }
+
+        return pollForResponse<IdleStrategy>(m_lastCorrelationId);
     }
 
     /**
@@ -1102,14 +1352,24 @@ private:
     nano_clock_t m_nanoClock;
 
     const std::int64_t m_controlSessionId;
+    std::int64_t m_lastCorrelationId = NULL_VALUE;
     const long long m_messageTimeoutNs;
     bool m_isClosed = false;
+    bool m_isInCallback = false;
 
     inline void ensureOpen()
     {
         if (m_isClosed)
         {
             throw ArchiveException("client is closed", SOURCEINFO);
+        }
+    }
+
+    inline void ensureNotReentrant()
+    {
+        if (m_isInCallback)
+        {
+            throw ReentrantException("client cannot be invoked within callback", SOURCEINFO);
         }
     }
 
@@ -1180,6 +1440,7 @@ private:
                 {
                     throw ArchiveException(
                         static_cast<std::int32_t>(m_controlResponsePoller->relevantId()),
+                        m_controlResponsePoller->correlationId(),
                         "response for correlationId=" + std::to_string(correlationId) +
                         ", error: " + m_controlResponsePoller->errorMessage(),
                         SOURCEINFO);
@@ -1188,6 +1449,7 @@ private:
                 {
                     ArchiveException ex(
                         static_cast<std::int32_t>(m_controlResponsePoller->relevantId()),
+                        m_controlResponsePoller->correlationId(),
                         "response for correlationId=" + std::to_string(correlationId) +
                         ", error: " + m_controlResponsePoller->errorMessage(),
                         SOURCEINFO);
@@ -1299,4 +1561,5 @@ private:
 };
 
 }}}
+
 #endif //AERON_ARCHIVE_AERON_ARCHIVE_H

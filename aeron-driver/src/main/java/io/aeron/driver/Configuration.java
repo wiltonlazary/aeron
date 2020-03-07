@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -44,7 +44,9 @@ import static io.aeron.driver.ThreadingMode.DEDICATED;
 import static io.aeron.logbuffer.LogBufferDescriptor.PAGE_MAX_SIZE;
 import static io.aeron.logbuffer.LogBufferDescriptor.PAGE_MIN_SIZE;
 import static java.lang.Integer.getInteger;
+import static java.lang.Long.getLong;
 import static java.lang.System.getProperty;
+import static java.nio.ByteOrder.LITTLE_ENDIAN;
 import static org.agrona.BitUtil.fromHex;
 import static org.agrona.SystemUtil.*;
 
@@ -486,7 +488,10 @@ public class Configuration
 
     /**
      * Property name for Application Specific Feedback added to Status Messages by the driver for flow control.
+     * <p>
+     * Replaced by {@link #RECEIVER_GROUP_TAG_PROP_NAME}.
      */
+    @Deprecated
     public static final String SM_APPLICATION_SPECIFIC_FEEDBACK_PROP_NAME =
         "aeron.flow.control.sm.applicationSpecificFeedback";
 
@@ -627,9 +632,66 @@ public class Configuration
     public static final String TERMINATION_VALIDATOR_PROP_NAME = "aeron.driver.termination.validator";
 
     /**
-     * Property name for default boolean value for if a stream is rejoinable. True to allow rejoin, false to not.
+     * Property name for default boolean value for if a stream can be rejoined. True to allow rejoin, false to not.
      */
     public static final String REJOIN_STREAM_PROP_NAME = "aeron.rejoin.stream";
+
+    /**
+     * Property name for default group tag (gtag) to send in all Status Messages.
+     */
+    public static final String RECEIVER_GROUP_TAG_PROP_NAME = "aeron.receiver.group.tag";
+
+    /**
+     * Property name for default group tag (gtag) used by the tagged flow control strategy to group receivers.
+     */
+    public static final String FLOW_CONTROL_GROUP_TAG_PROP_NAME = "aeron.flow.control.group.tag";
+
+    /**
+     * Property name for default minimum group size used by flow control strategies to determine
+     * connectivity.
+     */
+    public static final String FLOW_CONTROL_GROUP_MIN_SIZE_PROP_NAME =
+        "aeron.flow.control.group.min.size";
+
+    /**
+     * Default value for the receiver timeout used to determine if the receiver should still be monitored for
+     * flow control purposes.
+     */
+    public static final long FLOW_CONTROL_RECEIVER_TIMEOUT_DEFAULT_NS = TimeUnit.SECONDS.toNanos(2);
+
+    /**
+     * Property name for flow control timeouts.
+     */
+    public static final String FLOW_CONTROL_RECEIVER_TIMEOUT_PROP_NAME =
+        "aeron.flow.control.receiver.timeout";
+
+    private static final String MIN_FLOW_CONTROL_TIMEOUT_OLD_PROP_NAME =
+        "aeron.MinMulticastFlowControl.receiverTimeout";
+
+    /**
+     * Property name for resolver name of the Media Driver.
+     */
+    public static final String RESOLVER_NAME_PROP_NAME = "aeron.driver.resolver.name";
+
+    /**
+     * Property name for resolver interface.
+     */
+    public static final String RESOLVER_INTERFACE_PROP_NAME = "aeron.driver.resolver.interface";
+
+    /**
+     * Property name for resolver bootstrap neighbor.
+     */
+    public static final String RESOLVER_BOOTSTRAP_NEIGHBOR_PROP_NAME = "aeron.driver.resolver.bootstrap.neighbor";
+
+    /**
+     * Property name for re-resolution check interval.
+     */
+    public static final String RE_RESOLUTION_CHECK_INTERVAL_PROP_NAME = "aeron.driver.reresolution.check.interval";
+
+    /**
+     * Default value for the re-resolution check interval.
+     */
+    public static final long RE_RESOLUTION_CHECK_INTERVAL_DEFAULT_NS = TimeUnit.SECONDS.toNanos(1);
 
     public static boolean printConfigurationOnStart()
     {
@@ -643,7 +705,7 @@ public class Configuration
 
     public static boolean warnIfDirExists()
     {
-        return "true".equalsIgnoreCase(getProperty(DIR_WARN_IF_EXISTS_PROP_NAME, "true"));
+        return "true".equalsIgnoreCase(getProperty(DIR_WARN_IF_EXISTS_PROP_NAME, "false"));
     }
 
     public static boolean dirDeleteOnStart()
@@ -756,6 +818,53 @@ public class Configuration
     public static boolean rejoinStream()
     {
         return "true".equalsIgnoreCase(getProperty(REJOIN_STREAM_PROP_NAME, "true"));
+    }
+
+    public static Long groupTag()
+    {
+        return getLong(RECEIVER_GROUP_TAG_PROP_NAME, null);
+    }
+
+    @SuppressWarnings("deprecation")
+    public static long flowControlGroupTag()
+    {
+        final String propertyValue = getProperty(
+            PreferredMulticastFlowControl.PREFERRED_ASF_PROP_NAME, PreferredMulticastFlowControl.PREFERRED_ASF_DEFAULT);
+        final long legacyAsfValue = new UnsafeBuffer(BitUtil.fromHex(propertyValue)).getLong(0, LITTLE_ENDIAN);
+
+        return getLong(FLOW_CONTROL_GROUP_TAG_PROP_NAME, legacyAsfValue);
+    }
+
+    public static int flowControlGroupMinSize()
+    {
+        return getInteger(FLOW_CONTROL_GROUP_MIN_SIZE_PROP_NAME, 0);
+    }
+
+    public static long flowControlReceiverTimeoutNs()
+    {
+        return getDurationInNanos(
+            FLOW_CONTROL_RECEIVER_TIMEOUT_PROP_NAME,
+            getDurationInNanos(MIN_FLOW_CONTROL_TIMEOUT_OLD_PROP_NAME, FLOW_CONTROL_RECEIVER_TIMEOUT_DEFAULT_NS));
+    }
+
+    public static String resolverName()
+    {
+        return getProperty(RESOLVER_NAME_PROP_NAME);
+    }
+
+    public static String resolverInterface()
+    {
+        return getProperty(RESOLVER_INTERFACE_PROP_NAME);
+    }
+
+    public static String resolverBootstrapNeighbor()
+    {
+        return getProperty(RESOLVER_BOOTSTRAP_NEIGHBOR_PROP_NAME);
+    }
+
+    public static long reResolutionCheckIntervalNs()
+    {
+        return getDurationInNanos(RE_RESOLUTION_CHECK_INTERVAL_PROP_NAME, RE_RESOLUTION_CHECK_INTERVAL_DEFAULT_NS);
     }
 
     /**

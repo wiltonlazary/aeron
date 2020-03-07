@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,6 +15,7 @@
  */
 package io.aeron.cluster;
 
+import io.aeron.cluster.client.AeronCluster;
 import io.aeron.cluster.codecs.*;
 import io.aeron.logbuffer.BufferClaim;
 import org.agrona.ExpandableArrayBuffer;
@@ -57,6 +58,7 @@ class EgressPublisher
                     .leadershipTermId(leadershipTermId)
                     .leaderMemberId(leaderMemberId)
                     .code(code)
+                    .version(AeronCluster.Configuration.PROTOCOL_SEMANTIC_VERSION)
                     .detail(detail);
 
                 bufferClaim.commit();

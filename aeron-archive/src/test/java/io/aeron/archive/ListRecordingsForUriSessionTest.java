@@ -7,16 +7,15 @@ import org.agrona.IoUtil;
 import org.agrona.collections.MutableLong;
 import org.agrona.concurrent.EpochClock;
 import org.agrona.concurrent.UnsafeBuffer;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.mockito.stubbing.Answer;
 
 import java.io.File;
 import java.nio.charset.StandardCharsets;
 
-import static org.hamcrest.Matchers.is;
-import static org.junit.Assert.assertThat;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.Mockito.*;
 
 public class ListRecordingsForUriSessionTest
@@ -27,7 +26,7 @@ public class ListRecordingsForUriSessionTest
     private final UnsafeBuffer descriptorBuffer = new UnsafeBuffer();
     private final RecordingDescriptorDecoder recordingDescriptorDecoder = new RecordingDescriptorDecoder();
     private final long[] matchingRecordingIds = new long[3];
-    private final File archiveDir = TestUtil.makeTestDirectory();
+    private final File archiveDir = ArchiveTests.makeTestDirectory();
     private final EpochClock clock = mock(EpochClock.class);
 
     private Catalog catalog;
@@ -35,7 +34,7 @@ public class ListRecordingsForUriSessionTest
     private final ControlResponseProxy controlResponseProxy = mock(ControlResponseProxy.class);
     private final ControlSession controlSession = mock(ControlSession.class);
 
-    @Before
+    @BeforeEach
     public void before()
     {
         catalog = new Catalog(archiveDir, null, 0, MAX_ENTRIES, clock);
@@ -51,7 +50,7 @@ public class ListRecordingsForUriSessionTest
             0L, 0L, 0, SEGMENT_FILE_SIZE, 4096, 1024, 8, 1, "localhost", "localhost?tag=f", "sourceB");
     }
 
-    @After
+    @AfterEach
     public void after()
     {
         CloseHelper.close(catalog);
@@ -214,7 +213,7 @@ public class ListRecordingsForUriSessionTest
                 RecordingDescriptorDecoder.SCHEMA_VERSION);
 
             final int i = counter.intValue();
-            assertThat(recordingDescriptorDecoder.recordingId(), is(matchingRecordingIds[i]));
+            assertEquals(matchingRecordingIds[i], recordingDescriptorDecoder.recordingId());
             counter.set(i + 1);
 
             return buffer.getInt(0);

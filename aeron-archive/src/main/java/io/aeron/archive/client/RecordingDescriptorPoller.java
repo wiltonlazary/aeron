@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -171,7 +171,8 @@ public class RecordingDescriptorPoller implements ControlledFragmentHandler
                         final ArchiveException ex = new ArchiveException(
                             "response for correlationId=" + this.correlationId +
                             ", error: " + controlResponseDecoder.errorMessage(),
-                            (int)controlResponseDecoder.relevantId());
+                            (int)controlResponseDecoder.relevantId(),
+                            correlationId);
 
                         if (correlationId == this.correlationId)
                         {
@@ -224,5 +225,15 @@ public class RecordingDescriptorPoller implements ControlledFragmentHandler
         }
 
         return Action.CONTINUE;
+    }
+
+    public String toString()
+    {
+        return "RecordingDescriptorPoller{" +
+            "controlSessionId=" + controlSessionId +
+            ", correlationId=" + correlationId +
+            ", remainingRecordCount=" + remainingRecordCount +
+            ", isDispatchComplete=" + isDispatchComplete +
+            '}';
     }
 }

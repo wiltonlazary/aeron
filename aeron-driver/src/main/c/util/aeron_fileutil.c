@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,7 +28,7 @@
 #include "aeron_error.h"
 #include "aeron_fileutil.h"
 
-#if  defined(AERON_COMPILER_MSVC) && defined(AERON_CPU_X64)
+#if defined(AERON_COMPILER_MSVC) && defined(AERON_CPU_X64)
 #include <WinSock2.h>
 #include <windows.h>
 #include <stdint.h>
@@ -39,44 +39,22 @@
 #define PROT_WRITE 2
 #define MAP_FAILED ((void*)-1)
 
-#define MAP_SHARED	0x01
+#define MAP_SHARED 0x01
 #define S_IRUSR _S_IREAD
 #define S_IWUSR _S_IWRITE
 
 static int aeron_mmap(aeron_mapped_file_t *mapping, int fd, off_t offset)
 {
-    size_t length = mapping->length;
-    size_t len;
-    struct stat st;
-    const uint32_t l = offset & 0xFFFFFFFF;
-    const uint32_t h = (offset >> 32) & 0xFFFFFFFF;
-
-    if (!fstat(fd, &st))
-    {
-        len = (size_t)st.st_size;
-    }
-    else
-    {
-        fprintf(stderr, "mmap: could not determine file length");
-        close(fd);
-        return -1;
-    }
-
-    if (length + offset > len)
-    {
-        length = len - offset;
-    }
-
     HANDLE hmap = CreateFileMapping((HANDLE)_get_osfhandle(fd), 0, PAGE_READWRITE, 0, 0, 0);
 
     if (!hmap)
     {
-        aeron_set_windows_error();
+        aeron_set_err_from_last_err_code("CreateFileMapping");
         close(fd);
         return -1;
     }
 
-    mapping->addr = MapViewOfFileEx(hmap, FILE_MAP_WRITE, h, l, length, NULL);
+    mapping->addr = MapViewOfFileEx(hmap, FILE_MAP_WRITE, 0, offset, mapping->length, NULL);
 
     if (!CloseHandle(hmap))
     {
@@ -97,7 +75,7 @@ int aeron_unmap(aeron_mapped_file_t *mapped_file)
 {
     if (NULL != mapped_file->addr)
     {
-        return UnmapViewOfFile(mapped_file->addr) == true ? 0 : -1;
+        return UnmapViewOfFile(mapped_file->addr) ? 0 : -1;
     }
 
     return 0;
@@ -116,7 +94,7 @@ int aeron_ftruncate(int fd, off_t length)
 
 uint64_t aeron_usable_fs_space(const char *path)
 {
-    ULARGE_INTEGER  lpAvailableToCaller, lpTotalNumberOfBytes, lpTotalNumberOfFreeBytes;
+    ULARGE_INTEGER lpAvailableToCaller, lpTotalNumberOfBytes, lpTotalNumberOfFreeBytes;
 
     if (!GetDiskFreeSpaceExA(
         path,
@@ -164,14 +142,14 @@ int aeron_delete_directory(const char* dir)
 
 int aeron_is_directory(const char* path)
 {
-    return GetFileAttributes(path) == FILE_ATTRIBUTE_DIRECTORY;
+    const DWORD attributes = GetFileAttributes(path);
+    return attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY);
 }
 
 #else
 #include <unistd.h>
 #include <sys/mman.h>
 #include <sys/statvfs.h>
-#include <errno.h>
 #include <ftw.h>
 #include <stdio.h>
 
@@ -197,8 +175,7 @@ static int unlink_func(const char *path, const struct stat *sb, int type_flag, s
 {
     if (remove(path) != 0)
     {
-        int errcode = errno;
-        aeron_set_err(errcode, "could not remove %s: %s", path, strerror(errcode));
+        aeron_set_err_from_last_err_code("could not remove %s", path);
     }
 
     return 0;
@@ -234,12 +211,7 @@ int aeron_create_file(const char* path)
 }
 #endif
 
-#include <string.h>
-#include <stdio.h>
 #include <inttypes.h>
-#include <errno.h>
-#include "util/aeron_fileutil.h"
-#include "aeron_error.h"
 
 #define AERON_BLOCK_SIZE (4 * 1024)
 
@@ -271,20 +243,17 @@ int aeron_map_new_file(aeron_mapped_file_t *mapped_file, const char *path, bool 
             }
             else
             {
-                int errcode = errno;
-                aeron_set_err(errcode, "%s:%d: %s", __FILE__, __LINE__, strerror(errcode));
+                aeron_set_err_from_last_err_code("%s:%d", __FILE__, __LINE__);
             }
         }
         else
         {
-            int errcode = errno;
-            aeron_set_err(errcode, "%s:%d: %s", __FILE__, __LINE__, strerror(errcode));
+            aeron_set_err_from_last_err_code("%s:%d", __FILE__, __LINE__);
         }
     }
     else
     {
-        int errcode = errno;
-        aeron_set_err(errcode, "%s:%d: %s", __FILE__, __LINE__, strerror(errcode));
+        aeron_set_err_from_last_err_code("%s:%d", __FILE__, __LINE__);
     }
 
     return result;
@@ -307,20 +276,17 @@ int aeron_map_existing_file(aeron_mapped_file_t *mapped_file, const char *path)
             }
             else
             {
-                int errcode = errno;
-                aeron_set_err(errcode, "%s:%d: %s", __FILE__, __LINE__, strerror(errcode));
+                aeron_set_err_from_last_err_code("%s:%d", __FILE__, __LINE__);
             }
         }
         else
         {
-            int errcode = errno;
-            aeron_set_err(errcode, "%s:%d: %s", __FILE__, __LINE__, strerror(errcode));
+            aeron_set_err_from_last_err_code("%s:%d", __FILE__, __LINE__);
         }
     }
     else
     {
-        int errcode = errno;
-        aeron_set_err(errcode, "%s:%d: %s", __FILE__, __LINE__, strerror(errcode));
+        aeron_set_err_from_last_err_code("%s:%d", __FILE__, __LINE__);
     }
 
     return result;
@@ -331,52 +297,40 @@ uint64_t aeron_usable_fs_space_disabled(const char *path)
     return UINT64_MAX;
 }
 
-/*
- * stream location:
- * dir/channel-sessionId(hex)-streamId(hex)-correlationId(hex).logbuffer
- */
 int aeron_ipc_publication_location(
     char *dst,
     size_t length,
     const char *aeron_dir,
-    int32_t session_id,
-    int32_t stream_id,
     int64_t correlation_id)
 {
     return snprintf(
         dst, length,
-        "%s/" AERON_PUBLICATIONS_DIR "/ipc-%" PRIx32 "-%" PRIx32 "-%" PRIx64 ".logbuffer",
-        aeron_dir, session_id, stream_id, correlation_id);
+        "%s/" AERON_PUBLICATIONS_DIR "/%" PRId64 ".logbuffer",
+        aeron_dir, correlation_id);
 }
 
 int aeron_network_publication_location(
     char *dst,
     size_t length,
     const char *aeron_dir,
-    const char *channel_canonical_form,
-    int32_t session_id,
-    int32_t stream_id,
     int64_t correlation_id)
 {
     return snprintf(
         dst, length,
-        "%s/" AERON_PUBLICATIONS_DIR "/%s-%" PRIx32 "-%" PRIx32 "-%" PRIx64 ".logbuffer",
-        aeron_dir, channel_canonical_form, session_id, stream_id, correlation_id);
+        "%s/" AERON_PUBLICATIONS_DIR "/%" PRId64 ".logbuffer",
+        aeron_dir, correlation_id);
 }
 
 int aeron_publication_image_location(
     char *dst,
     size_t length,
     const char *aeron_dir,
-    const char *channel_canonical_form,
-    int32_t session_id,
-    int32_t stream_id,
     int64_t correlation_id)
 {
     return snprintf(
         dst, length,
-        "%s/" AERON_IMAGES_DIR "/%s-%" PRIx32 "-%" PRIx32 "-%" PRIx64 ".logbuffer",
-        aeron_dir, channel_canonical_form, session_id, stream_id, correlation_id);
+        "%s/" AERON_IMAGES_DIR "/%" PRId64 ".logbuffer",
+        aeron_dir, correlation_id);
 }
 
 int aeron_map_raw_log(
@@ -398,8 +352,7 @@ int aeron_map_raw_log(
 
             if (aeron_mmap(&mapped_raw_log->mapped_file, fd, 0) < 0)
             {
-                int errcode = errno;
-                aeron_set_err(errcode, "%s:%d: %s", __FILE__, __LINE__, strerror(errcode));
+                aeron_set_err_from_last_err_code("%s:%d", __FILE__, __LINE__);
                 return -1;
             }
 
@@ -423,14 +376,12 @@ int aeron_map_raw_log(
         }
         else
         {
-            int errcode = errno;
-            aeron_set_err(errcode, "%s:%d: %s", __FILE__, __LINE__, strerror(errcode));
+            aeron_set_err_from_last_err_code("%s:%d", __FILE__, __LINE__);
         }
     }
     else
     {
-        int errcode = errno;
-        aeron_set_err(errcode, "%s:%d: %s", __FILE__, __LINE__, strerror(errcode));
+        aeron_set_err_from_last_err_code("%s:%d", __FILE__, __LINE__);
     }
 
     return result;
@@ -449,8 +400,7 @@ int aeron_map_raw_log_close(aeron_mapped_raw_log_t *mapped_raw_log, const char *
 
         if (NULL != filename && remove(filename) < 0)
         {
-            int errcode = errno;
-            aeron_set_err(errcode, "%s:%d: %s", __FILE__, __LINE__, strerror(errcode));
+            aeron_set_err_from_last_err_code("%s:%d", __FILE__, __LINE__);
             return -1;
         }
 

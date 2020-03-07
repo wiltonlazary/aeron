@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,10 +16,12 @@
 package io.aeron.driver;
 
 import io.aeron.driver.media.ReceiveChannelEndpoint;
-import io.aeron.driver.media.ReceiveDestinationUdpTransport;
+import io.aeron.driver.media.ReceiveDestinationTransport;
 import io.aeron.driver.media.UdpChannel;
+import org.agrona.concurrent.AgentTerminationException;
 import org.agrona.concurrent.status.AtomicCounter;
 
+import java.net.InetSocketAddress;
 import java.util.Queue;
 
 import static io.aeron.driver.ThreadingMode.INVOKER;
@@ -151,7 +153,7 @@ public class ReceiverProxy
     }
 
     public void addDestination(
-        final ReceiveChannelEndpoint channelEndpoint, final ReceiveDestinationUdpTransport transport)
+        final ReceiveChannelEndpoint channelEndpoint, final ReceiveDestinationTransport transport)
     {
         if (notConcurrent())
         {
@@ -175,6 +177,19 @@ public class ReceiverProxy
         }
     }
 
+    public void onResolutionChange(
+        final ReceiveChannelEndpoint channelEndpoint, final UdpChannel udpChannel, final InetSocketAddress newAddress)
+    {
+        if (notConcurrent())
+        {
+            receiver.onResolutionChange(channelEndpoint, udpChannel, newAddress);
+        }
+        else
+        {
+            offer(() -> receiver.onResolutionChange(channelEndpoint, udpChannel, newAddress));
+        }
+    }
+
     private boolean notConcurrent()
     {
         return threadingMode == SHARED || threadingMode == INVOKER;
@@ -184,12 +199,16 @@ public class ReceiverProxy
     {
         while (!commandQueue.offer(cmd))
         {
-            if (Thread.currentThread().isInterrupted())
+            if (!failCount.isClosed())
             {
-                break;
+                failCount.increment();
             }
-            failCount.incrementOrdered();
+
             Thread.yield();
+            if (Thread.interrupted())
+            {
+                throw new AgentTerminationException("unexpected interrupt");
+            }
         }
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,20 +14,25 @@
  * limitations under the License.
  */
 
+#if defined(__linux__)
+#define _BSD_SOURCE
+#define _GNU_SOURCE
+#endif
+
 #include "concurrent/aeron_thread.h"
 
 void aeron_nano_sleep(uint64_t nanoseconds)
 {
 #ifdef AERON_COMPILER_MSVC
-    HANDLE timer;
-    LARGE_INTEGER li;
-
-    if (!(timer = CreateWaitableTimer(NULL, TRUE, NULL)))
+    HANDLE timer = CreateWaitableTimer(NULL, TRUE, NULL);
+    if (!timer)
     {
         return;
     }
 
-    li.QuadPart = -nanoseconds;
+    LARGE_INTEGER li;
+    li.QuadPart = -(int64_t)(nanoseconds / 100);
+
     if (!SetWaitableTimer(timer, &li, 0, NULL, NULL, FALSE))
     {
         CloseHandle(timer);
@@ -42,26 +47,55 @@ void aeron_nano_sleep(uint64_t nanoseconds)
 }
 
 #if defined(AERON_COMPILER_GCC)
+
+void aeron_thread_set_name(const char* role_name)
+{
+#if defined(Darwin)
+    pthread_setname_np(role_name);
+#else
+    pthread_setname_np(pthread_self(), role_name);
+#endif
+}
+
 #elif defined(AERON_COMPILER_MSVC) && defined(AERON_CPU_X64)
+
+static BOOL aeron_thread_once_callback(PINIT_ONCE init_once, void (*callback)(void), void** context)
+{
+    callback();
+    return TRUE;
+}
 
 void aeron_thread_once(AERON_INIT_ONCE* s_init_once, void* callback)
 {
-    InitOnceExecuteOnce(s_init_once, (PINIT_ONCE_FN)callback, NULL, NULL);
+    InitOnceExecuteOnce(s_init_once, aeron_thread_once_callback, callback, NULL);
 }
 
-void aeron_mutex_init(HANDLE* mutex, void* attr)
+int aeron_mutex_init(aeron_mutex_t* mutex, void* attr)
 {
     *mutex = CreateMutexA(NULL, FALSE, NULL);
+    return *mutex ? 0 : -1;
 }
 
-void aeron_mutex_lock(HANDLE* mutex)
+int aeron_mutex_lock(aeron_mutex_t* mutex)
 {
-    WaitForSingleObject(mutex, INFINITE);
+    return WaitForSingleObject(*mutex, INFINITE) == WAIT_OBJECT_0 ? 0 : EINVAL;
 }
 
-void aeron_mutex_unlock(HANDLE* mutex)
+int aeron_mutex_unlock(aeron_mutex_t* mutex)
 {
-    ReleaseMutex(mutex);
+    return ReleaseMutex(*mutex) ? 0 : EINVAL;
+}
+
+int aeron_mutex_destroy(aeron_mutex_t* mutex)
+{
+    if (*mutex)
+    {
+        CloseHandle(*mutex);
+        *mutex = 0;
+        return 0;
+    }
+
+    return EINVAL;
 }
 
 int aeron_thread_attr_init(pthread_attr_t* attr)
@@ -69,45 +103,69 @@ int aeron_thread_attr_init(pthread_attr_t* attr)
     return 0;
 }
 
-int aeron_thread_create(aeron_thread_t* thread, void* attr, void*(*callback)(void*), void* arg0)
+static DWORD WINAPI aeron_thread_proc(LPVOID parameter)
 {
-    DWORD id;
-    *thread = CreateThread(
-        NULL,              // default security attributes
-        0,                 // use default stack size
-        callback,          // thread function name
-        arg0,              // argument to thread function
-        0,                 // use default creation flags
-        &id);              // returns the thread identifier
-
+    aeron_thread_t* thread = (aeron_thread_t*)parameter;
+    thread->result = thread->callback(thread->arg0);
     return 0;
 }
 
-void aeron_thread_set_name(aeron_thread_t self, const char* role_name)
+int aeron_thread_create(aeron_thread_t* thread, void* attr, void*(*callback)(void*), void* arg0)
+{
+    thread->callback = callback;
+    thread->arg0 = arg0;
+	
+    DWORD id;
+    thread->handle = CreateThread(
+        NULL,              // default security attributes
+        0,                 // use default stack size
+        aeron_thread_proc, // thread function name
+        thread,            // argument to thread function
+        0,                 // use default creation flags
+        &id);              // returns the thread identifier
+
+    return thread->handle ? 0 : -1;
+}
+
+void aeron_thread_set_name(const char* role_name)
 {
     size_t wn = mbstowcs(NULL, role_name, 0);
     wchar_t * buf = malloc(sizeof(wchar_t) * (wn + 1));  // value-initialize to 0 (see below)
+    if (!buf)
+    {
+        return;
+    }
+	
     mbstowcs(buf, role_name, wn + 1);
-    SetThreadDescription(self, buf);
+    SetThreadDescription(GetCurrentThread(), buf);
 
     free(buf);
 }
 
-aeron_thread_t aeron_thread_self()
+int aeron_thread_join(aeron_thread_t thread, void **value_ptr)
 {
-    return GetCurrentThread();
-}
+    if (thread.handle)
+    {
+        WaitForSingleObject(thread.handle, INFINITE);
+        CloseHandle(thread.handle);
+    }
+    else
+    {
+        return EINVAL;
+    }
 
-DWORD aeron_thread_join(aeron_thread_t thread, void **value_ptr)
-{
-    WaitForSingleObject(thread, INFINITE);
+    if (value_ptr)
+    {
+        *value_ptr = thread.result;
+    }
+
     return 0;
 }
 
 int aeron_thread_key_create(pthread_key_t *key, void(*destr_function) (void *))
 {
     DWORD dkey = TlsAlloc();
-    if (dkey != 0xFFFFFFFF)
+    if (dkey != TLS_OUT_OF_INDEXES)
     {
         *key = dkey;
         return 0;
@@ -168,5 +226,3 @@ void proc_yield()
 #else
 #error Unsupported platform!
 #endif
-
-

@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,28 +15,27 @@
  */
 package io.aeron;
 
-import org.junit.Before;
-import org.junit.Test;
+import io.aeron.logbuffer.LogBufferDescriptor;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import io.aeron.logbuffer.FragmentHandler;
-import io.aeron.logbuffer.FrameDescriptor;
 import io.aeron.logbuffer.Header;
 import io.aeron.protocol.DataHeaderFlyweight;
 import org.agrona.concurrent.UnsafeBuffer;
 
 import java.nio.ByteBuffer;
 
-import static org.hamcrest.Matchers.is;
-import static org.junit.Assert.assertThat;
-import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.*;
 
 public class SubscriptionTest
 {
     private static final String CHANNEL = "aeron:udp?endpoint=localhost:40124";
-    private static final int STREAM_ID_1 = 2;
+    private static final int STREAM_ID_1 = 1002;
+    private static final int INITIAL_TERM_ID = 7;
     private static final long SUBSCRIPTION_CORRELATION_ID = 100;
     private static final int READ_BUFFER_CAPACITY = 1024;
-    private static final byte FLAGS = FrameDescriptor.UNFRAGMENTED;
     private static final int FRAGMENT_COUNT_LIMIT = Integer.MAX_VALUE;
     private static final int HEADER_LENGTH = DataHeaderFlyweight.HEADER_LENGTH;
 
@@ -44,20 +43,19 @@ public class SubscriptionTest
     private final ClientConductor conductor = mock(ClientConductor.class);
     private final FragmentHandler fragmentHandler = mock(FragmentHandler.class);
     private final Image imageOneMock = mock(Image.class);
-    private final Header header = mock(Header.class);
     private final Image imageTwoMock = mock(Image.class);
+    private final Header header = new Header(
+        INITIAL_TERM_ID, LogBufferDescriptor.positionBitsToShift(LogBufferDescriptor.TERM_MIN_LENGTH));
     private final AvailableImageHandler availableImageHandlerMock = mock(AvailableImageHandler.class);
     private final UnavailableImageHandler unavailableImageHandlerMock = mock(UnavailableImageHandler.class);
 
     private Subscription subscription;
 
-    @Before
+    @BeforeEach
     public void setUp()
     {
         when(imageOneMock.correlationId()).thenReturn(1L);
         when(imageTwoMock.correlationId()).thenReturn(2L);
-
-        when(header.flags()).thenReturn(FLAGS);
 
         subscription = new Subscription(
             conductor,
@@ -87,7 +85,7 @@ public class SubscriptionTest
     @Test
     public void shouldReadNothingWhenNoImages()
     {
-        assertThat(subscription.poll(fragmentHandler, 1), is(0));
+        assertEquals(0, subscription.poll(fragmentHandler, 1));
     }
 
     @Test
@@ -95,7 +93,7 @@ public class SubscriptionTest
     {
         subscription.addImage(imageOneMock);
 
-        assertThat(subscription.poll(fragmentHandler, 1), is(0));
+        assertEquals(0, subscription.poll(fragmentHandler, 1));
     }
 
     @Test
@@ -112,7 +110,7 @@ public class SubscriptionTest
                 return 1;
             });
 
-        assertThat(subscription.poll(fragmentHandler, FRAGMENT_COUNT_LIMIT), is(1));
+        assertEquals(1, subscription.poll(fragmentHandler, FRAGMENT_COUNT_LIMIT));
         verify(fragmentHandler).onFragment(
             eq(atomicReadBuffer),
             eq(HEADER_LENGTH),
@@ -144,6 +142,6 @@ public class SubscriptionTest
                 return 1;
             });
 
-        assertThat(subscription.poll(fragmentHandler, FRAGMENT_COUNT_LIMIT), is(2));
+        assertEquals(2, subscription.poll(fragmentHandler, FRAGMENT_COUNT_LIMIT));
     }
 }

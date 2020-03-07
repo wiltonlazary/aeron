@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,11 +18,11 @@
 #define AERON_UDP_DESTINATION_TRACKER_H
 
 #include "aeron_socket.h"
-#include "aeronmd.h"
+#include "util/aeron_clock.h"
 #include "aeron_udp_channel_transport.h"
 
-#define AERON_UDP_DESTINATION_TRACKER_DESTINATION_TIMEOUT_NS (5 * 1000 * 1000 * 1000L)
-#define AERON_UDP_DESTINATION_TRACKER_MANUAL_DESTINATION_TIMEOUT_NS (0L)
+#define AERON_UDP_DESTINATION_TRACKER_DESTINATION_TIMEOUT_NS (5 * 1000 * 1000 * 1000LL)
+#define AERON_UDP_DESTINATION_TRACKER_MANUAL_DESTINATION_TIMEOUT_NS (0LL)
 
 typedef struct aeron_udp_destination_entry_stct
 {
@@ -43,16 +43,16 @@ typedef struct aeron_udp_destination_tracker_stct
     destinations;
 
     bool is_manual_control_mode;
-    aeron_clock_func_t nano_clock;
+    aeron_clock_cache_t *cached_clock;
     int64_t destination_timeout_ns;
-    aeron_udp_channel_transport_bindings_t *transport_bindings;
+    aeron_udp_channel_data_paths_t *data_paths;
 }
 aeron_udp_destination_tracker_t;
 
 int aeron_udp_destination_tracker_init(
     aeron_udp_destination_tracker_t *tracker,
-    aeron_udp_channel_transport_bindings_t *transport_bindings,
-    aeron_clock_func_t clock,
+    aeron_udp_channel_data_paths_t *data_paths,
+    aeron_clock_cache_t *cached_clock,
     int64_t timeout_ns);
 int aeron_udp_destination_tracker_close(aeron_udp_destination_tracker_t *tracker);
 

@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -46,8 +46,6 @@ typedef struct aeron_send_channel_endpoint_stct
     }
     conductor_fields;
 
-    /* uint8_t conductor_fields_pad[(2 * AERON_CACHE_LINE_LENGTH) - sizeof(struct conductor_fields_stct)]; */
-
     bool has_sender_released;
     aeron_udp_channel_transport_t transport;
     aeron_counter_t channel_status;
@@ -55,6 +53,7 @@ typedef struct aeron_send_channel_endpoint_stct
     aeron_driver_sender_proxy_t *sender_proxy;
     aeron_int64_to_ptr_hash_map_t publication_dispatch_map;
     aeron_udp_channel_transport_bindings_t *transport_bindings;
+    aeron_udp_channel_data_paths_t *data_paths;
 }
 aeron_send_channel_endpoint_t;
 
@@ -79,7 +78,12 @@ int aeron_send_channel_endpoint_remove_publication(
     aeron_send_channel_endpoint_t *endpoint, aeron_network_publication_t *publication);
 
 void aeron_send_channel_endpoint_dispatch(
-    void *sender_clientd, void *endpoint_clientd, uint8_t *buffer, size_t length, struct sockaddr_storage *addr);
+    aeron_udp_channel_data_paths_t *data_paths,
+    void *sender_clientd,
+    void *endpoint_clientd,
+    uint8_t *buffer,
+    size_t length,
+    struct sockaddr_storage *addr);
 
 void aeron_send_channel_endpoint_on_nak(
     aeron_send_channel_endpoint_t *endpoint, uint8_t *buffer, size_t length, struct sockaddr_storage *addr);
@@ -113,6 +117,12 @@ inline int aeron_send_channel_endpoint_remove_destination(
     aeron_send_channel_endpoint_t *endpoint, struct sockaddr_storage *addr)
 {
     return aeron_udp_destination_tracker_remove_destination(endpoint->destination_tracker, addr);
+}
+
+inline int aeron_send_channel_endpoint_bind_addr_and_port(
+    aeron_send_channel_endpoint_t *endpoint, char *buffer, size_t length)
+{
+    return endpoint->transport_bindings->bind_addr_and_port_func(&endpoint->transport, buffer, length);
 }
 
 #endif //AERON_SEND_CHANNEL_ENDPOINT_H

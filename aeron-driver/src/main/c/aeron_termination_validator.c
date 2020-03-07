@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -49,15 +49,19 @@ aeron_driver_termination_validator_func_t aeron_driver_termination_validator_loa
     }
     else
     {
+#if defined(AERON_COMPILER_GCC)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wpedantic"
+#endif
         if ((func = (aeron_driver_termination_validator_func_t) aeron_dlsym(RTLD_DEFAULT, validator_name)) == NULL)
         {
             aeron_set_err(
                 EINVAL, "could not find termination validator %s: dlsym - %s", validator_name, aeron_dlerror());
             return NULL;
         }
+#if defined(AERON_COMPILER_GCC)
 #pragma GCC diagnostic pop
+#endif
     }
 
     return func;

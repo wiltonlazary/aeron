@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,12 +18,10 @@
 
 #include <array>
 #include "FragmentAssembler.h"
-#include "ControlledFragmentAssembler.h"
 
 using namespace aeron::util;
 using namespace aeron;
 
-static const std::string CHANNEL = "aeron:udp?endpoint=localhost:40123";
 static const std::int32_t STREAM_ID = 10;
 static const std::int32_t SESSION_ID = 200;
 static const std::int32_t TERM_LENGTH = LogBufferDescriptor::TERM_MIN_LENGTH;
@@ -52,7 +50,7 @@ public:
 
     void fillFrame(std::uint8_t flags, std::int32_t offset, std::int32_t length, std::uint8_t initialPayloadValue)
     {
-        DataFrameHeader::DataFrameHeaderDefn& frame(m_buffer.overlayStruct<DataFrameHeader::DataFrameHeaderDefn>(offset));
+        auto& frame(m_buffer.overlayStruct<DataFrameHeader::DataFrameHeaderDefn>(offset));
 
         frame.frameLength = DataFrameHeader::LENGTH + length;
         frame.version = DataFrameHeader::CURRENT_VERSION;

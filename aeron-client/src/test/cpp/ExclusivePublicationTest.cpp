@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -82,7 +82,7 @@ public:
     void createPub()
     {
         m_publication = std::unique_ptr<ExclusivePublication>(new ExclusivePublication(
-            m_conductor, CHANNEL, CORRELATION_ID, CORRELATION_ID, STREAM_ID, SESSION_ID,
+            m_conductor, CHANNEL, CORRELATION_ID, STREAM_ID, SESSION_ID,
             m_publicationLimit, ChannelEndpointStatus::NO_ID_ALLOCATED, m_logBuffers));
     }
 

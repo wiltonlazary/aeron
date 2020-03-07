@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -111,18 +111,18 @@ public:
         UnsafeBufferPosition& subscriberPosition,
         std::shared_ptr<LogBuffers> logBuffers,
         const exception_handler_t& exceptionHandler) :
-        m_header(
-            LogBufferDescriptor::initialTermId(logBuffers->atomicBuffer(LogBufferDescriptor::LOG_META_DATA_SECTION_INDEX)),
-            logBuffers->atomicBuffer(0).capacity(),
-            this),
-        m_subscriberPosition(subscriberPosition),
-        m_logBuffers(std::move(logBuffers)),
         m_sourceIdentity(sourceIdentity),
-        m_isClosed(false),
+        m_logBuffers(std::move(logBuffers)),
         m_exceptionHandler(exceptionHandler),
-        m_correlationId(correlationId),
+        m_subscriberPosition(subscriberPosition),
+        m_header(
+            LogBufferDescriptor::initialTermId(m_logBuffers->atomicBuffer(LogBufferDescriptor::LOG_META_DATA_SECTION_INDEX)),
+            m_logBuffers->atomicBuffer(0).capacity(),
+            this),
+        m_isClosed(false),
+        m_sessionId(sessionId),
         m_subscriptionRegistrationId(subscriptionRegistrationId),
-        m_sessionId(sessionId)
+        m_correlationId(correlationId)
     {
         for (int i = 0; i < LogBufferDescriptor::PARTITION_COUNT; i++)
         {
@@ -139,81 +139,81 @@ public:
     }
 
     Image(const Image& image) :
-        m_termBuffers(image.m_termBuffers),
-        m_header(image.m_header),
-        m_subscriberPosition(image.m_subscriberPosition),
-        m_logBuffers(image.m_logBuffers),
         m_sourceIdentity(image.m_sourceIdentity),
-        m_isClosed(image.isClosed()),
+        m_logBuffers(image.m_logBuffers),
         m_exceptionHandler(image.m_exceptionHandler),
-        m_correlationId(image.m_correlationId),
-        m_subscriptionRegistrationId(image.m_subscriptionRegistrationId),
-        m_joinPosition(image.m_joinPosition),
-        m_finalPosition(image.m_finalPosition),
-        m_sessionId(image.m_sessionId),
+        m_termBuffers(image.m_termBuffers),
+        m_subscriberPosition(image.m_subscriberPosition),
+        m_header(image.m_header),
+        m_isClosed(image.isClosed()),
+        m_isEos(image.m_isEos),
         m_termLengthMask(image.m_termLengthMask),
         m_positionBitsToShift(image.m_positionBitsToShift),
-        m_isEos(image.m_isEos)
+        m_sessionId(image.m_sessionId),
+        m_joinPosition(image.m_joinPosition),
+        m_finalPosition(image.m_finalPosition),
+        m_subscriptionRegistrationId(image.m_subscriptionRegistrationId),
+        m_correlationId(image.m_correlationId)
     {
     }
 
     Image& operator = (const Image& image)
     {
-        m_termBuffers = image.m_termBuffers;
-        m_header = image.m_header;
-        m_subscriberPosition = image.m_subscriberPosition;
-        m_logBuffers = image.m_logBuffers;
         m_sourceIdentity = image.m_sourceIdentity;
-        m_isClosed = image.isClosed();
+        m_logBuffers = image.m_logBuffers;
         m_exceptionHandler = image.m_exceptionHandler;
-        m_correlationId = image.m_correlationId;
-        m_subscriptionRegistrationId = image.m_subscriptionRegistrationId;
-        m_joinPosition = image.m_joinPosition;
-        m_finalPosition = image.m_finalPosition;
-        m_sessionId = image.m_sessionId;
+        m_termBuffers = image.m_termBuffers;
+        m_subscriberPosition = image.m_subscriberPosition;
+        m_header = image.m_header;
+        m_isClosed = image.isClosed();
+        m_isEos = image.m_isEos;
         m_termLengthMask = image.m_termLengthMask;
         m_positionBitsToShift = image.m_positionBitsToShift;
-        m_isEos = image.m_isEos;
+        m_sessionId = image.m_sessionId;
+        m_joinPosition = image.m_joinPosition;
+        m_finalPosition = image.m_finalPosition;
+        m_subscriptionRegistrationId = image.m_subscriptionRegistrationId;
+        m_correlationId = image.m_correlationId;
 
         return *this;
     }
 
     Image(Image&& image) noexcept :
-        m_termBuffers(image.m_termBuffers),
-        m_header(image.m_header),
-        m_subscriberPosition(image.m_subscriberPosition),
-        m_logBuffers(std::move(image.m_logBuffers)),
         m_sourceIdentity(std::move(image.m_sourceIdentity)),
-        m_isClosed(image.isClosed()),
+        m_logBuffers(std::move(image.m_logBuffers)),
         m_exceptionHandler(std::move(image.m_exceptionHandler)),
-        m_correlationId(image.m_correlationId),
-        m_subscriptionRegistrationId(image.m_subscriptionRegistrationId),
-        m_joinPosition(image.m_joinPosition),
-        m_finalPosition(image.m_finalPosition),
-        m_sessionId(image.m_sessionId),
+        m_termBuffers(image.m_termBuffers),
+        m_subscriberPosition(image.m_subscriberPosition),
+        m_header(image.m_header),
+        m_isClosed(image.isClosed()),
+        m_isEos(image.m_isEos),
         m_termLengthMask(image.m_termLengthMask),
         m_positionBitsToShift(image.m_positionBitsToShift),
-        m_isEos(image.m_isEos)
+        m_sessionId(image.m_sessionId),
+        m_joinPosition(image.m_joinPosition),
+        m_finalPosition(image.m_finalPosition),
+        m_subscriptionRegistrationId(image.m_subscriptionRegistrationId),
+        m_correlationId(image.m_correlationId)
     {
     }
 
     Image& operator = (Image&& image) noexcept
     {
-        m_termBuffers = image.m_termBuffers;
-        m_header = image.m_header;
-        m_subscriberPosition = image.m_subscriberPosition;
-        m_logBuffers = std::move(image.m_logBuffers);
         m_sourceIdentity = std::move(image.m_sourceIdentity);
-        m_isClosed = image.isClosed();
+        m_logBuffers = std::move(image.m_logBuffers);
         m_exceptionHandler = std::move(image.m_exceptionHandler);
-        m_correlationId = image.m_correlationId;
-        m_subscriptionRegistrationId = image.m_subscriptionRegistrationId;
-        m_joinPosition = image.m_joinPosition;
-        m_finalPosition = image.m_finalPosition;
-        m_sessionId = image.m_sessionId;
+        m_termBuffers = image.m_termBuffers;
+        m_subscriberPosition = image.m_subscriberPosition;
+        m_header = image.m_header;
+        m_isClosed = image.isClosed();
+        m_isEos = image.m_isEos;
         m_termLengthMask = image.m_termLengthMask;
         m_positionBitsToShift = image.m_positionBitsToShift;
-        m_isEos = image.m_isEos;
+        m_sessionId = image.m_sessionId;
+        m_joinPosition = image.m_joinPosition;
+        m_finalPosition = image.m_finalPosition;
+        m_subscriptionRegistrationId = image.m_subscriptionRegistrationId;
+        m_correlationId = image.m_correlationId;
 
         return *this;
     }
@@ -396,29 +396,104 @@ public:
     template <typename F>
     inline int poll(F&& fragmentHandler, int fragmentLimit)
     {
-        int result = 0;
-
-        if (!isClosed())
+        if (isClosed())
         {
-            const std::int64_t position = m_subscriberPosition.get();
-            const std::int32_t offset = static_cast<std::int32_t>(position & m_termLengthMask);
-            const int index = LogBufferDescriptor::indexByPosition(position, m_positionBitsToShift);
-            assert(index >= 0 && index < LogBufferDescriptor::PARTITION_COUNT);
-            AtomicBuffer &termBuffer = m_termBuffers[index];
-            TermReader::ReadOutcome outcome{};
-
-            TermReader::read(outcome, termBuffer, offset, fragmentHandler, fragmentLimit, m_header, m_exceptionHandler);
-
-            const std::int64_t newPosition = position + (outcome.offset - offset);
-            if (newPosition > position)
-            {
-                m_subscriberPosition.setOrdered(newPosition);
-            }
-
-            result = outcome.fragmentsRead;
+            return 0;
         }
 
-        return result;
+        const std::int64_t position = m_subscriberPosition.get();
+        const auto offset = static_cast<std::int32_t>(position & m_termLengthMask);
+        const int index = LogBufferDescriptor::indexByPosition(position, m_positionBitsToShift);
+        assert(index >= 0 && index < LogBufferDescriptor::PARTITION_COUNT);
+        AtomicBuffer &termBuffer = m_termBuffers[index];
+        TermReader::ReadOutcome outcome{};
+
+        TermReader::read(outcome, termBuffer, offset, fragmentHandler, fragmentLimit, m_header, m_exceptionHandler);
+
+        const std::int64_t newPosition = position + (outcome.offset - offset);
+        if (newPosition > position)
+        {
+            m_subscriberPosition.setOrdered(newPosition);
+        }
+
+        return outcome.fragmentsRead;
+    }
+
+    /**
+     * Poll for new messages in a stream. If new messages are found beyond the last consumed position then they
+     * will be delivered via the fragment_handler_t up to a limited number of fragments as specified or the
+     * maximum position specified.
+     *
+     * @param fragmentHandler to which messages are delivered.
+     * @param limitPosition   to consume messages up to.
+     * @param fragmentLimit   for the number of fragments to be consumed during one polling operation.
+     * @return the number of fragments that have been consumed.
+     *
+     * @see fragment_handler_t
+     */
+    template <typename F>
+    inline int boundedPoll(F&& fragmentHandler, std::int64_t limitPosition, int fragmentLimit)
+    {
+        if (isClosed())
+        {
+            return 0;
+        }
+
+        int fragmentsRead = 0;
+        const std::int64_t initialPosition = m_subscriberPosition.get();
+        const auto initialOffset = static_cast<std::int32_t>(initialPosition & m_termLengthMask);
+        const int index = LogBufferDescriptor::indexByPosition(initialPosition, m_positionBitsToShift);
+        assert(index >= 0 && index < LogBufferDescriptor::PARTITION_COUNT);
+        AtomicBuffer &termBuffer = m_termBuffers[index];
+        std::int32_t offset = initialOffset;
+        const std::int64_t capacity = termBuffer.capacity();
+        const std::int32_t limitOffset =
+            static_cast<std::int32_t>(std::min(capacity, limitPosition - initialPosition + offset));
+
+        m_header.buffer(termBuffer);
+
+        try
+        {
+            while (fragmentsRead < fragmentLimit && offset < limitOffset)
+            {
+                const std::int32_t length = FrameDescriptor::frameLengthVolatile(termBuffer, offset);
+                if (length <= 0)
+                {
+                    break;
+                }
+
+                const std::int32_t frameOffset = offset;
+                const std::int32_t alignedLength = util::BitUtil::align(length, FrameDescriptor::FRAME_ALIGNMENT);
+                offset += alignedLength;
+
+                if (FrameDescriptor::isPaddingFrame(termBuffer, frameOffset))
+                {
+                    continue;
+                }
+
+                m_header.offset(frameOffset);
+
+                fragmentHandler(
+                    termBuffer,
+                    frameOffset + DataFrameHeader::LENGTH,
+                    length - DataFrameHeader::LENGTH,
+                    m_header);
+
+                ++fragmentsRead;
+            }
+        }
+        catch (const std::exception& ex)
+        {
+            m_exceptionHandler(ex);
+        }
+
+        const std::int64_t resultingPosition = initialPosition + (offset - initialOffset);
+        if (resultingPosition > initialPosition)
+        {
+            m_subscriberPosition.setOrdered(resultingPosition);
+        }
+
+        return fragmentsRead;
     }
 
     /**
@@ -436,83 +511,81 @@ public:
     template <typename F>
     inline int controlledPoll(F&& fragmentHandler, int fragmentLimit)
     {
-        int result = 0;
-
-        if (!isClosed())
+        if (isClosed())
         {
-            int fragmentsRead = 0;
-            std::int64_t initialPosition = m_subscriberPosition.get();
-            std::int32_t initialOffset = static_cast<std::int32_t>(initialPosition & m_termLengthMask);
-            const int index = LogBufferDescriptor::indexByPosition(initialPosition, m_positionBitsToShift);
-            assert(index >= 0 && index < LogBufferDescriptor::PARTITION_COUNT);
-            AtomicBuffer &termBuffer = m_termBuffers[index];
-            std::int32_t offset = initialOffset;
-            const util::index_t capacity = termBuffer.capacity();
-
-            m_header.buffer(termBuffer);
-
-            try
-            {
-                while (fragmentsRead < fragmentLimit && offset < capacity)
-                {
-                    const std::int32_t length = FrameDescriptor::frameLengthVolatile(termBuffer, offset);
-                    if (length <= 0)
-                    {
-                        break;
-                    }
-
-                    const std::int32_t frameOffset = offset;
-                    const std::int32_t alignedLength = util::BitUtil::align(length, FrameDescriptor::FRAME_ALIGNMENT);
-                    offset += alignedLength;
-
-                    if (FrameDescriptor::isPaddingFrame(termBuffer, frameOffset))
-                    {
-                        continue;
-                    }
-
-                    m_header.offset(frameOffset);
-
-                    const ControlledPollAction action = fragmentHandler(
-                        termBuffer,
-                        frameOffset + DataFrameHeader::LENGTH,
-                        length - DataFrameHeader::LENGTH,
-                        m_header);
-
-                    if (ControlledPollAction::ABORT == action)
-                    {
-                        offset -= alignedLength;
-                        break;
-                    }
-
-                    ++fragmentsRead;
-
-                    if (ControlledPollAction::BREAK == action)
-                    {
-                        break;
-                    }
-                    else if (ControlledPollAction::COMMIT == action)
-                    {
-                        initialPosition += (offset - initialOffset);
-                        initialOffset = offset;
-                        m_subscriberPosition.setOrdered(initialPosition);
-                    }
-                }
-            }
-            catch (const std::exception& ex)
-            {
-                m_exceptionHandler(ex);
-            }
-
-            const std::int64_t resultingPosition = initialPosition + (offset - initialOffset);
-            if (resultingPosition > initialPosition)
-            {
-                m_subscriberPosition.setOrdered(resultingPosition);
-            }
-
-            result = fragmentsRead;
+            return 0;
         }
 
-        return result;
+        int fragmentsRead = 0;
+        std::int64_t initialPosition = m_subscriberPosition.get();
+        auto initialOffset = static_cast<std::int32_t>(initialPosition & m_termLengthMask);
+        const int index = LogBufferDescriptor::indexByPosition(initialPosition, m_positionBitsToShift);
+        assert(index >= 0 && index < LogBufferDescriptor::PARTITION_COUNT);
+        AtomicBuffer &termBuffer = m_termBuffers[index];
+        std::int32_t offset = initialOffset;
+        const util::index_t capacity = termBuffer.capacity();
+
+        m_header.buffer(termBuffer);
+
+        try
+        {
+            while (fragmentsRead < fragmentLimit && offset < capacity)
+            {
+                const std::int32_t length = FrameDescriptor::frameLengthVolatile(termBuffer, offset);
+                if (length <= 0)
+                {
+                    break;
+                }
+
+                const std::int32_t frameOffset = offset;
+                const std::int32_t alignedLength = util::BitUtil::align(length, FrameDescriptor::FRAME_ALIGNMENT);
+                offset += alignedLength;
+
+                if (FrameDescriptor::isPaddingFrame(termBuffer, frameOffset))
+                {
+                    continue;
+                }
+
+                m_header.offset(frameOffset);
+
+                const ControlledPollAction action = fragmentHandler(
+                    termBuffer,
+                    frameOffset + DataFrameHeader::LENGTH,
+                    length - DataFrameHeader::LENGTH,
+                    m_header);
+
+                if (ControlledPollAction::ABORT == action)
+                {
+                    offset -= alignedLength;
+                    break;
+                }
+
+                ++fragmentsRead;
+
+                if (ControlledPollAction::BREAK == action)
+                {
+                    break;
+                }
+                else if (ControlledPollAction::COMMIT == action)
+                {
+                    initialPosition += (offset - initialOffset);
+                    initialOffset = offset;
+                    m_subscriberPosition.setOrdered(initialPosition);
+                }
+            }
+        }
+        catch (const std::exception& ex)
+        {
+            m_exceptionHandler(ex);
+        }
+
+        const std::int64_t resultingPosition = initialPosition + (offset - initialOffset);
+        if (resultingPosition > initialPosition)
+        {
+            m_subscriberPosition.setOrdered(resultingPosition);
+        }
+
+        return fragmentsRead;
     }
 
     /**
@@ -531,85 +604,83 @@ public:
     template <typename F>
     inline int boundedControlledPoll(F&& fragmentHandler, std::int64_t limitPosition, int fragmentLimit)
     {
-        int result = 0;
-
-        if (!isClosed())
+        if (isClosed())
         {
-            int fragmentsRead = 0;
-            std::int64_t initialPosition = m_subscriberPosition.get();
-            std::int32_t initialOffset = static_cast<std::int32_t>(initialPosition & m_termLengthMask);
-            const int index = LogBufferDescriptor::indexByPosition(initialPosition, m_positionBitsToShift);
-            assert(index >= 0 && index < LogBufferDescriptor::PARTITION_COUNT);
-            AtomicBuffer &termBuffer = m_termBuffers[index];
-            std::int32_t offset = initialOffset;
-            const std::int64_t capacity = termBuffer.capacity();
-            const std::int32_t limitOffset =
-                static_cast<std::int32_t>(std::min(capacity, (limitPosition - initialPosition) + offset));
-
-            m_header.buffer(termBuffer);
-
-            try
-            {
-                while (fragmentsRead < fragmentLimit && offset < limitOffset)
-                {
-                    const std::int32_t length = FrameDescriptor::frameLengthVolatile(termBuffer, offset);
-                    if (length <= 0)
-                    {
-                        break;
-                    }
-
-                    const std::int32_t frameOffset = offset;
-                    const std::int32_t alignedLength = util::BitUtil::align(length, FrameDescriptor::FRAME_ALIGNMENT);
-                    offset += alignedLength;
-
-                    if (FrameDescriptor::isPaddingFrame(termBuffer, frameOffset))
-                    {
-                        continue;
-                    }
-
-                    m_header.offset(frameOffset);
-
-                    const ControlledPollAction action = fragmentHandler(
-                        termBuffer,
-                        frameOffset + DataFrameHeader::LENGTH,
-                        length - DataFrameHeader::LENGTH,
-                        m_header);
-
-                    if (ControlledPollAction::ABORT == action)
-                    {
-                        offset -= alignedLength;
-                        break;
-                    }
-
-                    ++fragmentsRead;
-
-                    if (ControlledPollAction::BREAK == action)
-                    {
-                        break;
-                    }
-                    else if (ControlledPollAction::COMMIT == action)
-                    {
-                        initialPosition += (offset - initialOffset);
-                        initialOffset = offset;
-                        m_subscriberPosition.setOrdered(initialPosition);
-                    }
-                }
-            }
-            catch (const std::exception& ex)
-            {
-                m_exceptionHandler(ex);
-            }
-
-            const std::int64_t resultingPosition = initialPosition + (offset - initialOffset);
-            if (resultingPosition > initialPosition)
-            {
-                m_subscriberPosition.setOrdered(resultingPosition);
-            }
-
-            result = fragmentsRead;
+            return 0;
         }
 
-        return result;
+        int fragmentsRead = 0;
+        std::int64_t initialPosition = m_subscriberPosition.get();
+        auto initialOffset = static_cast<std::int32_t>(initialPosition & m_termLengthMask);
+        const int index = LogBufferDescriptor::indexByPosition(initialPosition, m_positionBitsToShift);
+        assert(index >= 0 && index < LogBufferDescriptor::PARTITION_COUNT);
+        AtomicBuffer &termBuffer = m_termBuffers[index];
+        std::int32_t offset = initialOffset;
+        const std::int64_t capacity = termBuffer.capacity();
+        const std::int32_t limitOffset =
+            static_cast<std::int32_t>(std::min(capacity, (limitPosition - initialPosition) + offset));
+
+        m_header.buffer(termBuffer);
+
+        try
+        {
+            while (fragmentsRead < fragmentLimit && offset < limitOffset)
+            {
+                const std::int32_t length = FrameDescriptor::frameLengthVolatile(termBuffer, offset);
+                if (length <= 0)
+                {
+                    break;
+                }
+
+                const std::int32_t frameOffset = offset;
+                const std::int32_t alignedLength = util::BitUtil::align(length, FrameDescriptor::FRAME_ALIGNMENT);
+                offset += alignedLength;
+
+                if (FrameDescriptor::isPaddingFrame(termBuffer, frameOffset))
+                {
+                    continue;
+                }
+
+                m_header.offset(frameOffset);
+
+                const ControlledPollAction action = fragmentHandler(
+                    termBuffer,
+                    frameOffset + DataFrameHeader::LENGTH,
+                    length - DataFrameHeader::LENGTH,
+                    m_header);
+
+                if (ControlledPollAction::ABORT == action)
+                {
+                    offset -= alignedLength;
+                    break;
+                }
+
+                ++fragmentsRead;
+
+                if (ControlledPollAction::BREAK == action)
+                {
+                    break;
+                }
+                else if (ControlledPollAction::COMMIT == action)
+                {
+                    initialPosition += (offset - initialOffset);
+                    initialOffset = offset;
+                    m_subscriberPosition.setOrdered(initialPosition);
+                }
+            }
+        }
+        catch (const std::exception& ex)
+        {
+            m_exceptionHandler(ex);
+        }
+
+        const std::int64_t resultingPosition = initialPosition + (offset - initialOffset);
+        if (resultingPosition > initialPosition)
+        {
+            m_subscriberPosition.setOrdered(resultingPosition);
+        }
+
+        return fragmentsRead;
     }
 
     /**
@@ -628,81 +699,82 @@ public:
     template <typename F>
     inline std::int64_t controlledPeek(std::int64_t initialPosition, F&& fragmentHandler, std::int64_t limitPosition)
     {
-        std::int64_t resultingPosition = initialPosition;
-
-        if (!isClosed())
+        if (isClosed())
         {
-            validatePosition(initialPosition);
-            if (initialPosition >= limitPosition)
+            return initialPosition;
+        }
+
+        validatePosition(initialPosition);
+        if (initialPosition >= limitPosition)
+        {
+            return initialPosition;
+        }
+
+        auto initialOffset = static_cast<std::int32_t>(initialPosition & m_termLengthMask);
+        std::int32_t offset = initialOffset;
+        std::int64_t position = initialPosition;
+        std::int64_t resultingPosition = initialPosition;
+        const int index = LogBufferDescriptor::indexByPosition(initialPosition, m_positionBitsToShift);
+        assert(index >= 0 && index < LogBufferDescriptor::PARTITION_COUNT);
+        AtomicBuffer &termBuffer = m_termBuffers[index];
+        const std::int64_t capacity = termBuffer.capacity();
+        const std::int32_t limitOffset =
+            static_cast<std::int32_t>(std::min(capacity, (limitPosition - initialPosition) + offset));
+
+        m_header.buffer(termBuffer);
+
+        try
+        {
+            while (offset < limitOffset)
             {
-                return initialPosition;
-            }
-
-            std::int32_t initialOffset = static_cast<std::int32_t>(initialPosition & m_termLengthMask);
-            std::int32_t offset = initialOffset;
-            std::int64_t position = initialPosition;
-            const int index = LogBufferDescriptor::indexByPosition(initialPosition, m_positionBitsToShift);
-            assert(index >= 0 && index < LogBufferDescriptor::PARTITION_COUNT);
-            AtomicBuffer &termBuffer = m_termBuffers[index];
-            const std::int64_t capacity = termBuffer.capacity();
-            const std::int32_t limitOffset =
-                static_cast<std::int32_t>(std::min(capacity, (limitPosition - initialPosition) + offset));
-
-            m_header.buffer(termBuffer);
-
-            try
-            {
-                while (offset < limitOffset)
+                const std::int32_t length = FrameDescriptor::frameLengthVolatile(termBuffer, offset);
+                if (length <= 0)
                 {
-                    const std::int32_t length = FrameDescriptor::frameLengthVolatile(termBuffer, offset);
-                    if (length <= 0)
-                    {
-                        break;
-                    }
+                    break;
+                }
 
-                    const std::int32_t frameOffset = offset;
-                    const std::int32_t alignedLength = util::BitUtil::align(length, FrameDescriptor::FRAME_ALIGNMENT);
-                    offset += alignedLength;
+                const std::int32_t frameOffset = offset;
+                const std::int32_t alignedLength = util::BitUtil::align(length, FrameDescriptor::FRAME_ALIGNMENT);
+                offset += alignedLength;
 
-                    if (FrameDescriptor::isPaddingFrame(termBuffer, frameOffset))
-                    {
-                        position += (offset - initialOffset);
-                        initialOffset = offset;
-                        resultingPosition = position;
-                        continue;
-                    }
-
-                    m_header.offset(frameOffset);
-
-                    const ControlledPollAction action = fragmentHandler(
-                        termBuffer,
-                        frameOffset + DataFrameHeader::LENGTH,
-                        length - DataFrameHeader::LENGTH,
-                        m_header);
-
-                    if (ControlledPollAction::ABORT == action)
-                    {
-                        break;
-                    }
-
+                if (FrameDescriptor::isPaddingFrame(termBuffer, frameOffset))
+                {
                     position += (offset - initialOffset);
                     initialOffset = offset;
+                    resultingPosition = position;
+                    continue;
+                }
 
-                    if (m_header.flags() & FrameDescriptor::END_FRAG)
-                    {
-                        resultingPosition = position;
-                    }
+                m_header.offset(frameOffset);
 
-                    if (ControlledPollAction::BREAK == action)
-                    {
-                        break;
-                    }
+                const ControlledPollAction action = fragmentHandler(
+                    termBuffer,
+                    frameOffset + DataFrameHeader::LENGTH,
+                    length - DataFrameHeader::LENGTH,
+                    m_header);
+
+                if (ControlledPollAction::ABORT == action)
+                {
+                    break;
+                }
+
+                position += (offset - initialOffset);
+                initialOffset = offset;
+
+                if (m_header.flags() & FrameDescriptor::END_FRAG)
+                {
+                    resultingPosition = position;
+                }
+
+                if (ControlledPollAction::BREAK == action)
+                {
+                    break;
                 }
             }
-            catch (const std::exception& ex)
-            {
-                m_exceptionHandler(ex);
-            }
+        }
+        catch (const std::exception& ex)
+        {
+            m_exceptionHandler(ex);
         }
 
         return resultingPosition;
@@ -728,38 +800,36 @@ public:
     template <typename F>
     inline int blockPoll(F&& blockHandler, int blockLengthLimit)
     {
-        int result = 0;
-
         if (!isClosed())
         {
-            const std::int64_t position = m_subscriberPosition.get();
-            const std::int32_t termOffset = static_cast<std::int32_t>(position & m_termLengthMask);
-            const int index = LogBufferDescriptor::indexByPosition(position, m_positionBitsToShift);
-            assert(index >= 0 && index < LogBufferDescriptor::PARTITION_COUNT);
-            AtomicBuffer &termBuffer = m_termBuffers[index];
-            const std::int32_t limitOffset = std::min(termOffset + blockLengthLimit, termBuffer.capacity());
-            const std::int32_t resultingOffset = TermBlockScanner::scan(termBuffer, termOffset, limitOffset);
-            const std::int32_t length = resultingOffset - termOffset;
-
-            if (resultingOffset > termOffset)
-            {
-                try
-                {
-                    const std::int32_t termId = termBuffer.getInt32(termOffset + DataFrameHeader::TERM_ID_FIELD_OFFSET);
-                    blockHandler(termBuffer, termOffset, length, m_sessionId, termId);
-                }
-                catch (const std::exception& ex)
-                {
-                    m_exceptionHandler(ex);
-                }
-
-                m_subscriberPosition.setOrdered(position + length);
-            }
-
-            result = length;
+            return 0;
         }
 
-        return result;
+        const std::int64_t position = m_subscriberPosition.get();
+        const auto termOffset = static_cast<std::int32_t>(position & m_termLengthMask);
+        const int index = LogBufferDescriptor::indexByPosition(position, m_positionBitsToShift);
+        assert(index >= 0 && index < LogBufferDescriptor::PARTITION_COUNT);
+        AtomicBuffer &termBuffer = m_termBuffers[index];
+        const std::int32_t limitOffset = std::min(termOffset + blockLengthLimit, termBuffer.capacity());
+        const std::int32_t resultingOffset = TermBlockScanner::scan(termBuffer, termOffset, limitOffset);
+        const std::int32_t length = resultingOffset - termOffset;
+
+        if (resultingOffset > termOffset)
+        {
+            try
+            {
+                const std::int32_t termId = termBuffer.getInt32(termOffset + DataFrameHeader::TERM_ID_FIELD_OFFSET);
+                blockHandler(termBuffer, termOffset, length, m_sessionId, termId);
+            }
+            catch (const std::exception& ex)
+            {
+                m_exceptionHandler(ex);
+            }
+
+            m_subscriberPosition.setOrdered(position + length);
+        }
+
+        return length;
     }
 
     std::shared_ptr<LogBuffers> logBuffers()
@@ -781,22 +851,22 @@ public:
     /// @endcond
 
 private:
-    std::array<AtomicBuffer, LogBufferDescriptor::PARTITION_COUNT> m_termBuffers;
-    Header m_header;
-    Position<UnsafeBufferPosition> m_subscriberPosition;
-    std::shared_ptr<LogBuffers> m_logBuffers;
     std::string m_sourceIdentity;
-    std::atomic<bool> m_isClosed;
+    std::shared_ptr<LogBuffers> m_logBuffers;
     exception_handler_t m_exceptionHandler;
+    std::array<AtomicBuffer, LogBufferDescriptor::PARTITION_COUNT> m_termBuffers;
+    Position<UnsafeBufferPosition> m_subscriberPosition;
+    Header m_header;
+    std::atomic<bool> m_isClosed;
+    bool m_isEos;
 
-    std::int64_t m_correlationId;
-    std::int64_t m_subscriptionRegistrationId;
-    std::int64_t m_joinPosition;
-    std::int64_t m_finalPosition;
-    std::int32_t m_sessionId;
     std::int32_t m_termLengthMask;
     std::int32_t m_positionBitsToShift;
-    bool m_isEos;
+    std::int32_t m_sessionId;
+    std::int64_t m_joinPosition;
+    std::int64_t m_finalPosition;
+    std::int64_t m_subscriptionRegistrationId;
+    std::int64_t m_correlationId;
 
     void validatePosition(std::int64_t newPosition)
     {

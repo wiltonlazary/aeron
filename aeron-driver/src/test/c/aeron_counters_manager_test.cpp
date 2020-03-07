@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -199,7 +199,7 @@ TEST_F(CountersManagerTest, shouldStoreAndLoadCounterValue)
 {
     ASSERT_EQ(counters_manager_init(), 0);
 
-    int32_t id = -1;
+    int32_t id;
 
     ASSERT_GE((id = aeron_counters_manager_allocate(&m_manager, 0, NULL, 0, "abc", 3)), 0);
 

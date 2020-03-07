@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,6 +26,7 @@ class ActiveLogEvent
     final int memberId;
     final int sessionId;
     final int streamId;
+    final boolean isStartup;
     final String channel;
 
     ActiveLogEvent(
@@ -35,6 +36,7 @@ class ActiveLogEvent
         final int memberId,
         final int sessionId,
         final int streamId,
+        final boolean isStartup,
         final String channel)
     {
         this.leadershipTermId = leadershipTermId;
@@ -43,6 +45,7 @@ class ActiveLogEvent
         this.memberId = memberId;
         this.sessionId = sessionId;
         this.streamId = streamId;
+        this.isStartup = isStartup;
         this.channel = channel;
     }
 
@@ -55,6 +58,7 @@ class ActiveLogEvent
             ", memberId=" + memberId +
             ", sessionId=" + sessionId +
             ", streamId=" + streamId +
+            ", isStartup=" + isStartup +
             ", channel='" + channel + '\'' +
             '}';
     }

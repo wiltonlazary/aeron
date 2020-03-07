@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,10 +15,12 @@
  */
 package io.aeron.cluster;
 
-import io.aeron.driver.MediaDriver;
 import io.aeron.archive.Archive;
+import io.aeron.driver.MediaDriver;
 import io.aeron.driver.status.SystemCounterDescriptor;
 import org.agrona.CloseHelper;
+import org.agrona.ErrorHandler;
+import org.agrona.concurrent.status.AtomicCounter;
 
 import static org.agrona.SystemUtil.loadPropertiesFiles;
 
@@ -51,7 +53,6 @@ public class ClusteredMediaDriver implements AutoCloseable
         try (ClusteredMediaDriver driver = launch())
         {
             driver.consensusModule().context().shutdownSignalBarrier().await();
-
             System.out.println("Shutdown ClusteredMediaDriver...");
         }
     }
@@ -79,17 +80,36 @@ public class ClusteredMediaDriver implements AutoCloseable
         final Archive.Context archiveCtx,
         final ConsensusModule.Context consensusModuleCtx)
     {
-        final MediaDriver driver = MediaDriver.launch(driverCtx
-            .spiesSimulateConnection(true));
+        MediaDriver driver = null;
+        Archive archive = null;
+        ConsensusModule consensusModule = null;
 
-        final Archive archive = Archive.launch(archiveCtx
-            .mediaDriverAgentInvoker(driver.sharedAgentInvoker())
-            .errorHandler(driverCtx.errorHandler())
-            .errorCounter(driverCtx.systemCounters().get(SystemCounterDescriptor.ERRORS)));
+        try
+        {
+            driver = MediaDriver.launch(driverCtx
+                .spiesSimulateConnection(true));
 
-        final ConsensusModule consensusModule = ConsensusModule.launch(consensusModuleCtx);
+            final int errorCounterId = SystemCounterDescriptor.ERRORS.id();
+            final AtomicCounter errorCounter = null == archiveCtx.errorCounter() ?
+                new AtomicCounter(driverCtx.countersValuesBuffer(), errorCounterId) : archiveCtx.errorCounter();
 
-        return new ClusteredMediaDriver(driver, archive, consensusModule);
+            final ErrorHandler errorHandler = null == archiveCtx.errorHandler() ?
+                driverCtx.errorHandler() : archiveCtx.errorHandler();
+
+            archive = Archive.launch(archiveCtx
+                .mediaDriverAgentInvoker(driver.sharedAgentInvoker())
+                .errorHandler(errorHandler)
+                .errorCounter(errorCounter));
+
+            consensusModule = ConsensusModule.launch(consensusModuleCtx);
+
+            return new ClusteredMediaDriver(driver, archive, consensusModule);
+        }
+        catch (final Exception ex)
+        {
+            CloseHelper.quietCloseAll(consensusModule, archive, driver);
+            throw ex;
+        }
     }
 
     /**
@@ -124,8 +144,6 @@ public class ClusteredMediaDriver implements AutoCloseable
 
     public void close()
     {
-        CloseHelper.close(consensusModule);
-        CloseHelper.close(archive);
-        CloseHelper.close(driver);
+        CloseHelper.closeAll(consensusModule, archive, driver);
     }
 }

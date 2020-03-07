@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -93,6 +93,7 @@ ControlledPollAction RecordingDescriptorPoller::onFragment(
                 {
                     ArchiveException ex(
                         static_cast<std::int32_t>(response.relevantId()),
+                        correlationId,
                         "response for correlationId=" + std::to_string(m_correlationId) +
                         ", error: " + response.errorMessage(),
                         SOURCEINFO);

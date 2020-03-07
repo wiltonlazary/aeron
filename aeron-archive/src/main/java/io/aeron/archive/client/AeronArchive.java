@@ -1,5 +1,5 @@
 /*
- *  Copyright 2014-2019 Real Logic Ltd.
+ *  Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,6 +21,8 @@ import io.aeron.archive.codecs.SourceLocation;
 import io.aeron.exceptions.AeronException;
 import io.aeron.exceptions.ConcurrentConcludeException;
 import io.aeron.exceptions.TimeoutException;
+import io.aeron.security.CredentialsSupplier;
+import io.aeron.security.NullCredentialsSupplier;
 import org.agrona.CloseHelper;
 import org.agrona.ErrorHandler;
 import org.agrona.LangUtil;
@@ -73,6 +75,8 @@ public class AeronArchive implements AutoCloseable
     private static final int FRAGMENT_LIMIT = 10;
 
     private boolean isClosed = false;
+    private boolean isInCallback = false;
+    private long lastCorrelationId = Aeron.NULL_VALUE;
     private final long controlSessionId;
     private final long messageTimeoutNs;
     private final Context context;
@@ -105,6 +109,26 @@ public class AeronArchive implements AutoCloseable
     }
 
     /**
+     * Position of the recorded stream at the base of a segment file. If a recording starts within a term
+     * then the base position can be before the recording started.
+     *
+     * @param startPosition     of the stream.
+     * @param position          of the stream to calculate the segment base position from.
+     * @param termBufferLength  of the stream.
+     * @param segmentFileLength which is a multiple of term length.
+     * @return the position of the recorded stream at the beginning of a segment file.
+     */
+    public static long segmentFileBasePosition(
+        final long startPosition, final long position, final int termBufferLength, final int segmentFileLength)
+    {
+        final long startTermBasePosition = startPosition - (startPosition & (termBufferLength - 1));
+        final long lengthFromBasePosition = position - startTermBasePosition;
+        final long segments = (lengthFromBasePosition - (lengthFromBasePosition & (segmentFileLength - 1)));
+
+        return startTermBasePosition + segments;
+    }
+
+    /**
      * Notify the archive that this control session is closed so it can promptly release resources then close the
      * local resources associated with the client.
      */
@@ -116,15 +140,17 @@ public class AeronArchive implements AutoCloseable
             if (!isClosed)
             {
                 isClosed = true;
+                final ErrorHandler errorHandler = context.errorHandler();
+
                 if (archiveProxy.publication().isConnected())
                 {
-                    archiveProxy.closeSession(controlSessionId);
+                    CloseHelper.close(errorHandler, () -> archiveProxy.closeSession(controlSessionId));
                 }
 
                 if (!context.ownsAeronClient())
                 {
-                    CloseHelper.close(archiveProxy.publication());
-                    CloseHelper.close(controlResponsePoller.subscription());
+                    CloseHelper.close(errorHandler, archiveProxy.publication());
+                    CloseHelper.close(errorHandler, controlResponsePoller.subscription());
                 }
 
                 context.close();
@@ -173,7 +199,12 @@ public class AeronArchive implements AutoCloseable
 
             publication = aeron.addExclusivePublication(ctx.controlRequestChannel(), ctx.controlRequestStreamId());
             final ArchiveProxy archiveProxy = new ArchiveProxy(
-                publication, ctx.idleStrategy(), aeron.context().nanoClock(), messageTimeoutNs, DEFAULT_RETRY_ATTEMPTS);
+                publication,
+                ctx.idleStrategy(),
+                aeron.context().nanoClock(),
+                messageTimeoutNs,
+                DEFAULT_RETRY_ATTEMPTS,
+                ctx.credentialsSupplier());
 
             asyncConnect = new AsyncConnect(ctx, controlResponsePoller, archiveProxy, deadlineNs);
             final IdleStrategy idleStrategy = ctx.idleStrategy();
@@ -203,8 +234,7 @@ public class AeronArchive implements AutoCloseable
                 CloseHelper.quietClose(publication);
             }
 
-            CloseHelper.quietClose(asyncConnect);
-            ctx.close();
+            CloseHelper.quietCloseAll(asyncConnect, ctx::close);
 
             throw ex;
         }
@@ -245,7 +275,12 @@ public class AeronArchive implements AutoCloseable
 
             publication = aeron.addExclusivePublication(ctx.controlRequestChannel(), ctx.controlRequestStreamId());
             final ArchiveProxy archiveProxy = new ArchiveProxy(
-                publication, ctx.idleStrategy(), aeron.context().nanoClock(), messageTimeoutNs, DEFAULT_RETRY_ATTEMPTS);
+                publication,
+                ctx.idleStrategy(),
+                aeron.context().nanoClock(),
+                messageTimeoutNs,
+                DEFAULT_RETRY_ATTEMPTS,
+                ctx.credentialsSupplier());
 
             return new AsyncConnect(ctx, controlResponsePoller, archiveProxy, deadlineNs);
         }
@@ -271,6 +306,16 @@ public class AeronArchive implements AutoCloseable
     public Context context()
     {
         return context;
+    }
+
+    /**
+     * The last correlation id used for sending a request to the archive via method on this class.
+     *
+     * @return last correlation id used for sending a request to the archive.
+     */
+    public long lastCorrelationId()
+    {
+        return lastCorrelationId;
     }
 
     /**
@@ -397,14 +442,15 @@ public class AeronArchive implements AutoCloseable
                     throw new ArchiveException(NOT_CONNECTED_MSG);
                 }
             }
-
-            if (controlResponsePoller.poll() != 0 && controlResponsePoller.isPollComplete())
+            else if (controlResponsePoller.poll() != 0 && controlResponsePoller.isPollComplete())
             {
                 if (controlResponsePoller.controlSessionId() == controlSessionId &&
                     controlResponsePoller.code() == ControlResponseCode.ERROR)
                 {
                     final ArchiveException ex = new ArchiveException(
-                        controlResponsePoller.errorMessage(), (int)controlResponsePoller.relevantId());
+                        controlResponsePoller.errorMessage(),
+                        (int)controlResponsePoller.relevantId(),
+                        controlResponsePoller.correlationId());
 
                     if (null != context.errorHandler())
                     {
@@ -441,6 +487,7 @@ public class AeronArchive implements AutoCloseable
         try
         {
             ensureOpen();
+            ensureNotReentrant();
 
             publication = aeron.addPublication(channel, streamId);
             if (!publication.isOriginal())
@@ -480,6 +527,7 @@ public class AeronArchive implements AutoCloseable
         try
         {
             ensureOpen();
+            ensureNotReentrant();
 
             publication = aeron.addExclusivePublication(channel, streamId);
             startRecording(ChannelUri.addSessionId(channel, publication.sessionId()), streamId, SourceLocation.LOCAL);
@@ -516,15 +564,16 @@ public class AeronArchive implements AutoCloseable
         try
         {
             ensureOpen();
+            ensureNotReentrant();
 
-            final long correlationId = aeron.nextCorrelationId();
+            lastCorrelationId = aeron.nextCorrelationId();
 
-            if (!archiveProxy.startRecording(channel, streamId, sourceLocation, correlationId, controlSessionId))
+            if (!archiveProxy.startRecording(channel, streamId, sourceLocation, lastCorrelationId, controlSessionId))
             {
                 throw new ArchiveException("failed to send start recording request");
             }
 
-            return pollForResponse(correlationId);
+            return pollForResponse(lastCorrelationId);
         }
         finally
         {
@@ -552,16 +601,17 @@ public class AeronArchive implements AutoCloseable
         try
         {
             ensureOpen();
+            ensureNotReentrant();
 
-            final long correlationId = aeron.nextCorrelationId();
+            lastCorrelationId = aeron.nextCorrelationId();
 
             if (!archiveProxy.extendRecording(
-                channel, streamId, sourceLocation, recordingId, correlationId, controlSessionId))
+                channel, streamId, sourceLocation, recordingId, lastCorrelationId, controlSessionId))
             {
                 throw new ArchiveException("failed to send extend recording request");
             }
 
-            return pollForResponse(correlationId);
+            return pollForResponse(lastCorrelationId);
         }
         finally
         {
@@ -585,15 +635,16 @@ public class AeronArchive implements AutoCloseable
         try
         {
             ensureOpen();
+            ensureNotReentrant();
 
-            final long correlationId = aeron.nextCorrelationId();
+            lastCorrelationId = aeron.nextCorrelationId();
 
-            if (!archiveProxy.stopRecording(channel, streamId, correlationId, controlSessionId))
+            if (!archiveProxy.stopRecording(channel, streamId, lastCorrelationId, controlSessionId))
             {
                 throw new ArchiveException("failed to send stop recording request");
             }
 
-            pollForResponse(correlationId);
+            pollForResponse(lastCorrelationId);
         }
         finally
         {
@@ -626,15 +677,16 @@ public class AeronArchive implements AutoCloseable
         try
         {
             ensureOpen();
+            ensureNotReentrant();
 
-            final long correlationId = aeron.nextCorrelationId();
+            lastCorrelationId = aeron.nextCorrelationId();
 
-            if (!archiveProxy.stopRecording(subscriptionId, correlationId, controlSessionId))
+            if (!archiveProxy.stopRecording(subscriptionId, lastCorrelationId, controlSessionId))
             {
                 throw new ArchiveException("failed to send stop recording request");
             }
 
-            pollForResponse(correlationId);
+            pollForResponse(lastCorrelationId);
         }
         finally
         {
@@ -670,8 +722,9 @@ public class AeronArchive implements AutoCloseable
         try
         {
             ensureOpen();
+            ensureNotReentrant();
 
-            final long correlationId = aeron.nextCorrelationId();
+            lastCorrelationId = aeron.nextCorrelationId();
 
             if (!archiveProxy.replay(
                 recordingId,
@@ -679,13 +732,13 @@ public class AeronArchive implements AutoCloseable
                 length,
                 replayChannel,
                 replayStreamId,
-                correlationId,
+                lastCorrelationId,
                 controlSessionId))
             {
                 throw new ArchiveException("failed to send replay request");
             }
 
-            return pollForResponse(correlationId);
+            return pollForResponse(lastCorrelationId);
         }
         finally
         {
@@ -701,13 +754,13 @@ public class AeronArchive implements AutoCloseable
      * 64-bits are required to uniquely identify the replay when calling {@link #stopReplay(long)}. The lower 32-bits
      * can be obtained by casting the {@code long} value to an {@code int}.
      *
-     * @param recordingId       to be replayed.
-     * @param position          from which the replay should begin or {@link #NULL_POSITION} if from the start.
-     * @param length            of the stream to be replayed. Use {@link Long#MAX_VALUE} to follow a live recording or
-     *                          {@link #NULL_LENGTH} to replay the whole stream of unknown length.
-     * @param limitCounterId    to use to bound replay.
-     * @param replayChannel     to which the replay should be sent.
-     * @param replayStreamId    to which the replay should be sent.
+     * @param recordingId    to be replayed.
+     * @param position       from which the replay should begin or {@link #NULL_POSITION} if from the start.
+     * @param length         of the stream to be replayed. Use {@link Long#MAX_VALUE} to follow a live recording or
+     *                       {@link #NULL_LENGTH} to replay the whole stream of unknown length.
+     * @param limitCounterId to use to bound replay.
+     * @param replayChannel  to which the replay should be sent.
+     * @param replayStreamId to which the replay should be sent.
      * @return the id of the replay session which will be the same as the {@link Image#sessionId()} of the received
      * replay for correlation with the matching channel and stream id in the lower 32 bits.
      */
@@ -723,8 +776,9 @@ public class AeronArchive implements AutoCloseable
         try
         {
             ensureOpen();
+            ensureNotReentrant();
 
-            final long correlationId = aeron.nextCorrelationId();
+            lastCorrelationId = aeron.nextCorrelationId();
 
             if (!archiveProxy.boundedReplay(
                 recordingId,
@@ -733,13 +787,13 @@ public class AeronArchive implements AutoCloseable
                 limitCounterId,
                 replayChannel,
                 replayStreamId,
-                correlationId,
+                lastCorrelationId,
                 controlSessionId))
             {
                 throw new ArchiveException("failed to send bounded replay request");
             }
 
-            return pollForResponse(correlationId);
+            return pollForResponse(lastCorrelationId);
         }
         finally
         {
@@ -758,15 +812,16 @@ public class AeronArchive implements AutoCloseable
         try
         {
             ensureOpen();
+            ensureNotReentrant();
 
-            final long correlationId = aeron.nextCorrelationId();
+            lastCorrelationId = aeron.nextCorrelationId();
 
-            if (!archiveProxy.stopReplay(replaySessionId, correlationId, controlSessionId))
+            if (!archiveProxy.stopReplay(replaySessionId, lastCorrelationId, controlSessionId))
             {
                 throw new ArchiveException("failed to send stop replay request");
             }
 
-            pollForResponse(correlationId);
+            pollForResponse(lastCorrelationId);
         }
         finally
         {
@@ -785,15 +840,16 @@ public class AeronArchive implements AutoCloseable
         try
         {
             ensureOpen();
+            ensureNotReentrant();
 
-            final long correlationId = aeron.nextCorrelationId();
+            lastCorrelationId = aeron.nextCorrelationId();
 
-            if (!archiveProxy.stopAllReplays(recordingId, correlationId, controlSessionId))
+            if (!archiveProxy.stopAllReplays(recordingId, lastCorrelationId, controlSessionId))
             {
                 throw new ArchiveException("failed to send stop all replays request");
             }
 
-            pollForResponse(correlationId);
+            pollForResponse(lastCorrelationId);
         }
         finally
         {
@@ -823,9 +879,10 @@ public class AeronArchive implements AutoCloseable
         try
         {
             ensureOpen();
+            ensureNotReentrant();
 
             final ChannelUri replayChannelUri = ChannelUri.parse(replayChannel);
-            final long correlationId = aeron.nextCorrelationId();
+            lastCorrelationId = aeron.nextCorrelationId();
 
             if (!archiveProxy.replay(
                 recordingId,
@@ -833,13 +890,13 @@ public class AeronArchive implements AutoCloseable
                 length,
                 replayChannel,
                 replayStreamId,
-                correlationId,
+                lastCorrelationId,
                 controlSessionId))
             {
                 throw new ArchiveException("failed to send replay request");
             }
 
-            final int replaySessionId = (int)pollForResponse(correlationId);
+            final int replaySessionId = (int)pollForResponse(lastCorrelationId);
             replayChannelUri.put(CommonContext.SESSION_ID_PARAM_NAME, Integer.toString(replaySessionId));
 
             return aeron.addSubscription(replayChannelUri.toString(), replayStreamId);
@@ -876,9 +933,10 @@ public class AeronArchive implements AutoCloseable
         try
         {
             ensureOpen();
+            ensureNotReentrant();
 
             final ChannelUri replayChannelUri = ChannelUri.parse(replayChannel);
-            final long correlationId = aeron.nextCorrelationId();
+            lastCorrelationId = aeron.nextCorrelationId();
 
             if (!archiveProxy.replay(
                 recordingId,
@@ -886,13 +944,13 @@ public class AeronArchive implements AutoCloseable
                 length,
                 replayChannel,
                 replayStreamId,
-                correlationId,
+                lastCorrelationId,
                 controlSessionId))
             {
                 throw new ArchiveException("failed to send replay request");
             }
 
-            final int replaySessionId = (int)pollForResponse(correlationId);
+            final int replaySessionId = (int)pollForResponse(lastCorrelationId);
             replayChannelUri.put(CommonContext.SESSION_ID_PARAM_NAME, Integer.toString(replaySessionId));
 
             return aeron.addSubscription(
@@ -921,18 +979,21 @@ public class AeronArchive implements AutoCloseable
         try
         {
             ensureOpen();
+            ensureNotReentrant();
 
-            final long correlationId = aeron.nextCorrelationId();
+            isInCallback = true;
+            lastCorrelationId = aeron.nextCorrelationId();
 
-            if (!archiveProxy.listRecordings(fromRecordingId, recordCount, correlationId, controlSessionId))
+            if (!archiveProxy.listRecordings(fromRecordingId, recordCount, lastCorrelationId, controlSessionId))
             {
                 throw new ArchiveException("failed to send list recordings request");
             }
 
-            return pollForDescriptors(correlationId, recordCount, consumer);
+            return pollForDescriptors(lastCorrelationId, recordCount, consumer);
         }
         finally
         {
+            isInCallback = false;
             lock.unlock();
         }
     }
@@ -961,24 +1022,27 @@ public class AeronArchive implements AutoCloseable
         try
         {
             ensureOpen();
+            ensureNotReentrant();
 
-            final long correlationId = aeron.nextCorrelationId();
+            isInCallback = true;
+            lastCorrelationId = aeron.nextCorrelationId();
 
             if (!archiveProxy.listRecordingsForUri(
                 fromRecordingId,
                 recordCount,
                 channelFragment,
                 streamId,
-                correlationId,
+                lastCorrelationId,
                 controlSessionId))
             {
                 throw new ArchiveException("failed to send list recordings request");
             }
 
-            return pollForDescriptors(correlationId, recordCount, consumer);
+            return pollForDescriptors(lastCorrelationId, recordCount, consumer);
         }
         finally
         {
+            isInCallback = false;
             lock.unlock();
         }
     }
@@ -998,15 +1062,48 @@ public class AeronArchive implements AutoCloseable
         try
         {
             ensureOpen();
+            ensureNotReentrant();
+            isInCallback = true;
 
-            final long correlationId = aeron.nextCorrelationId();
+            lastCorrelationId = aeron.nextCorrelationId();
 
-            if (!archiveProxy.listRecording(recordingId, correlationId, controlSessionId))
+            if (!archiveProxy.listRecording(recordingId, lastCorrelationId, controlSessionId))
             {
                 throw new ArchiveException("failed to send list recording request");
             }
 
-            return pollForDescriptors(correlationId, 1, consumer);
+            return pollForDescriptors(lastCorrelationId, 1, consumer);
+        }
+        finally
+        {
+            isInCallback = false;
+            lock.unlock();
+        }
+    }
+
+    /**
+     * Get the start position for a recording.
+     *
+     * @param recordingId of the recording for which the position is required.
+     * @return the start position of a recording.
+     * @see #getStopPosition(long)
+     */
+    public long getStartPosition(final long recordingId)
+    {
+        lock.lock();
+        try
+        {
+            ensureOpen();
+            ensureNotReentrant();
+
+            lastCorrelationId = aeron.nextCorrelationId();
+
+            if (!archiveProxy.getStartPosition(recordingId, lastCorrelationId, controlSessionId))
+            {
+                throw new ArchiveException("failed to send get start position request");
+            }
+
+            return pollForResponse(lastCorrelationId);
         }
         finally
         {
@@ -1027,15 +1124,16 @@ public class AeronArchive implements AutoCloseable
         try
         {
             ensureOpen();
+            ensureNotReentrant();
 
-            final long correlationId = aeron.nextCorrelationId();
+            lastCorrelationId = aeron.nextCorrelationId();
 
-            if (!archiveProxy.getRecordingPosition(recordingId, correlationId, controlSessionId))
+            if (!archiveProxy.getRecordingPosition(recordingId, lastCorrelationId, controlSessionId))
             {
                 throw new ArchiveException("failed to send get recording position request");
             }
 
-            return pollForResponse(correlationId);
+            return pollForResponse(lastCorrelationId);
         }
         finally
         {
@@ -1056,15 +1154,16 @@ public class AeronArchive implements AutoCloseable
         try
         {
             ensureOpen();
+            ensureNotReentrant();
 
-            final long correlationId = aeron.nextCorrelationId();
+            lastCorrelationId = aeron.nextCorrelationId();
 
-            if (!archiveProxy.getStopPosition(recordingId, correlationId, controlSessionId))
+            if (!archiveProxy.getStopPosition(recordingId, lastCorrelationId, controlSessionId))
             {
                 throw new ArchiveException("failed to send get stop position request");
             }
 
-            return pollForResponse(correlationId);
+            return pollForResponse(lastCorrelationId);
         }
         finally
         {
@@ -1088,16 +1187,17 @@ public class AeronArchive implements AutoCloseable
         try
         {
             ensureOpen();
+            ensureNotReentrant();
 
-            final long correlationId = aeron.nextCorrelationId();
+            lastCorrelationId = aeron.nextCorrelationId();
 
             if (!archiveProxy.findLastMatchingRecording(
-                minRecordingId, channelFragment, streamId, sessionId, correlationId, controlSessionId))
+                minRecordingId, channelFragment, streamId, sessionId, lastCorrelationId, controlSessionId))
             {
                 throw new ArchiveException("failed to send find last matching recording request");
             }
 
-            return pollForResponse(correlationId);
+            return pollForResponse(lastCorrelationId);
         }
         finally
         {
@@ -1118,15 +1218,16 @@ public class AeronArchive implements AutoCloseable
         try
         {
             ensureOpen();
+            ensureNotReentrant();
 
-            final long correlationId = aeron.nextCorrelationId();
+            lastCorrelationId = aeron.nextCorrelationId();
 
-            if (!archiveProxy.truncateRecording(recordingId, position, correlationId, controlSessionId))
+            if (!archiveProxy.truncateRecording(recordingId, position, lastCorrelationId, controlSessionId))
             {
                 throw new ArchiveException("failed to send truncate recording request");
             }
 
-            pollForResponse(correlationId);
+            pollForResponse(lastCorrelationId);
         }
         finally
         {
@@ -1160,8 +1261,10 @@ public class AeronArchive implements AutoCloseable
         try
         {
             ensureOpen();
+            ensureNotReentrant();
 
-            final long correlationId = aeron.nextCorrelationId();
+            isInCallback = true;
+            lastCorrelationId = aeron.nextCorrelationId();
 
             if (!archiveProxy.listRecordingSubscriptions(
                 pseudoIndex,
@@ -1169,16 +1272,17 @@ public class AeronArchive implements AutoCloseable
                 channelFragment,
                 streamId,
                 applyStreamId,
-                correlationId,
+                lastCorrelationId,
                 controlSessionId))
             {
                 throw new ArchiveException("failed to send list recording subscriptions request");
             }
 
-            return pollForSubscriptionDescriptors(correlationId, subscriptionCount, consumer);
+            return pollForSubscriptionDescriptors(lastCorrelationId, subscriptionCount, consumer);
         }
         finally
         {
+            isInCallback = false;
             lock.unlock();
         }
     }
@@ -1214,8 +1318,9 @@ public class AeronArchive implements AutoCloseable
         try
         {
             ensureOpen();
+            ensureNotReentrant();
 
-            final long correlationId = aeron.nextCorrelationId();
+            lastCorrelationId = aeron.nextCorrelationId();
 
             if (!archiveProxy.replicate(
                 srcRecordingId,
@@ -1223,13 +1328,74 @@ public class AeronArchive implements AutoCloseable
                 srcControlStreamId,
                 srcControlChannel,
                 liveDestination,
-                correlationId,
+                lastCorrelationId,
                 controlSessionId))
             {
                 throw new ArchiveException("failed to send replicate request");
             }
 
-            return pollForResponse(correlationId);
+            return pollForResponse(lastCorrelationId);
+        }
+        finally
+        {
+            lock.unlock();
+        }
+    }
+
+    /**
+     * Replicate a recording from a source archive to a destination which can be considered a backup for a primary
+     * archive. The source recording will be replayed via the provided replay channel and use the original stream id.
+     * If the destination recording id is {@link io.aeron.Aeron#NULL_VALUE} then a new destination recording is created,
+     * otherwise the provided destination recording id will be extended. The details of the source recording
+     * descriptor will be replicated. The subscription used in the archive will be tagged with the provided tags.
+     * <p>
+     * For a source recording that is still active the replay can merge with the live stream and then follow it
+     * directly and no longer require the replay from the source. This would require a multicast live destination.
+     * <p>
+     * Errors will be reported asynchronously and can be checked for with {@link AeronArchive#pollForErrorResponse()}
+     * or {@link AeronArchive#checkForErrorResponse()}. Follow progress with {@link RecordingSignalAdapter}.
+     *
+     * @param srcRecordingId     recording id which must exist in the source archive.
+     * @param dstRecordingId     recording to extend in the destination, otherwise {@link io.aeron.Aeron#NULL_VALUE}.
+     * @param channelTagId       used to tag the replication subscription.
+     * @param subscriptionTagId  used to tag the replication subscription.
+     * @param srcControlStreamId remote control stream id for the source archive to instruct the replay on.
+     * @param srcControlChannel  remote control channel for the source archive to instruct the replay on.
+     * @param liveDestination    destination for the live stream if merge is required. Empty or null for no merge.
+     * @return return the replication session id which can be passed later to {@link #stopReplication(long)}.
+     */
+    public long taggedReplicate(
+        final long srcRecordingId,
+        final long dstRecordingId,
+        final long channelTagId,
+        final long subscriptionTagId,
+        final int srcControlStreamId,
+        final String srcControlChannel,
+        final String liveDestination)
+    {
+        lock.lock();
+        try
+        {
+            ensureOpen();
+            ensureNotReentrant();
+
+            lastCorrelationId = aeron.nextCorrelationId();
+
+            if (!archiveProxy.taggedReplicate(
+                srcRecordingId,
+                dstRecordingId,
+                channelTagId,
+                subscriptionTagId,
+                srcControlStreamId,
+                srcControlChannel,
+                liveDestination,
+                lastCorrelationId,
+                controlSessionId))
+            {
+                throw new ArchiveException("failed to send tagged replicate request");
+            }
+
+            return pollForResponse(lastCorrelationId);
         }
         finally
         {
@@ -1248,15 +1414,186 @@ public class AeronArchive implements AutoCloseable
         try
         {
             ensureOpen();
+            ensureNotReentrant();
 
-            final long correlationId = aeron.nextCorrelationId();
+            lastCorrelationId = aeron.nextCorrelationId();
 
-            if (!archiveProxy.stopReplication(replicationId, correlationId, controlSessionId))
+            if (!archiveProxy.stopReplication(replicationId, lastCorrelationId, controlSessionId))
             {
                 throw new ArchiveException("failed to send stop replication request");
             }
 
-            pollForResponse(correlationId);
+            pollForResponse(lastCorrelationId);
+        }
+        finally
+        {
+            lock.unlock();
+        }
+    }
+
+    /**
+     * Detach segments from the beginning of a recording up to the provided new start position.
+     * <p>
+     * The new start position must be first byte position of a segment after the existing start position.
+     * <p>
+     * It is not possible to detach segments which are active for recording or being replayed.
+     *
+     * @param recordingId      to which the operation applies.
+     * @param newStartPosition for the recording after the segments are detached.
+     * @see #segmentFileBasePosition(long, long, int, int)
+     */
+    public void detachSegments(final long recordingId, final long newStartPosition)
+    {
+        lock.lock();
+        try
+        {
+            ensureOpen();
+            ensureNotReentrant();
+
+            lastCorrelationId = aeron.nextCorrelationId();
+
+            if (!archiveProxy.detachSegments(recordingId, newStartPosition, lastCorrelationId, controlSessionId))
+            {
+                throw new ArchiveException("failed to send detach segments request");
+            }
+
+            pollForResponse(lastCorrelationId);
+        }
+        finally
+        {
+            lock.unlock();
+        }
+    }
+
+    /**
+     * Delete segments which have been previously detached from a recording.
+     *
+     * @param recordingId to which the operation applies.
+     * @return count of deleted segment files.
+     * @see #detachSegments(long, long)
+     */
+    public long deleteDetachedSegments(final long recordingId)
+    {
+        lock.lock();
+        try
+        {
+            ensureOpen();
+            ensureNotReentrant();
+
+            lastCorrelationId = aeron.nextCorrelationId();
+
+            if (!archiveProxy.deleteDetachedSegments(recordingId, lastCorrelationId, controlSessionId))
+            {
+                throw new ArchiveException("failed to send delete detached segments request");
+            }
+
+            return pollForResponse(lastCorrelationId);
+        }
+        finally
+        {
+            lock.unlock();
+        }
+    }
+
+    /**
+     * Purge (detach and delete) segments from the beginning of a recording up to the provided new start position.
+     * <p>
+     * The new start position must be first byte position of a segment after the existing start position.
+     * <p>
+     * It is not possible to detach segments which are active for recording or being replayed.
+     *
+     * @param recordingId      to which the operation applies.
+     * @param newStartPosition for the recording after the segments are detached.
+     * @return count of deleted segment files.
+     * @see #detachSegments(long, long)
+     * @see #deleteDetachedSegments(long)
+     * @see #segmentFileBasePosition(long, long, int, int)
+     */
+    public long purgeSegments(final long recordingId, final long newStartPosition)
+    {
+        lock.lock();
+        try
+        {
+            ensureOpen();
+            ensureNotReentrant();
+
+            lastCorrelationId = aeron.nextCorrelationId();
+
+            if (!archiveProxy.purgeSegments(recordingId, newStartPosition, lastCorrelationId, controlSessionId))
+            {
+                throw new ArchiveException("failed to send purge segments request");
+            }
+
+            return pollForResponse(lastCorrelationId);
+        }
+        finally
+        {
+            lock.unlock();
+        }
+    }
+
+    /**
+     * Attach segments to the beginning of a recording to restore history that was previously detached.
+     * <p>
+     * Segment files must match the existing recording and join exactly to the start position of the recording
+     * they are being attached to.
+     *
+     * @param recordingId to which the operation applies.
+     * @return count of attached segment files.
+     * @see #detachSegments(long, long)
+     */
+    public long attachSegments(final long recordingId)
+    {
+        lock.lock();
+        try
+        {
+            ensureOpen();
+            ensureNotReentrant();
+
+            lastCorrelationId = aeron.nextCorrelationId();
+
+            if (!archiveProxy.attachSegments(recordingId, lastCorrelationId, controlSessionId))
+            {
+                throw new ArchiveException("failed to send attach segments request");
+            }
+
+            return pollForResponse(lastCorrelationId);
+        }
+        finally
+        {
+            lock.unlock();
+        }
+    }
+
+    /**
+     * Migrate segments from a source recording and attach them to the beginning of a destination recording.
+     * <p>
+     * The source recording must match the destination recording for segment length, term length, mtu length,
+     * stream id, plus the stop position and term id of the source must join with the start position of the destination
+     * and be on a segment boundary.
+     * <p>
+     * The source recording will be effectively truncated back to its start position after the migration.
+     *
+     * @param srcRecordingId source recording from which the segments will be migrated.
+     * @param dstRecordingId destination recording to which the segments will be attached.
+     * @return count of attached segment files.
+     */
+    public long migrateSegments(final long srcRecordingId, final long dstRecordingId)
+    {
+        lock.lock();
+        try
+        {
+            ensureOpen();
+            ensureNotReentrant();
+
+            lastCorrelationId = aeron.nextCorrelationId();
+
+            if (!archiveProxy.migrateSegments(srcRecordingId, dstRecordingId, lastCorrelationId, controlSessionId))
+            {
+                throw new ArchiveException("failed to send migrate segments request");
+            }
+
+            return pollForResponse(lastCorrelationId);
         }
         finally
         {
@@ -1296,8 +1633,10 @@ public class AeronArchive implements AutoCloseable
             final ControlResponseCode code = poller.code();
             if (ControlResponseCode.ERROR == code)
             {
-                final ArchiveException ex = new ArchiveException("response for correlationId=" + correlationId +
-                    ", error: " + poller.errorMessage(), (int)poller.relevantId());
+                final ArchiveException ex = new ArchiveException(
+                    "response for correlationId=" + correlationId + ", error: " + poller.errorMessage(),
+                    (int)poller.relevantId(),
+                    poller.correlationId());
 
                 if (poller.correlationId() == correlationId)
                 {
@@ -1449,13 +1788,21 @@ public class AeronArchive implements AutoCloseable
         }
     }
 
+    private void ensureNotReentrant()
+    {
+        if (isInCallback)
+        {
+            throw new AeronException("reentrant calls not permitted during callbacks");
+        }
+    }
+
     /**
      * Common configuration properties for communicating with an Aeron archive.
      */
     public static class Configuration
     {
         public static final int PROTOCOL_MAJOR_VERSION = 1;
-        public static final int PROTOCOL_MINOR_VERSION = 0;
+        public static final int PROTOCOL_MINOR_VERSION = 3;
         public static final int PROTOCOL_PATCH_VERSION = 0;
         public static final int PROTOCOL_SEMANTIC_VERSION = SemanticVersion.compose(
             PROTOCOL_MAJOR_VERSION, PROTOCOL_MINOR_VERSION, PROTOCOL_PATCH_VERSION);
@@ -1552,6 +1899,16 @@ public class AeronArchive implements AutoCloseable
          * Stream id within a channel for receiving progress of recordings from an archive.
          */
         public static final int RECORDING_EVENTS_STREAM_ID_DEFAULT = 30;
+
+        /**
+         * Is channel enabled for recording progress events of recordings from an archive.
+         */
+        public static final String RECORDING_EVENTS_ENABLED_PROP_NAME = "aeron.archive.recording.events.enabled";
+
+        /**
+         * Channel enabled for recording progress events of recordings from an archive which defaults to true.
+         */
+        public static final boolean RECORDING_EVENTS_ENABLED_DEFAULT = true;
 
         /**
          * Sparse term buffer indicator for control streams.
@@ -1724,6 +2081,18 @@ public class AeronArchive implements AutoCloseable
         {
             return Integer.getInteger(RECORDING_EVENTS_STREAM_ID_PROP_NAME, RECORDING_EVENTS_STREAM_ID_DEFAULT);
         }
+
+        /**
+         * Should the recording events stream be enabled.
+         *
+         * @return true if the recording events stream be enabled.
+         * @see #RECORDING_EVENTS_ENABLED_PROP_NAME
+         */
+        public static boolean recordingEventsEnabled()
+        {
+            final String propValue = System.getProperty(RECORDING_EVENTS_ENABLED_PROP_NAME);
+            return null != propValue ? "true".equals(propValue) : RECORDING_EVENTS_ENABLED_DEFAULT;
+        }
     }
 
     /**
@@ -1756,6 +2125,7 @@ public class AeronArchive implements AutoCloseable
         private String aeronDirectoryName = CommonContext.getAeronDirectoryName();
         private Aeron aeron;
         private ErrorHandler errorHandler;
+        private CredentialsSupplier credentialsSupplier;
         private boolean ownsAeronClient = false;
 
         /**
@@ -1798,6 +2168,11 @@ public class AeronArchive implements AutoCloseable
             {
                 idleStrategy = new BackoffIdleStrategy(
                     IDLE_MAX_SPINS, IDLE_MAX_YIELDS, IDLE_MIN_PARK_NS, IDLE_MAX_PARK_NS);
+            }
+
+            if (null == credentialsSupplier)
+            {
+                credentialsSupplier = new NullCredentialsSupplier();
             }
 
             if (null == lock)
@@ -2195,6 +2570,28 @@ public class AeronArchive implements AutoCloseable
         }
 
         /**
+         * Set the {@link CredentialsSupplier} to be used for authentication with the archive.
+         *
+         * @param credentialsSupplier to be used for authentication with the archive.
+         * @return this for fluent API.
+         */
+        public Context credentialsSupplier(final CredentialsSupplier credentialsSupplier)
+        {
+            this.credentialsSupplier = credentialsSupplier;
+            return this;
+        }
+
+        /**
+         * Get the {@link CredentialsSupplier} to be used for authentication with the archive.
+         *
+         * @return the {@link CredentialsSupplier} to be used for authentication with the archive.
+         */
+        public CredentialsSupplier credentialsSupplier()
+        {
+            return credentialsSupplier;
+        }
+
+        /**
          * Close the context and free applicable resources.
          * <p>
          * If {@link #ownsAeronClient()} is true then the {@link #aeron()} client will be closed.
@@ -2219,6 +2616,8 @@ public class AeronArchive implements AutoCloseable
         private final NanoClock nanoClock;
         private final long deadlineNs;
         private long correlationId = Aeron.NULL_VALUE;
+        private long challengeControlSessionId = Aeron.NULL_VALUE;
+        private byte[] encodedCredentialsFromChallenge = null;
         private int step = 0;
 
         AsyncConnect(
@@ -2241,8 +2640,9 @@ public class AeronArchive implements AutoCloseable
         {
             if (5 != step)
             {
-                CloseHelper.close(controlResponsePoller.subscription());
-                CloseHelper.close(archiveProxy.publication());
+                final ErrorHandler errorHandler = ctx.errorHandler();
+                CloseHelper.close(errorHandler, controlResponsePoller.subscription());
+                CloseHelper.close(errorHandler, archiveProxy.publication());
                 ctx.close();
             }
         }
@@ -2315,26 +2715,54 @@ public class AeronArchive implements AutoCloseable
                 step(4);
             }
 
+            if (6 == step)
+            {
+                if (!archiveProxy.tryChallengeResponse(
+                    encodedCredentialsFromChallenge, correlationId, challengeControlSessionId))
+                {
+                    return null;
+                }
+
+                step(7);
+            }
+
             controlResponsePoller.poll();
 
             if (controlResponsePoller.isPollComplete() && controlResponsePoller.correlationId() == correlationId)
             {
-                final ControlResponseCode code = controlResponsePoller.code();
-                if (code != ControlResponseCode.OK)
+                final long controlSessionId = controlResponsePoller.controlSessionId();
+                if (controlResponsePoller.wasChallenged())
                 {
-                    if (code == ControlResponseCode.ERROR)
+                    encodedCredentialsFromChallenge = ctx.credentialsSupplier().onChallenge(
+                        controlResponsePoller.encodedChallenge());
+
+                    correlationId = ctx.aeron().nextCorrelationId();
+                    challengeControlSessionId = controlSessionId;
+
+                    step(6);
+                }
+                else
+                {
+                    final ControlResponseCode code = controlResponsePoller.code();
+                    if (code != ControlResponseCode.OK)
                     {
-                        throw new ArchiveException(
-                            "error: " + controlResponsePoller.errorMessage(), (int)controlResponsePoller.relevantId());
+                        if (code == ControlResponseCode.ERROR)
+                        {
+                            archiveProxy.closeSession(controlSessionId);
+
+                            throw new ArchiveException(
+                                "error: " + controlResponsePoller.errorMessage(),
+                                (int)controlResponsePoller.relevantId());
+                        }
+
+                        throw new ArchiveException("unexpected response: code=" + code);
                     }
 
-                    throw new ArchiveException("unexpected response: code=" + code);
+                    archiveProxy.keepAlive(controlSessionId, controlResponsePoller.correlationId());
+                    aeronArchive = new AeronArchive(ctx, controlResponsePoller, archiveProxy, controlSessionId);
+
+                    step(5);
                 }
-
-                aeronArchive = new AeronArchive(
-                    ctx, controlResponsePoller, archiveProxy, controlResponsePoller.controlSessionId());
-
-                step(5);
             }
 
             return aeronArchive;

@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,17 +15,17 @@
  */
 package io.aeron;
 
-import static org.hamcrest.Matchers.is;
-import static org.junit.Assert.assertThat;
+import org.junit.jupiter.api.Test;
 
-import org.junit.Test;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 public final class BufferBuilderUtilTest
 {
     @Test
     public void shouldFindMaxCapacityWhenRequested()
     {
-        assertThat(BufferBuilderUtil.findSuitableCapacity(0, BufferBuilderUtil.MAX_CAPACITY),
-            is(BufferBuilderUtil.MAX_CAPACITY));
+        assertEquals(
+            BufferBuilderUtil.MAX_CAPACITY,
+            BufferBuilderUtil.findSuitableCapacity(0, BufferBuilderUtil.MAX_CAPACITY));
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,16 +19,19 @@ import io.aeron.Aeron;
 import io.aeron.driver.buffer.RawLog;
 import io.aeron.driver.media.ImageConnection;
 import io.aeron.driver.media.ReceiveChannelEndpoint;
-import io.aeron.driver.media.ReceiveDestinationUdpTransport;
+import io.aeron.driver.media.ReceiveDestinationTransport;
 import io.aeron.driver.reports.LossReport;
 import io.aeron.driver.status.SystemCounters;
 import io.aeron.logbuffer.LogBufferDescriptor;
 import io.aeron.logbuffer.TermRebuilder;
 import io.aeron.protocol.DataHeaderFlyweight;
 import io.aeron.protocol.RttMeasurementFlyweight;
+import org.agrona.CloseHelper;
+import org.agrona.ErrorHandler;
 import org.agrona.collections.ArrayListUtil;
 import org.agrona.collections.ArrayUtil;
-import org.agrona.concurrent.EpochClock;
+import org.agrona.concurrent.CachedEpochClock;
+import org.agrona.concurrent.CachedNanoClock;
 import org.agrona.concurrent.NanoClock;
 import org.agrona.concurrent.UnsafeBuffer;
 import org.agrona.concurrent.status.AtomicCounter;
@@ -51,7 +54,7 @@ import static org.agrona.UnsafeAccess.UNSAFE;
 class PublicationImagePadding1
 {
     @SuppressWarnings("unused")
-    protected long p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15;
+    protected long p1, p2, p3, p4, p5, p6, p7;
 }
 
 class PublicationImageConductorFields extends PublicationImagePadding1
@@ -66,7 +69,7 @@ class PublicationImageConductorFields extends PublicationImagePadding1
 class PublicationImagePadding2 extends PublicationImageConductorFields
 {
     @SuppressWarnings("unused")
-    protected long p16, p17, p18, p19, p20, p21, p22, p23, p24, p25, p26, p27, p28, p29, p30;
+    protected long p1, p2, p3, p4, p5, p6, p7, p8;
 }
 
 class PublicationImageReceiverFields extends PublicationImagePadding2
@@ -79,7 +82,7 @@ class PublicationImageReceiverFields extends PublicationImagePadding2
 class PublicationImagePadding3 extends PublicationImageReceiverFields
 {
     @SuppressWarnings("unused")
-    protected long p31, p32, p33, p34, p35, p36, p37, p38, p39, p40, p41, p42, p43, p44, p45;
+    protected long p1, p2, p3, p4, p5, p6, p7;
 }
 
 /**
@@ -94,22 +97,22 @@ public class PublicationImage
         INIT, ACTIVE, INACTIVE, LINGER, DONE
     }
 
-    private volatile long beginLossChange = Aeron.NULL_VALUE;
-    private volatile long endLossChange = Aeron.NULL_VALUE;
-    private int lossTermId;
-    private int lossTermOffset;
-    private int lossLength;
-
     private volatile long beginSmChange = Aeron.NULL_VALUE;
     private volatile long endSmChange = Aeron.NULL_VALUE;
     private long nextSmPosition;
     private int nextSmReceiverWindowLength;
     private long timeOfLastStatusMessageScheduleNs;
 
-    private long lastLossChangeNumber = Aeron.NULL_VALUE;
-    private long lastSmChangeNumber = Aeron.NULL_VALUE;
     private long lastSmPosition;
     private long lastSmWindowLimit;
+    private long lastSmChangeNumber = Aeron.NULL_VALUE;
+    private long lastLossChangeNumber = Aeron.NULL_VALUE;
+
+    private volatile long beginLossChange = Aeron.NULL_VALUE;
+    private volatile long endLossChange = Aeron.NULL_VALUE;
+    private int lossTermId;
+    private int lossTermOffset;
+    private int lossLength;
 
     private long timeOfLastStateChangeNs;
 
@@ -124,16 +127,17 @@ public class PublicationImage
     private final int initialTermId;
     private final boolean isReliable;
 
-    private boolean isTrackingRebuild = true;
+    private boolean isRebuilding = true;
     private volatile State state = INIT;
 
     private final NanoClock nanoClock;
-    private final NanoClock cachedNanoClock;
+    private final CachedNanoClock cachedNanoClock;
     private final ReceiveChannelEndpoint channelEndpoint;
     private final UnsafeBuffer[] termBuffers;
     private final Position hwmPosition;
     private final LossDetector lossDetector;
     private final CongestionControl congestionControl;
+    private final ErrorHandler errorHandler;
     private final Position rebuildPosition;
     private final InetSocketAddress sourceAddress;
     private final AtomicCounter heartbeatsReceived;
@@ -142,7 +146,7 @@ public class PublicationImage
     private final AtomicCounter flowControlUnderRuns;
     private final AtomicCounter flowControlOverRuns;
     private final AtomicCounter lossGapFills;
-    private final EpochClock cachedEpochClock;
+    private final CachedEpochClock cachedEpochClock;
     private final RawLog rawLog;
 
     public PublicationImage(
@@ -164,12 +168,13 @@ public class PublicationImage
         final Position hwmPosition,
         final Position rebuildPosition,
         final NanoClock nanoClock,
-        final NanoClock cachedNanoClock,
-        final EpochClock cachedEpochClock,
+        final CachedNanoClock cachedNanoClock,
+        final CachedEpochClock cachedEpochClock,
         final SystemCounters systemCounters,
         final InetSocketAddress sourceAddress,
         final CongestionControl congestionControl,
-        final LossReport lossReport)
+        final LossReport lossReport,
+        final ErrorHandler errorHandler)
     {
         this.correlationId = correlationId;
         this.imageLivenessTimeoutNs = imageLivenessTimeoutNs;
@@ -184,6 +189,7 @@ public class PublicationImage
         this.sourceAddress = sourceAddress;
         this.initialTermId = initialTermId;
         this.congestionControl = congestionControl;
+        this.errorHandler = errorHandler;
         this.lossReport = lossReport;
 
         this.nanoClock = nanoClock;
@@ -238,24 +244,21 @@ public class PublicationImage
      */
     public void close()
     {
-        hwmPosition.close();
-        rebuildPosition.close();
-        for (final ReadablePosition position : subscriberPositions)
-        {
-            position.close();
-        }
+        CloseHelper.close(errorHandler, hwmPosition);
+        CloseHelper.close(errorHandler, rebuildPosition);
+        CloseHelper.closeAll(errorHandler, subscriberPositions);
 
         for (int i = 0, size = untetheredSubscriptions.size(); i < size; i++)
         {
             final UntetheredSubscription untetheredSubscription = untetheredSubscriptions.get(i);
             if (UntetheredSubscription.RESTING == untetheredSubscription.state)
             {
-                untetheredSubscription.position.close();
+                CloseHelper.close(errorHandler, untetheredSubscription.position);
             }
         }
 
-        congestionControl.close();
-        rawLog.close();
+        CloseHelper.close(errorHandler, congestionControl);
+        CloseHelper.close(errorHandler, rawLog);
     }
 
     /**
@@ -333,13 +336,13 @@ public class PublicationImage
 
         if (subscriberPositions.length == 0)
         {
-            isTrackingRebuild = false;
+            isRebuilding = false;
         }
     }
 
     /**
      * Called from the {@link LossDetector} when gap is detected by the {@link DriverConductor} thread.
-     *
+     * <p>
      * {@inheritDoc}
      */
     public void onGapDetected(final int termId, final int termOffset, final int length)
@@ -360,8 +363,9 @@ public class PublicationImage
         }
         else if (null != lossReport)
         {
-            reportEntry = lossReport.createEntry(
-                length, cachedEpochClock.time(), sessionId, streamId, channel(), sourceAddress.toString());
+            final String source = Configuration.sourceIdentity(sourceAddress);
+            final long timeMs = cachedEpochClock.time();
+            reportEntry = lossReport.createEntry(length, timeMs, sessionId, streamId, channel(), source);
 
             if (null == reportEntry)
             {
@@ -423,7 +427,7 @@ public class PublicationImage
      * @param transportIndex from which packets will arrive.
      * @param transport      from which packets will arrive.
      */
-    void addDestination(final int transportIndex, final ReceiveDestinationUdpTransport transport)
+    void addDestination(final int transportIndex, final ReceiveDestinationTransport transport)
     {
         imageConnections = ArrayUtil.ensureCapacity(imageConnections, transportIndex + 1);
 
@@ -440,7 +444,7 @@ public class PublicationImage
     }
 
     /**
-     * Remove a destination to this image so it can merge streams.
+     * Remove a destination to this image once merge is achieved.
      *
      * @param transportIndex from which packets arrive.
      */
@@ -455,9 +459,10 @@ public class PublicationImage
     }
 
     /**
-     * Called from the {@link DriverConductor}.
+     * Called from the {@link DriverConductor} to track the rebuild os stream which is used for loss detection
+     * and congestion control.
      *
-     * @param nowNs                  in nanoseconds
+     * @param nowNs                  current time.
      * @param statusMessageTimeoutNs for sending of Status Messages.
      */
     final void trackRebuild(final long nowNs, final long statusMessageTimeoutNs)
@@ -516,6 +521,7 @@ public class PublicationImage
     {
         if (State.ACTIVE == state)
         {
+            isRebuilding = false;
             state(State.INACTIVE);
         }
     }
@@ -525,9 +531,9 @@ public class PublicationImage
      *
      * @return true if this image actively rebuilding and thus should be checked for loss.
      */
-    final boolean isTrackingRebuild()
+    final boolean isRebuilding()
     {
-        return isTrackingRebuild;
+        return isRebuilding;
     }
 
     /**
@@ -536,9 +542,9 @@ public class PublicationImage
      * @param termId         for the data packet to insert into the appropriate term.
      * @param termOffset     for the start of the packet in the term.
      * @param buffer         for the data packet to insert into the appropriate term.
-     * @param length         of the data packet
-     * @param transportIndex which the packet came from.
-     * @param srcAddress     which the packet came from.
+     * @param length         of the data packet.
+     * @param transportIndex from which the packet came.
+     * @param srcAddress     from which the packet came.
      * @return number of bytes applied as a result of this insertion.
      */
     int insertPacket(
@@ -553,28 +559,36 @@ public class PublicationImage
         final long packetPosition = computePosition(termId, termOffset, positionBitsToShift, initialTermId);
         final long proposedPosition = isHeartbeat ? packetPosition : packetPosition + length;
 
-        if (!isFlowControlUnderRun(packetPosition) && !isFlowControlOverRun(proposedPosition))
+        if (!isFlowControlOverRun(proposedPosition))
         {
-            trackConnection(transportIndex, srcAddress, lastPacketTimestampNs);
-
-            if (isHeartbeat)
+            if (!isFlowControlUnderRun(packetPosition))
             {
-                if (DataHeaderFlyweight.isEndOfStream(buffer) && !isEndOfStream && allEos(transportIndex))
+                final long nowNs = cachedNanoClock.nanoTime();
+                lastPacketTimestampNs = nowNs;
+                trackConnection(transportIndex, srcAddress, nowNs);
+
+                if (isHeartbeat)
                 {
-                    LogBufferDescriptor.endOfStreamPosition(rawLog.metaData(), proposedPosition);
-                    isEndOfStream = true;
+                    if (DataHeaderFlyweight.isEndOfStream(buffer) && !isEndOfStream && allEos(transportIndex))
+                    {
+                        LogBufferDescriptor.endOfStreamPosition(rawLog.metaData(), proposedPosition);
+                        isEndOfStream = true;
+                    }
+
+                    heartbeatsReceived.incrementOrdered();
+                }
+                else
+                {
+                    final UnsafeBuffer termBuffer = termBuffers[indexByPosition(packetPosition, positionBitsToShift)];
+                    TermRebuilder.insert(termBuffer, termOffset, buffer, length);
                 }
 
-                heartbeatsReceived.incrementOrdered();
+                hwmPosition.proposeMaxOrdered(proposedPosition);
             }
-            else
+            else if (packetPosition >= (lastSmPosition - nextSmReceiverWindowLength))
             {
-                final UnsafeBuffer termBuffer = termBuffers[indexByPosition(packetPosition, positionBitsToShift)];
-                TermRebuilder.insert(termBuffer, termOffset, buffer, length);
+                trackConnection(transportIndex, srcAddress, cachedNanoClock.nanoTime());
             }
-
-            lastPacketTimestampNs = cachedNanoClock.nanoTime();
-            hwmPosition.proposeMaxOrdered(proposedPosition);
         }
 
         return length;
@@ -765,7 +779,6 @@ public class PublicationImage
                     timeOfLastStateChangeNs = timeNs;
                     conductor.transitionToLinger(this);
                 }
-                isTrackingRebuild = false;
                 break;
 
             case LINGER:

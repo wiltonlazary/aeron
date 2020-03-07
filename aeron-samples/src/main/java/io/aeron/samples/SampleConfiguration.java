@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -65,13 +65,13 @@ public class SampleConfiguration
     static
     {
         CHANNEL = System.getProperty(CHANNEL_PROP, "aeron:udp?endpoint=localhost:40123");
-        STREAM_ID = Integer.getInteger(STREAM_ID_PROP, 10);
+        STREAM_ID = Integer.getInteger(STREAM_ID_PROP, 1001);
         PING_CHANNEL = System.getProperty(PING_CHANNEL_PROP, "aeron:udp?endpoint=localhost:40123");
         PONG_CHANNEL = System.getProperty(PONG_CHANNEL_PROP, "aeron:udp?endpoint=localhost:40124");
         IDLE_STRATEGY_NAME = System.getProperty(IDLE_STRATEGY_PROP, "org.agrona.concurrent.BusySpinIdleStrategy");
         LINGER_TIMEOUT_MS = Long.getLong(LINGER_TIMEOUT_MS_PROP, 0);
-        PING_STREAM_ID = Integer.getInteger(PING_STREAM_ID_PROP, 10);
-        PONG_STREAM_ID = Integer.getInteger(PONG_STREAM_ID_PROP, 11);
+        PING_STREAM_ID = Integer.getInteger(PING_STREAM_ID_PROP, 1002);
+        PONG_STREAM_ID = Integer.getInteger(PONG_STREAM_ID_PROP, 1003);
         FRAGMENT_COUNT_LIMIT = Integer.getInteger(FRAME_COUNT_LIMIT_PROP, 10);
         MESSAGE_LENGTH = Integer.getInteger(MESSAGE_LENGTH_PROP, 32);
         RANDOM_MESSAGE_LENGTH = Boolean.getBoolean(RANDOM_MESSAGE_LENGTH_PROP);

@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,12 +20,13 @@ import io.aeron.driver.buffer.RawLog;
 import io.aeron.driver.buffer.TestLogFactory;
 import io.aeron.driver.status.SystemCounters;
 import io.aeron.logbuffer.LogBufferDescriptor;
+import org.agrona.ErrorHandler;
 import org.agrona.concurrent.status.AtomicLongPosition;
 import org.agrona.concurrent.status.Position;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
-import static org.junit.Assert.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.Mockito.*;
 
 public class UntetheredSubscriptionTest
@@ -33,7 +34,7 @@ public class UntetheredSubscriptionTest
     private static final long REGISTRATION_ID = 1;
     private static final int TAG_ID = 0;
     private static final int SESSION_ID = 777;
-    private static final int STREAM_ID = 3;
+    private static final int STREAM_ID = 1003;
     private static final String CHANNEL = CommonContext.IPC_CHANNEL;
     private static final int TERM_BUFFER_LENGTH = LogBufferDescriptor.TERM_MIN_LENGTH;
     private static final int TERM_WINDOW_LENGTH = TERM_BUFFER_LENGTH / 2;
@@ -43,9 +44,10 @@ public class UntetheredSubscriptionTest
 
     private final RawLog rawLog = TestLogFactory.newLogBuffers(TERM_BUFFER_LENGTH);
     private final AtomicLongPosition publisherLimit = new AtomicLongPosition();
+    private final ErrorHandler errorHandler = mock(ErrorHandler.class);
     private IpcPublication ipcPublication;
 
-    @Before
+    @BeforeEach
     public void before()
     {
         ipcPublication = new IpcPublication(
@@ -62,7 +64,8 @@ public class UntetheredSubscriptionTest
             UNTETHERED_RESTING_TIMEOUT_NS,
             TIME_NS,
             mock(SystemCounters.class),
-            true);
+            true,
+            errorHandler);
     }
 
     @Test
@@ -115,6 +118,6 @@ public class UntetheredSubscriptionTest
         final SubscriptionParams params = new SubscriptionParams();
         params.isTether = isTether;
 
-        return new IpcSubscriptionLink(registrationId, STREAM_ID, CHANNEL, null, params);
+        return new IpcSubscriptionLink(registrationId, STREAM_ID, CHANNEL, null, params, errorHandler);
     }
 }

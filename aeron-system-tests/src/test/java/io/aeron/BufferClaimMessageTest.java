@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,55 +17,54 @@ package io.aeron;
 
 import io.aeron.driver.MediaDriver;
 import io.aeron.driver.ThreadingMode;
+import io.aeron.logbuffer.BufferClaim;
+import io.aeron.logbuffer.FragmentHandler;
 import io.aeron.logbuffer.LogBufferDescriptor;
+import io.aeron.test.TestMediaDriver;
+import io.aeron.test.Tests;
 import org.agrona.CloseHelper;
 import org.agrona.collections.MutableBoolean;
 import org.agrona.collections.MutableInteger;
-import org.junit.After;
-import org.junit.Test;
-import org.junit.experimental.theories.DataPoint;
-import org.junit.experimental.theories.Theories;
-import org.junit.experimental.theories.Theory;
-import org.junit.runner.RunWith;
-import io.aeron.logbuffer.BufferClaim;
-import io.aeron.logbuffer.FragmentHandler;
 import org.agrona.concurrent.UnsafeBuffer;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import java.nio.ByteBuffer;
+import java.util.Arrays;
+import java.util.List;
 
-import static org.hamcrest.Matchers.is;
-import static org.junit.Assert.assertThat;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
-@RunWith(Theories.class)
 public class BufferClaimMessageTest
 {
-    @DataPoint
-    public static final String UNICAST_CHANNEL = "aeron:udp?endpoint=localhost:54325";
+    private static List<String> channels()
+    {
+        return Arrays.asList("aeron:udp?endpoint=localhost:24325", CommonContext.IPC_CHANNEL);
+    }
 
-    @DataPoint
-    public static final String IPC_CHANNEL = CommonContext.IPC_CHANNEL;
-
-    private static final int STREAM_ID = 1;
+    private static final int STREAM_ID = 1001;
     private static final int FRAGMENT_COUNT_LIMIT = 10;
     private static final int MESSAGE_LENGTH = 200;
 
-    private final MediaDriver driver = MediaDriver.launch(new MediaDriver.Context()
+    private final TestMediaDriver driver = TestMediaDriver.launch(new MediaDriver.Context()
         .errorHandler(Throwable::printStackTrace)
-        .dirDeleteOnShutdown(true)
         .publicationTermBufferLength(LogBufferDescriptor.TERM_MIN_LENGTH)
         .threadingMode(ThreadingMode.SHARED));
 
     private final Aeron aeron = Aeron.connect();
 
-    @After
+    @AfterEach
     public void after()
     {
-        CloseHelper.close(aeron);
-        CloseHelper.close(driver);
+        CloseHelper.closeAll(aeron, driver);
+        driver.context().deleteDirectory();
     }
 
-    @Theory
-    @Test(timeout = 10_000)
+    @ParameterizedTest
+    @MethodSource("channels")
+    @Timeout(10)
     public void shouldReceivePublishedMessageWithInterleavedAbort(final String channel)
     {
         final MutableInteger fragmentCount = new MutableInteger();
@@ -81,8 +80,8 @@ public class BufferClaimMessageTest
 
             while (publication.tryClaim(MESSAGE_LENGTH, bufferClaim) < 0L)
             {
-                SystemTest.checkInterruptedStatus();
                 Thread.yield();
+                Tests.checkInterruptStatus();
             }
 
             publishMessage(srcBuffer, publication);
@@ -96,20 +95,21 @@ public class BufferClaimMessageTest
                 final int fragments = subscription.poll(fragmentHandler, FRAGMENT_COUNT_LIMIT);
                 if (0 == fragments)
                 {
-                    SystemTest.checkInterruptedStatus();
                     Thread.yield();
+                    Tests.checkInterruptStatus();
                 }
 
                 numFragments += fragments;
             }
             while (numFragments < expectedNumberOfFragments);
 
-            assertThat(fragmentCount.value, is(expectedNumberOfFragments));
+            assertEquals(expectedNumberOfFragments, fragmentCount.value);
         }
     }
 
-    @Theory
-    @Test(timeout = 10_000)
+    @ParameterizedTest
+    @MethodSource("channels")
+    @Timeout(10)
     public void shouldTransferReservedValue(final String channel)
     {
         final BufferClaim bufferClaim = new BufferClaim();
@@ -119,8 +119,8 @@ public class BufferClaimMessageTest
         {
             while (publication.tryClaim(MESSAGE_LENGTH, bufferClaim) < 0L)
             {
-                SystemTest.checkInterruptedStatus();
                 Thread.yield();
+                Tests.checkInterruptStatus();
             }
 
             final long reservedValue = System.currentTimeMillis();
@@ -133,8 +133,8 @@ public class BufferClaimMessageTest
                 final int fragments = subscription.poll(
                     (buffer, offset, length, header) ->
                     {
-                        assertThat(length, is(MESSAGE_LENGTH));
-                        assertThat(header.reservedValue(), is(reservedValue));
+                        assertEquals(MESSAGE_LENGTH, length);
+                        assertEquals(reservedValue, header.reservedValue());
 
                         done.value = true;
                     },
@@ -142,8 +142,8 @@ public class BufferClaimMessageTest
 
                 if (0 == fragments)
                 {
-                    SystemTest.checkInterruptedStatus();
                     Thread.yield();
+                    Tests.checkInterruptStatus();
                 }
             }
         }
@@ -153,8 +153,8 @@ public class BufferClaimMessageTest
     {
         while (publication.offer(srcBuffer, 0, MESSAGE_LENGTH) < 0L)
         {
-            SystemTest.checkInterruptedStatus();
             Thread.yield();
+            Tests.checkInterruptStatus();
         }
     }
 }

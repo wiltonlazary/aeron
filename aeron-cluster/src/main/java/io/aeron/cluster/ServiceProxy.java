@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,7 +20,7 @@ import io.aeron.cluster.client.ClusterException;
 import io.aeron.cluster.codecs.*;
 import io.aeron.exceptions.AeronException;
 import io.aeron.logbuffer.BufferClaim;
-import org.agrona.CloseHelper;
+import org.agrona.*;
 
 final class ServiceProxy implements AutoCloseable
 {
@@ -33,6 +33,9 @@ final class ServiceProxy implements AutoCloseable
     private final ServiceTerminationPositionEncoder serviceTerminationPositionEncoder =
         new ServiceTerminationPositionEncoder();
     private final ElectionStartEventEncoder electionStartEventEncoder = new ElectionStartEventEncoder();
+    private final ClusterMembersExtendedResponseEncoder clusterMembersExtendedResponseEncoder =
+        new ClusterMembersExtendedResponseEncoder();
+    private final ExpandableArrayBuffer expandableArrayBuffer = new ExpandableArrayBuffer();
     private final Publication publication;
 
     ServiceProxy(final Publication publication)
@@ -52,6 +55,7 @@ final class ServiceProxy implements AutoCloseable
         final int memberId,
         final int logSessionId,
         final int logStreamId,
+        final boolean isStartup,
         final String channel)
     {
         final int length = MessageHeaderEncoder.ENCODED_LENGTH + JoinLogEncoder.BLOCK_LENGTH +
@@ -71,6 +75,7 @@ final class ServiceProxy implements AutoCloseable
                     .memberId(memberId)
                     .logSessionId(logSessionId)
                     .logStreamId(logStreamId)
+                    .isStartup(isStartup ? BooleanType.TRUE : BooleanType.FALSE)
                     .logChannel(channel);
 
                 bufferClaim.commit();
@@ -117,6 +122,71 @@ final class ServiceProxy implements AutoCloseable
         throw new ClusterException("failed to send cluster members response");
     }
 
+    void clusterMembersExtendedResponse(
+        final long correlationId,
+        final long currentTimeNs,
+        final int leaderMemberId,
+        final int memberId,
+        final ClusterMember[] activeMembers,
+        final ClusterMember[] passiveMembers)
+    {
+        clusterMembersExtendedResponseEncoder
+            .wrapAndApplyHeader(expandableArrayBuffer, 0, messageHeaderEncoder)
+            .correlationId(correlationId)
+            .currentTimeNs(currentTimeNs)
+            .leaderMemberId(leaderMemberId)
+            .memberId(memberId);
+
+        final ClusterMembersExtendedResponseEncoder.ActiveMembersEncoder activeMembersEncoder =
+            clusterMembersExtendedResponseEncoder.activeMembersCount(activeMembers.length);
+        for (final ClusterMember member : activeMembers)
+        {
+            activeMembersEncoder.next()
+                .leadershipTermId(member.leadershipTermId())
+                .logPosition(member.logPosition())
+                .timeOfLastAppendNs(member.timeOfLastAppendPositionNs())
+                .memberId(member.id())
+                .clientFacingEndpoint(member.clientFacingEndpoint())
+                .memberFacingEndpoint(member.memberFacingEndpoint())
+                .logEndpoint(member.logEndpoint())
+                .transferEndpoint(member.transferEndpoint())
+                .archiveEndpoint(member.archiveEndpoint());
+        }
+
+        final ClusterMembersExtendedResponseEncoder.PassiveMembersEncoder passiveMembersEncoder =
+            clusterMembersExtendedResponseEncoder.passiveMembersCount(passiveMembers.length);
+        for (final ClusterMember member : passiveMembers)
+        {
+            passiveMembersEncoder.next()
+                .leadershipTermId(member.leadershipTermId())
+                .logPosition(member.logPosition())
+                .timeOfLastAppendNs(member.timeOfLastAppendPositionNs())
+                .memberId(member.id())
+                .clientFacingEndpoint(member.clientFacingEndpoint())
+                .memberFacingEndpoint(member.memberFacingEndpoint())
+                .logEndpoint(member.logEndpoint())
+                .transferEndpoint(member.transferEndpoint())
+                .archiveEndpoint(member.archiveEndpoint());
+        }
+
+        final int length = clusterMembersExtendedResponseEncoder.encodedLength() + MessageHeaderEncoder.ENCODED_LENGTH;
+
+        int attempts = SEND_ATTEMPTS * 2;
+        do
+        {
+            final long result = publication.offer(expandableArrayBuffer, 0, length, null);
+            if (result > 0)
+            {
+                return;
+            }
+
+            checkResult(result);
+        }
+        while (--attempts > 0);
+
+        throw new ClusterException("failed to send cluster members extended response");
+    }
+
     void terminationPosition(final long logPosition)
     {
         final int length = MessageHeaderDecoder.ENCODED_LENGTH + ServiceTerminationPositionEncoder.BLOCK_LENGTH;
@@ -143,7 +213,7 @@ final class ServiceProxy implements AutoCloseable
         throw new ClusterException("failed to send service termination position");
     }
 
-    void electionStartEvent(final long logPosition)
+    void electionStartEvent(final long logPosition, final ErrorHandler errorHandler)
     {
         final int length = MessageHeaderDecoder.ENCODED_LENGTH + ElectionStartEventEncoder.BLOCK_LENGTH;
 
@@ -166,14 +236,12 @@ final class ServiceProxy implements AutoCloseable
         }
         while (--attempts > 0);
 
-        throw new ClusterException("failed to send election start event");
+        errorHandler.onError(new ClusterException("failed to send election start event", AeronException.Category.WARN));
     }
 
     private static void checkResult(final long result)
     {
-        if (result == Publication.NOT_CONNECTED ||
-            result == Publication.CLOSED ||
-            result == Publication.MAX_POSITION_EXCEEDED)
+        if (result == Publication.CLOSED || result == Publication.MAX_POSITION_EXCEEDED)
         {
             throw new AeronException("unexpected publication state: " + result);
         }

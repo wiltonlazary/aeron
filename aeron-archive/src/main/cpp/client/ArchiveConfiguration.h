@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -39,10 +39,69 @@ constexpr const std::int64_t NULL_POSITION = aeron::NULL_VALUE;
  */
 constexpr const std::int64_t NULL_LENGTH = aeron::NULL_VALUE;
 
+/**
+ * Callback to return encoded credentials.
+ *
+ * @return encoded credentials to send on connect request.
+ */
+typedef std::function<std::pair<const char *, std::uint32_t>()> credentials_encoded_credentials_supplier_t;
+
+inline std::pair<const char *, std::uint32_t> defaultCredentialsEncodedCredentials()
+{
+    return {nullptr, 0};
+}
+
+/**
+ * Callback to return encoded credentials given specific encoded challenge
+ *
+ * @param encodedChallenge to use to generate the encoded credentials.
+ * @return encoded credentials to send in challenge response.
+ */
+typedef std::function<std::pair<const char *, std::uint32_t>(
+    std::pair<const char *, std::uint32_t> encodedChallenge)> credentials_challenge_supplier_t;
+
+inline std::pair<const char *, std::uint32_t> defaultCredentialsOnChallenge(
+    std::pair<const char *, std::uint32_t> encodedChallenge)
+{
+    return {nullptr, 0};
+}
+
+/**
+ * Callback to return encoded credentials so they may be reused or free'd.
+ *
+ * @param encodedCredentials to re-use or free.
+ */
+typedef std::function<void(std::pair<const char *, std::uint32_t> encodedCredentials)> credentials_free_t;
+
+inline void defaultCredentialsOnFree(std::pair<const char *, std::uint32_t> credentials)
+{
+    delete [] credentials.first;
+}
+
+/**
+ * Structure to hold credential callbacks.
+ */
+struct CredentialsSupplier
+{
+    credentials_encoded_credentials_supplier_t m_encodedCredentials = defaultCredentialsEncodedCredentials;
+    credentials_challenge_supplier_t m_onChallenge = defaultCredentialsOnChallenge;
+    credentials_free_t m_onFree = defaultCredentialsOnFree;
+
+    explicit CredentialsSupplier(
+        credentials_encoded_credentials_supplier_t encodedCredentials = defaultCredentialsEncodedCredentials,
+        credentials_challenge_supplier_t onChallenge = defaultCredentialsOnChallenge,
+        credentials_free_t onFree = defaultCredentialsOnFree) :
+        m_encodedCredentials(std::move(encodedCredentials)),
+        m_onChallenge(std::move(onChallenge)),
+        m_onFree(std::move(onFree))
+    {
+    }
+};
+
 namespace Configuration
 {
 constexpr const std::uint8_t ARCHIVE_MAJOR_VERSION = 1;
-constexpr const std::uint8_t ARCHIVE_MINOR_VERSION = 0;
+constexpr const std::uint8_t ARCHIVE_MINOR_VERSION = 3;
 constexpr const std::uint8_t ARCHIVE_PATCH_VERSION = 0;
 constexpr const std::int32_t ARCHIVE_SEMANTIC_VERSION = aeron::util::semanticVersionCompose(
     ARCHIVE_MAJOR_VERSION, ARCHIVE_MINOR_VERSION, ARCHIVE_PATCH_VERSION);
@@ -440,6 +499,30 @@ public:
         return *this;
     }
 
+    /**
+     * Get the credential supplier that will be called for generating encoded credentials.
+     *
+     * @return the credential supplier that will be called for generating encoded credentials.
+     */
+    inline CredentialsSupplier& credentialsSupplier()
+    {
+        return m_credentialsSupplier;
+    }
+
+    /**
+     * Set the CredentialSupplier functions to be called as connect requests are handled.
+     *
+     * @param supplier that holds functions to be called.
+     * @return this for a fluent API.
+     */
+    inline this_t& credentialsSupplier(const CredentialsSupplier& supplier)
+    {
+        m_credentialsSupplier.m_encodedCredentials = supplier.m_encodedCredentials;
+        m_credentialsSupplier.m_onChallenge = supplier.m_onChallenge;
+        m_credentialsSupplier.m_onFree = supplier.m_onFree;
+        return *this;
+    }
+
 private:
     std::shared_ptr<Aeron> m_aeron;
     std::string m_aeronDirectoryName = aeron::Context::defaultAeronPath();
@@ -461,6 +544,8 @@ private:
     bool m_ownsAeronClient = false;
 
     exception_handler_t m_errorHandler = nullptr;
+
+    CredentialsSupplier m_credentialsSupplier;
 };
 
 }}}

@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -72,7 +72,7 @@ public:
         const util::index_t recordOffset = metadataOffset(counterId);
         checkMetaDataCapacity(recordOffset);
 
-        CounterMetaDataDefn& record = m_metadataBuffer.overlayStruct<CounterMetaDataDefn>(recordOffset);
+        auto& record = m_metadataBuffer.overlayStruct<CounterMetaDataDefn>(recordOffset);
 
         record.typeId = typeId;
 
@@ -105,7 +105,7 @@ public:
         const util::index_t recordOffset = metadataOffset(counterId);
         checkMetaDataCapacity(recordOffset);
 
-        CounterMetaDataDefn& record = m_metadataBuffer.overlayStruct<CounterMetaDataDefn>(recordOffset);
+        auto& record = m_metadataBuffer.overlayStruct<CounterMetaDataDefn>(recordOffset);
 
         record.typeId = typeId;
         record.freeToReuseDeadline = NOT_FREE_TO_REUSE;

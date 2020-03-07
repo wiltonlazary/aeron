@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,18 +15,17 @@
  */
 package io.aeron.cluster;
 
-import io.aeron.FragmentAssembler;
+import io.aeron.ControlledFragmentAssembler;
 import io.aeron.Subscription;
+import io.aeron.cluster.client.AeronCluster;
 import io.aeron.cluster.client.ClusterException;
 import io.aeron.cluster.codecs.*;
+import io.aeron.logbuffer.ControlledFragmentHandler;
 import io.aeron.logbuffer.Header;
-import org.agrona.CloseHelper;
 import org.agrona.DirectBuffer;
 
 final class ConsensusModuleAdapter implements AutoCloseable
 {
-    private static final int SESSION_MESSAGE_HEADER =
-        MessageHeaderDecoder.ENCODED_LENGTH + SessionMessageHeaderDecoder.BLOCK_LENGTH;
     private static final int FRAGMENT_LIMIT = 10;
     private final Subscription subscription;
     private final ConsensusModuleAgent consensusModuleAgent;
@@ -38,7 +37,7 @@ final class ConsensusModuleAdapter implements AutoCloseable
     private final CloseSessionDecoder closeSessionDecoder = new CloseSessionDecoder();
     private final ClusterMembersQueryDecoder clusterMembersQueryDecoder = new ClusterMembersQueryDecoder();
     private final RemoveMemberDecoder removeMemberDecoder = new RemoveMemberDecoder();
-    private final FragmentAssembler fragmentAssembler = new FragmentAssembler(this::onFragment);
+    private final ControlledFragmentAssembler fragmentAssembler = new ControlledFragmentAssembler(this::onFragment);
 
     ConsensusModuleAdapter(final Subscription subscription, final ConsensusModuleAgent consensusModuleAgent)
     {
@@ -48,16 +47,17 @@ final class ConsensusModuleAdapter implements AutoCloseable
 
     public void close()
     {
-        CloseHelper.close(subscription);
+        subscription.close();
     }
 
     int poll()
     {
-        return subscription.poll(fragmentAssembler, FRAGMENT_LIMIT);
+        return subscription.controlledPoll(fragmentAssembler, FRAGMENT_LIMIT);
     }
 
-    @SuppressWarnings("unused")
-    private void onFragment(final DirectBuffer buffer, final int offset, final int length, final Header header)
+    @SuppressWarnings({ "unused", "MethodLength" })
+    private ControlledFragmentHandler.Action onFragment(
+        final DirectBuffer buffer, final int offset, final int length, final Header header)
     {
         messageHeaderDecoder.wrap(buffer, offset);
 
@@ -66,6 +66,8 @@ final class ConsensusModuleAdapter implements AutoCloseable
         {
             throw new ClusterException("expected schemaId=" + MessageHeaderDecoder.SCHEMA_ID + ", actual=" + schemaId);
         }
+
+        ControlledFragmentHandler.Action action = ControlledFragmentHandler.Action.CONTINUE;
 
         final int templateId = messageHeaderDecoder.templateId();
         switch (templateId)
@@ -80,8 +82,8 @@ final class ConsensusModuleAdapter implements AutoCloseable
                 consensusModuleAgent.onServiceMessage(
                     sessionMessageHeaderDecoder.leadershipTermId(),
                     buffer,
-                    offset + SESSION_MESSAGE_HEADER,
-                    length - SESSION_MESSAGE_HEADER);
+                    offset + AeronCluster.SESSION_HEADER_LENGTH,
+                    length - AeronCluster.SESSION_HEADER_LENGTH);
                 break;
 
             case CloseSessionDecoder.TEMPLATE_ID:
@@ -129,6 +131,8 @@ final class ConsensusModuleAdapter implements AutoCloseable
                     serviceAckDecoder.ackId(),
                     serviceAckDecoder.relevantId(),
                     serviceAckDecoder.serviceId());
+
+                action = ControlledFragmentHandler.Action.BREAK;
                 break;
 
             case ClusterMembersQueryDecoder.TEMPLATE_ID:
@@ -138,7 +142,9 @@ final class ConsensusModuleAdapter implements AutoCloseable
                     messageHeaderDecoder.blockLength(),
                     messageHeaderDecoder.version());
 
-                consensusModuleAgent.onClusterMembersQuery(clusterMembersQueryDecoder.correlationId());
+                consensusModuleAgent.onClusterMembersQuery(
+                    clusterMembersQueryDecoder.correlationId(),
+                    BooleanType.TRUE == clusterMembersQueryDecoder.extended());
                 break;
 
             case RemoveMemberDecoder.TEMPLATE_ID:
@@ -154,5 +160,7 @@ final class ConsensusModuleAdapter implements AutoCloseable
                     BooleanType.TRUE == removeMemberDecoder.isPassive());
                 break;
         }
+
+        return action;
     }
 }

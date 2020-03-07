@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -148,7 +148,7 @@ TEST_F(DriverConductorCounterTest, shouldRemoveCounterOnClientTimeout)
 
     EXPECT_EQ(readAllBroadcastsFromConductor(handler), 1u);
 
-    doWorkUntilTimeNs((m_context.m_context->client_liveness_timeout_ns * 2));
+    doWorkForNs((m_context.m_context->client_liveness_timeout_ns * 2));
     EXPECT_EQ(aeron_driver_conductor_num_clients(&m_conductor.m_conductor), 0u);
 
     auto counter_func = [&](std::int32_t id, std::int32_t typeId, const AtomicBuffer& key, const std::string& label) {};
@@ -179,7 +179,7 @@ TEST_F(DriverConductorCounterTest, shouldRemoveMultipleCountersOnClientTimeout)
 
     EXPECT_EQ(readAllBroadcastsFromConductor(null_handler), 2u);
 
-    doWorkUntilTimeNs((m_context.m_context->client_liveness_timeout_ns * 2));
+    doWorkForNs((m_context.m_context->client_liveness_timeout_ns * 2));
     EXPECT_EQ(aeron_driver_conductor_num_clients(&m_conductor.m_conductor), 0u);
 }
 
@@ -207,14 +207,13 @@ TEST_F(DriverConductorCounterTest, shouldNotRemoveCounterOnClientKeepalive)
 
     int64_t timeout = m_context.m_context->client_liveness_timeout_ns * 2;
 
-    doWorkUntilTimeNs(
+    doWorkForNs(
         timeout,
         100,
         [&]()
         {
             clientKeepalive(client_id);
         });
-
 
     EXPECT_EQ(aeron_driver_conductor_num_clients(&m_conductor.m_conductor), 1u);
 

@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,8 +15,8 @@
  */
 package io.aeron;
 
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import io.aeron.logbuffer.FragmentHandler;
 import io.aeron.logbuffer.FrameDescriptor;
@@ -26,8 +26,7 @@ import org.agrona.concurrent.UnsafeBuffer;
 
 import java.nio.ByteOrder;
 
-import static org.hamcrest.Matchers.is;
-import static org.junit.Assert.*;
+import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 public class FragmentAssemblerTest
@@ -40,7 +39,7 @@ public class FragmentAssemblerTest
     private final Header header = spy(new Header(INITIAL_TERM_ID, LogBufferDescriptor.TERM_MIN_LENGTH));
     private final FragmentAssembler adapter = new FragmentAssembler(delegateFragmentHandler);
 
-    @Before
+    @BeforeEach
     public void setUp()
     {
         header.buffer(termBuffer);
@@ -86,12 +85,12 @@ public class FragmentAssemblerTest
         final UnsafeBuffer capturedBuffer = bufferArg.getValue();
         for (int i = 0; i < srcBuffer.capacity(); i++)
         {
-            assertThat("same at i=" + i, capturedBuffer.getByte(i), is(srcBuffer.getByte(i)));
+            assertEquals(srcBuffer.getByte(i), capturedBuffer.getByte(i), "same at i=" + i);
         }
 
         final Header capturedHeader = headerArg.getValue();
-        assertThat(capturedHeader.sessionId(), is(SESSION_ID));
-        assertThat(capturedHeader.flags(), is(FrameDescriptor.END_FRAG_FLAG));
+        assertEquals(SESSION_ID, capturedHeader.sessionId());
+        assertEquals(FrameDescriptor.END_FRAG_FLAG, capturedHeader.flags());
     }
 
     @Test
@@ -126,12 +125,12 @@ public class FragmentAssemblerTest
         final UnsafeBuffer capturedBuffer = bufferArg.getValue();
         for (int i = 0; i < srcBuffer.capacity(); i++)
         {
-            assertThat("same at i=" + i, capturedBuffer.getByte(i), is(srcBuffer.getByte(i)));
+            assertEquals(srcBuffer.getByte(i), capturedBuffer.getByte(i), "same at i=" + i);
         }
 
         final Header capturedHeader = headerArg.getValue();
-        assertThat(capturedHeader.sessionId(), is(SESSION_ID));
-        assertThat(capturedHeader.flags(), is(FrameDescriptor.END_FRAG_FLAG));
+        assertEquals(SESSION_ID, capturedHeader.sessionId());
+        assertEquals(FrameDescriptor.END_FRAG_FLAG, capturedHeader.flags());
     }
 
     @Test

@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,17 +16,15 @@
 package io.aeron.driver.buffer;
 
 import io.aeron.exceptions.AeronException;
-import org.agrona.CloseHelper;
-import org.agrona.ErrorHandler;
-import org.agrona.IoUtil;
-import org.agrona.LangUtil;
+import org.agrona.*;
 
 import java.io.File;
 import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.io.UncheckedIOException;
 import java.nio.channels.FileChannel;
-import java.nio.file.*;
+import java.nio.file.FileStore;
+import java.nio.file.Files;
 
 import static io.aeron.logbuffer.LogBufferDescriptor.computeLogLength;
 
@@ -89,53 +87,31 @@ public class FileStoreLogFactory implements LogFactory
     /**
      * Create new {@link RawLog} in the publications directory for the supplied triplet.
      *
-     * @param channel          address on the media to send to.
-     * @param sessionId        under which transmissions are made.
-     * @param streamId         within the channel address to separate message flows.
      * @param correlationId    to use to distinguish this publication
      * @param termBufferLength length of each term
      * @param useSparseFiles   for the log buffer.
      * @return the newly allocated {@link RawLog}
      */
-    public RawLog newPublication(
-        final String channel,
-        final int sessionId,
-        final int streamId,
-        final long correlationId,
-        final int termBufferLength,
-        final boolean useSparseFiles)
+    public RawLog newPublication(final long correlationId, final int termBufferLength, final boolean useSparseFiles)
     {
-        return newInstance(
-            publicationsDir, channel, sessionId, streamId, correlationId, termBufferLength, useSparseFiles);
+        return newInstance(publicationsDir, correlationId, termBufferLength, useSparseFiles);
     }
 
     /**
      * Create new {@link RawLog} in the rebuilt publication images directory for the supplied triplet.
      *
-     * @param channel          address on the media to listened to.
-     * @param sessionId        under which transmissions are made.
-     * @param streamId         within the channel address to separate message flows.
      * @param correlationId    to use to distinguish this connection
      * @param termBufferLength to use for the log buffer
      * @param useSparseFiles   for the log buffer.
      * @return the newly allocated {@link RawLog}
      */
-    public RawLog newImage(
-        final String channel,
-        final int sessionId,
-        final int streamId,
-        final long correlationId,
-        final int termBufferLength,
-        final boolean useSparseFiles)
+    public RawLog newImage(final long correlationId, final int termBufferLength, final boolean useSparseFiles)
     {
-        return newInstance(imagesDir, channel, sessionId, streamId, correlationId, termBufferLength, useSparseFiles);
+        return newInstance(imagesDir, correlationId, termBufferLength, useSparseFiles);
     }
 
     private RawLog newInstance(
         final File rootDir,
-        final String channel,
-        final int sessionId,
-        final int streamId,
         final long correlationId,
         final int termLength,
         final boolean useSparseFiles)
@@ -157,7 +133,7 @@ public class FileStoreLogFactory implements LogFactory
             blankTemplateLength = logLength;
         }
 
-        final File location = streamLocation(rootDir, channel, sessionId, streamId, correlationId);
+        final File location = streamLocation(rootDir, correlationId);
 
         return new MappedRawLog(
             location, blankChannel, useSparseFiles, logLength, termLength, filePageSize, errorHandler);
@@ -199,17 +175,9 @@ public class FileStoreLogFactory implements LogFactory
         return usableSpace;
     }
 
-    private static File streamLocation(
-        final File rootDir,
-        final String channel,
-        final int sessionId,
-        final int streamId,
-        final long correlationId)
+    private static File streamLocation(final File rootDir, final long correlationId)
     {
-        final String fileName = channel + '-' +
-            Integer.toHexString(sessionId) + '-' +
-            Integer.toHexString(streamId) + '-' +
-            Long.toHexString(correlationId) + ".logbuffer";
+        final String fileName = correlationId + ".logbuffer";
 
         return new File(rootDir, fileName);
     }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -31,7 +31,7 @@ import java.util.concurrent.TimeUnit;
 /**
  * Interface for a {@link ClusteredService} to interact with cluster hosting it.
  */
-public interface Cluster extends IdleStrategy
+public interface Cluster
 {
     enum Role
     {
@@ -275,21 +275,10 @@ public interface Cluster extends IdleStrategy
     long tryClaim(int length, BufferClaim bufferClaim);
 
     /**
-     * Reset idle strategy.
-     */
-    void reset();
-
-    /**
-     * Should be called by the service when it experiences back-pressure on egress, closing sessions, making
-     * timer requests, or any long running actions.
-     */
-    void idle();
-
-    /**
-     * Should be called by the service when it experiences back-pressure on egress, closing sessions, or making
-     * timer requests, or any long running actions.
+     * {@link IdleStrategy} which should be used by the service when it experiences back-pressure on egress,
+     * closing sessions, or making timer requests, or any long running actions.
      *
-     * @param workCount a value of 0 will reset the idle strategy is a progressive back-off has been applied.
+     * @return the {@link IdleStrategy} which should be used by the service when it experiences back-pressure.
      */
-    void idle(int workCount);
+    IdleStrategy idleStrategy();
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,6 +26,7 @@
 #include "concurrent/status/StatusIndicatorReader.h"
 #include "concurrent/AtomicArrayUpdater.h"
 #include "Image.h"
+#include "util/Export.h"
 
 namespace aeron {
 
@@ -48,7 +49,7 @@ class ClientConductor;
  *
  * @see FragmentAssembler
  */
-class Subscription
+class CLIENT_EXPORT Subscription
 {
 public:
     /// @cond HIDDEN_SYMBOLS
@@ -433,9 +434,9 @@ public:
         return m_imageArray.addElement(std::move(image)).first;
     }
 
-    std::pair<Image::array_t, int> removeImage(std::int64_t correlationId)
+    std::pair<Image::array_t, std::size_t> removeImage(std::int64_t correlationId)
     {
-        auto result = m_imageArray.removeElement([&](std::shared_ptr<Image> image)
+        auto result = m_imageArray.removeElement([&](const std::shared_ptr<Image>& image)
         {
             if (image->correlationId() == correlationId)
             {
@@ -451,11 +452,17 @@ public:
 
     std::pair<Image::array_t, std::size_t> closeAndRemoveImages()
     {
-        std::pair<Image::array_t, std::size_t> imageArrayPair = m_imageArray.load();
-        m_imageArray.store(new std::shared_ptr<Image>[0], 0);
-        std::atomic_store_explicit(&m_isClosed, true, std::memory_order_release);
+        if (!m_isClosed.exchange(true))
+        {
+            std::pair<Image::array_t, std::size_t> imageArrayPair = m_imageArray.load();
+            m_imageArray.store(new std::shared_ptr<Image>[0], 0);
 
-        return imageArrayPair;
+            return imageArrayPair;
+        }
+        else
+        {
+            return {nullptr, 0};
+        }
     }
     /// @endcond
 
@@ -470,14 +477,13 @@ private:
     ClientConductor& m_conductor;
     const std::string m_channel;
     std::int32_t m_channelStatusId;
-    char paddingBefore[56];
+    char m_paddingBefore[util::BitUtil::CACHE_LINE_LENGTH]{};
     std::size_t m_roundRobinIndex = 0;
-    char paddingAfter[56];
-    std::int64_t m_registrationId;
-    std::int32_t m_streamId;
-
     AtomicArrayUpdater<std::shared_ptr<Image>> m_imageArray;
     std::atomic<bool> m_isClosed;
+    char m_paddingAfter[util::BitUtil::CACHE_LINE_LENGTH]{};
+    std::int64_t m_registrationId;
+    std::int32_t m_streamId;
 };
 
 }

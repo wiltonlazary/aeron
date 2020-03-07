@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,25 +20,26 @@ import io.aeron.driver.ThreadingMode;
 import io.aeron.logbuffer.FragmentHandler;
 import io.aeron.logbuffer.LogBufferDescriptor;
 import io.aeron.protocol.DataHeaderFlyweight;
+import io.aeron.test.Tests;
 import org.agrona.CloseHelper;
 import org.agrona.concurrent.UnsafeBuffer;
-import org.junit.After;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 import java.nio.ByteBuffer;
 
 import static io.aeron.CommonContext.UDP_MEDIA;
-import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.Matchers.is;
-import static org.junit.Assert.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.mockito.Mockito.mock;
 
 public class SessionSpecificSubscriptionTest
 {
-    private static final String ENDPOINT = "localhost:54325";
+    private static final String ENDPOINT = "localhost:24325";
     private static final int SESSION_ID_1 = 1077;
     private static final int SESSION_ID_2 = 1078;
-    private static final int STREAM_ID = 7;
+    private static final int STREAM_ID = 1007;
     private static final int FRAGMENT_COUNT_LIMIT = 10;
     private static final int MESSAGE_LENGTH = 1024 - DataHeaderFlyweight.HEADER_LENGTH;
     private static final int EXPECTED_NUMBER_OF_MESSAGES = 10;
@@ -54,26 +55,27 @@ public class SessionSpecificSubscriptionTest
         .endpoint(ENDPOINT).media(UDP_MEDIA).sessionId(SESSION_ID_2).build();
 
     private final FragmentHandler handlerSessionIdOne =
-        (buffer, offset, length, header) -> assertThat(header.sessionId(), is(SESSION_ID_1));
+        (buffer, offset, length, header) -> assertEquals(SESSION_ID_1, header.sessionId());
     private final FragmentHandler handlerSessionIdTwo =
-        (buffer, offset, length, header) -> assertThat(header.sessionId(), is(SESSION_ID_2));
+        (buffer, offset, length, header) -> assertEquals(SESSION_ID_2, header.sessionId());
 
     private final MediaDriver driver = MediaDriver.launch(new MediaDriver.Context()
         .errorHandler(Throwable::printStackTrace)
-        .dirDeleteOnShutdown(true)
+        .dirDeleteOnStart(true)
         .publicationTermBufferLength(LogBufferDescriptor.TERM_MIN_LENGTH)
         .threadingMode(ThreadingMode.SHARED));
 
     private final Aeron aeron = Aeron.connect();
 
-    @After
+    @AfterEach
     public void after()
     {
-        CloseHelper.close(aeron);
-        CloseHelper.close(driver);
+        CloseHelper.closeAll(aeron, driver);
+        driver.context().deleteDirectory();
     }
 
-    @Test(timeout = 10_000)
+    @Test
+    @Timeout(10)
     public void shouldSubscribeToSpecificSessionIdsAndWildcard()
     {
         try (Subscription subscriptionOne = aeron.addSubscription(channelUriWithSessionIdOne, STREAM_ID);
@@ -86,8 +88,8 @@ public class SessionSpecificSubscriptionTest
                 subscriptionTwo.imageCount() != 1 ||
                 subscriptionWildcard.imageCount() != 2)
             {
-                SystemTest.checkInterruptedStatus();
                 Thread.yield();
+                Tests.checkInterruptStatus();
             }
 
             for (int i = 0; i < EXPECTED_NUMBER_OF_MESSAGES; i++)
@@ -99,7 +101,7 @@ public class SessionSpecificSubscriptionTest
             int numFragments = 0;
             do
             {
-                SystemTest.checkInterruptedStatus();
+                Tests.checkInterruptStatus();
                 numFragments += subscriptionOne.poll(handlerSessionIdOne, FRAGMENT_COUNT_LIMIT);
             }
             while (numFragments < EXPECTED_NUMBER_OF_MESSAGES);
@@ -107,7 +109,7 @@ public class SessionSpecificSubscriptionTest
             numFragments = 0;
             do
             {
-                SystemTest.checkInterruptedStatus();
+                Tests.checkInterruptStatus();
                 numFragments += subscriptionTwo.poll(handlerSessionIdTwo, FRAGMENT_COUNT_LIMIT);
             }
             while (numFragments < EXPECTED_NUMBER_OF_MESSAGES);
@@ -115,7 +117,7 @@ public class SessionSpecificSubscriptionTest
             numFragments = 0;
             do
             {
-                SystemTest.checkInterruptedStatus();
+                Tests.checkInterruptStatus();
                 numFragments += subscriptionWildcard.poll(mockFragmentHandler, FRAGMENT_COUNT_LIMIT);
             }
             while (numFragments < (EXPECTED_NUMBER_OF_MESSAGES * 2));
@@ -132,11 +134,11 @@ public class SessionSpecificSubscriptionTest
         {
             while (!publication.isConnected())
             {
-                SystemTest.checkInterruptedStatus();
                 Thread.yield();
+                Tests.checkInterruptStatus();
             }
 
-            assertThat(subscription.imageCount(), is(1));
+            assertEquals(1, subscription.imageCount());
 
             for (int i = 0; i < EXPECTED_NUMBER_OF_MESSAGES; i++)
             {
@@ -146,7 +148,7 @@ public class SessionSpecificSubscriptionTest
             int numFragments = 0;
             do
             {
-                SystemTest.checkInterruptedStatus();
+                Tests.checkInterruptStatus();
                 numFragments += subscription.poll(handlerSessionIdOne, FRAGMENT_COUNT_LIMIT);
             }
             while (numFragments < EXPECTED_NUMBER_OF_MESSAGES);
@@ -160,8 +162,8 @@ public class SessionSpecificSubscriptionTest
     {
         while (publication.offer(buffer, 0, MESSAGE_LENGTH) < 0L)
         {
-            SystemTest.checkInterruptedStatus();
             Thread.yield();
+            Tests.checkInterruptStatus();
         }
     }
 }

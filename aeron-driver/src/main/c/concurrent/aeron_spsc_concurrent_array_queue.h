@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,19 +23,19 @@
 
 typedef struct aeron_spsc_concurrent_array_queue_stct
 {
-    int8_t padding[(2 * AERON_CACHE_LINE_LENGTH)];
+    int8_t padding[AERON_CACHE_LINE_LENGTH];
     struct
     {
         uint64_t tail;
         uint64_t head_cache;
-        int8_t padding[(2 * AERON_CACHE_LINE_LENGTH) - (2 * sizeof(uint64_t))];
+        int8_t padding[AERON_CACHE_LINE_LENGTH - (2 * sizeof(uint64_t))];
     }
     producer;
 
     struct
     {
         uint64_t head;
-        int8_t padding[(2 * AERON_CACHE_LINE_LENGTH) - (1 * sizeof(uint64_t))];
+        int8_t padding[AERON_CACHE_LINE_LENGTH - (1 * sizeof(uint64_t))];
     }
     consumer;
 

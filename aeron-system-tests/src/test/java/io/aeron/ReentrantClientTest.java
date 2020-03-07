@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,26 +17,31 @@ package io.aeron;
 
 import io.aeron.driver.MediaDriver;
 import io.aeron.exceptions.AeronException;
+import io.aeron.test.TestMediaDriver;
 import org.agrona.CloseHelper;
 import org.agrona.ErrorHandler;
 import org.agrona.collections.MutableReference;
-import org.junit.After;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
 
+import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.instanceOf;
-import static org.junit.Assert.assertThat;
-import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.any;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.timeout;
+import static org.mockito.Mockito.verify;
 
 public class ReentrantClientTest
 {
-    final MediaDriver mediaDriver = MediaDriver.launch(new MediaDriver.Context()
-        .dirDeleteOnShutdown(true)
+    private final TestMediaDriver mediaDriver = TestMediaDriver.launch(new MediaDriver.Context()
         .dirDeleteOnStart(true));
 
-    @After
+    @AfterEach
     public void after()
     {
         CloseHelper.close(mediaDriver);
+        mediaDriver.context().deleteDirectory();
     }
 
     @Test
@@ -52,10 +57,10 @@ public class ReentrantClientTest
             doAnswer((invocation) -> aeron.addSubscription(channel, 3))
                 .when(mockHandler).onAvailableImage(any(Image.class));
 
-            final Subscription sub = aeron.addSubscription(channel, 1, mockHandler, null);
-            final Publication pub = aeron.addPublication(channel, 1);
+            final Subscription sub = aeron.addSubscription(channel, 1001, mockHandler, null);
+            final Publication pub = aeron.addPublication(channel, 1001);
 
-            verify(mockHandler, timeout(5000)).onAvailableImage(any(Image.class));
+            verify(mockHandler, timeout(5000L)).onAvailableImage(any(Image.class));
 
             pub.close();
             sub.close();

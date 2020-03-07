@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,7 +26,7 @@
 #define AERON_DRIVER_RECEIVER_NUM_RECV_BUFFERS (2)
 #define AERON_DRIVER_RECEIVER_MAX_UDP_PACKET_LENGTH (64 * 1024)
 
-#define AERON_DRIVER_RECEIVER_PENDING_SETUP_TIMEOUT_NS (1000 * 1000 * 1000L)
+#define AERON_DRIVER_RECEIVER_PENDING_SETUP_TIMEOUT_NS (1000 * 1000 * 1000LL)
 
 typedef struct aeron_driver_receiver_image_entry_stct
 {
@@ -73,6 +73,8 @@ typedef struct aeron_driver_receiver_stct
         size_t capacity;
     }
     pending_setups;
+
+    aeron_udp_channel_data_paths_t data_paths;
 
     aeron_driver_context_t *context;
     aeron_udp_transport_poller_poll_func_t poller_poll_func;

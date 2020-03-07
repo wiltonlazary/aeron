@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2018 Real Logic Ltd.
+ * Copyright 2014-2018 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,42 +23,44 @@ import io.aeron.driver.MediaDriver;
 import io.aeron.driver.ThreadingMode;
 import io.aeron.logbuffer.FragmentHandler;
 import io.aeron.protocol.DataHeaderFlyweight;
+import io.aeron.test.Tests;
 import org.agrona.CloseHelper;
 import org.agrona.ExpandableArrayBuffer;
 import org.agrona.SystemUtil;
+import org.agrona.collections.MutableInteger;
 import org.agrona.concurrent.status.CountersReader;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 import java.io.File;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.aeron.archive.Common.*;
 import static io.aeron.archive.codecs.SourceLocation.REMOTE;
-import static org.hamcrest.Matchers.is;
-import static org.junit.Assert.*;
+import static org.junit.jupiter.api.Assertions.*;
 
 public class ReplayMergeTest
 {
     private static final String MESSAGE_PREFIX = "Message-Prefix-";
     private static final int MIN_MESSAGES_PER_TERM =
-        TERM_BUFFER_LENGTH / (MESSAGE_PREFIX.length() + DataHeaderFlyweight.HEADER_LENGTH);
+        TERM_LENGTH / (MESSAGE_PREFIX.length() + DataHeaderFlyweight.HEADER_LENGTH);
 
     private static final int PUBLICATION_TAG = 2;
-    private static final int STREAM_ID = 33;
+    private static final int STREAM_ID = 1033;
 
-    private static final String CONTROL_ENDPOINT = "localhost:43265";
-    private static final String RECORDING_ENDPOINT = "localhost:43266";
-    private static final String LIVE_ENDPOINT = "localhost:43267";
-    private static final String REPLAY_ENDPOINT = "localhost:43268";
+    private static final String CONTROL_ENDPOINT = "localhost:23265";
+    private static final String RECORDING_ENDPOINT = "localhost:23266";
+    private static final String LIVE_ENDPOINT = "localhost:23267";
+    private static final String REPLAY_ENDPOINT = "localhost:23268";
 
     private final ChannelUriStringBuilder publicationChannel = new ChannelUriStringBuilder()
         .media(CommonContext.UDP_MEDIA)
         .tags("1," + PUBLICATION_TAG)
         .controlEndpoint(CONTROL_ENDPOINT)
         .controlMode(CommonContext.MDC_CONTROL_MODE_DYNAMIC)
-        .termLength(TERM_BUFFER_LENGTH);
+        .minFlowControl(null, "5s")
+        .termLength(TERM_LENGTH);
 
     private ChannelUriStringBuilder recordingChannel = new ChannelUriStringBuilder()
         .media(CommonContext.UDP_MEDIA)
@@ -85,14 +87,15 @@ public class ReplayMergeTest
         .endpoint(REPLAY_ENDPOINT);
 
     private final ExpandableArrayBuffer buffer = new ExpandableArrayBuffer();
-    private final AtomicInteger received = new AtomicInteger();
+    private final MutableInteger received = new MutableInteger();
     private final MediaDriver.Context mediaDriverContext = new MediaDriver.Context();
 
     private ArchivingMediaDriver archivingMediaDriver;
     private Aeron aeron;
     private AeronArchive aeronArchive;
+    private int messagesPublished = 0;
 
-    @Before
+    @BeforeEach
     public void before()
     {
         final File archiveDir = new File(SystemUtil.tmpDirName(), "archive");
@@ -100,18 +103,17 @@ public class ReplayMergeTest
         archivingMediaDriver = ArchivingMediaDriver.launch(
             mediaDriverContext
                 .termBufferSparseFile(true)
-                .publicationTermBufferLength(TERM_BUFFER_LENGTH)
+                .publicationTermBufferLength(TERM_LENGTH)
                 .threadingMode(ThreadingMode.SHARED)
                 .errorHandler(Throwable::printStackTrace)
                 .spiesSimulateConnection(false)
-                .dirDeleteOnShutdown(true)
                 .dirDeleteOnStart(true),
             new Archive.Context()
                 .maxCatalogEntries(MAX_CATALOG_ENTRIES)
                 .aeronDirectoryName(mediaDriverContext.aeronDirectoryName())
                 .errorHandler(Throwable::printStackTrace)
                 .archiveDir(archiveDir)
-                .fileSyncLevel(0)
+                .recordingEventsEnabled(false)
                 .threadingMode(ArchiveThreadingMode.SHARED)
                 .deleteArchiveOnStart(true));
 
@@ -126,22 +128,25 @@ public class ReplayMergeTest
                 .aeron(aeron));
     }
 
-    @After
+    @AfterEach
     public void after()
     {
         if (received.get() != MIN_MESSAGES_PER_TERM * 6)
         {
-            System.out.println("received " + received.get() + "/" + (MIN_MESSAGES_PER_TERM * 6));
+            System.out.println(
+                "received " + received.get() + ", sent " + messagesPublished +
+                ", total " + (MIN_MESSAGES_PER_TERM * 6));
         }
 
-        CloseHelper.quietClose(aeronArchive);
-        CloseHelper.quietClose(aeron);
-        CloseHelper.close(archivingMediaDriver);
+        CloseHelper.closeAll(aeronArchive, aeron, archivingMediaDriver);
 
-        archivingMediaDriver.archive().context().deleteArchiveDirectory();
+        archivingMediaDriver.archive().context().deleteDirectory();
+        archivingMediaDriver.mediaDriver().context().deleteDirectory();
     }
 
-    @Test(timeout = 20_000)
+    @SuppressWarnings("methodlength")
+    @Test
+    @Timeout(5)
     public void shouldMergeFromReplayToLive()
     {
         final int initialMessageCount = MIN_MESSAGES_PER_TERM * 3;
@@ -155,7 +160,6 @@ public class ReplayMergeTest
                 final String actual = buffer.getStringWithoutLengthAscii(offset, length);
 
                 assertEquals(expected, actual);
-
                 received.incrementAndGet();
             });
 
@@ -168,11 +172,12 @@ public class ReplayMergeTest
             aeronArchive.startRecording(recordingChannel, STREAM_ID, REMOTE);
 
             final CountersReader counters = aeron.countersReader();
-            final int counterId = getRecordingCounterId(counters, publication.sessionId());
-            final long recordingId = RecordingPos.getRecordingId(counters, counterId);
+            final int recordingCounterId = awaitRecordingCounterId(counters, publication.sessionId());
+            final long recordingId = RecordingPos.getRecordingId(counters, recordingCounterId);
 
-            offerMessages(publication, 0, initialMessageCount, MESSAGE_PREFIX);
-            awaitPosition(counters, counterId, publication.position());
+            publishMessages(publication, initialMessageCount);
+            messagesPublished += initialMessageCount;
+            awaitPosition(counters, recordingCounterId, publication.position());
 
             try (Subscription subscription = aeron.addSubscription(subscriptionChannel, STREAM_ID);
                 ReplayMerge replayMerge = new ReplayMerge(
@@ -186,27 +191,53 @@ public class ReplayMergeTest
             {
                 for (int i = initialMessageCount; i < totalMessageCount; i++)
                 {
-                    offer(publication, i, MESSAGE_PREFIX);
+                    long position;
+                    while ((position = offerMessage(publication, i)) <= 0)
+                    {
+                        if (Publication.BACK_PRESSURED == position)
+                        {
+                            awaitPositionChange(counters, recordingCounterId, publication.position());
+                        }
+                        else
+                        {
+                            Tests.yieldingWait(
+                                "i=%d < totalMessageCount=%d, lastPosition=%d", i, totalMessageCount, position);
+                        }
+                    }
+                    messagesPublished++;
 
                     if (0 == replayMerge.poll(fragmentHandler, FRAGMENT_LIMIT))
                     {
-                        SystemTest.checkInterruptedStatus();
-                        Thread.yield();
+                        Tests.yieldingWait("i=%d < totalMessageCount=%d", i, totalMessageCount);
                     }
                 }
 
-                while (received.get() < totalMessageCount || !replayMerge.isMerged())
+                while (!replayMerge.isMerged())
                 {
                     if (0 == replayMerge.poll(fragmentHandler, FRAGMENT_LIMIT))
                     {
-                        SystemTest.checkInterruptedStatus();
-                        Thread.yield();
+                        assertFalse(replayMerge.hasFailed(), "failed to merge");
+
+                        Tests.yieldingWait("replay did not merge");
+                    }
+                }
+
+                final Image image = replayMerge.image();
+                while (received.get() < totalMessageCount)
+                {
+                    if (0 == image.poll(fragmentHandler, FRAGMENT_LIMIT))
+                    {
+                        assertFalse(replayMerge.hasFailed(), "image closed unexpectedly");
+
+                        Tests.yieldingWait(
+                            "received.get()=%d < totalMessageCount=%d", received.get(), totalMessageCount);
                     }
                 }
 
                 assertTrue(replayMerge.isMerged());
                 assertTrue(replayMerge.isLiveAdded());
-                assertThat(received.get(), is(totalMessageCount));
+                assertFalse(replayMerge.hasFailed());
+                assertEquals(totalMessageCount, received.get());
             }
             finally
             {
@@ -215,23 +246,41 @@ public class ReplayMergeTest
         }
     }
 
-    private void offer(final Publication publication, final int index, final String prefix)
+    static void awaitPositionChange(final CountersReader counters, final int counterId, final long position)
     {
-        final int length = buffer.putStringWithoutLengthAscii(0, prefix + index);
-
-        while (publication.offer(buffer, 0, length) <= 0)
+        if (counters.getCounterState(counterId) != CountersReader.RECORD_ALLOCATED)
         {
-            SystemTest.checkInterruptedStatus();
-            Thread.yield();
+            throw new IllegalStateException("count not active: " + counterId);
         }
+
+        final long initialTimestampNs = System.nanoTime();
+        final long currentPosition = counters.getCounterValue(counterId);
+        do
+        {
+            Tests.yieldingWait(
+                "publication position: %d, current position: %d, time since last change: %.6f ms",
+                position, currentPosition, (System.nanoTime() - initialTimestampNs) / 1_000_000.0);
+        }
+        while (currentPosition == counters.getCounterValue(counterId) && currentPosition < position);
     }
 
-    private void offerMessages(
-        final Publication publication, final int startIndex, final int count, final String prefix)
+    private long offerMessage(final Publication publication, final int index)
     {
-        for (int i = startIndex; i < (startIndex + count); i++)
+        final int length = buffer.putStringWithoutLengthAscii(0, MESSAGE_PREFIX + index);
+        return publication.offer(buffer, 0, length);
+    }
+
+    private void publishMessages(final Publication publication, final int count)
+    {
+        for (int i = 0; i < count; i++)
         {
-            offer(publication, i, prefix);
+            final int length = buffer.putStringWithoutLengthAscii(0, MESSAGE_PREFIX + i);
+
+            long position;
+            while ((position = publication.offer(buffer, 0, length)) <= 0)
+            {
+                Tests.yieldingWait("i=%d < count=%d, lastPosition=%d", i, count, position);
+            }
         }
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,31 +16,32 @@
 package io.aeron;
 
 import io.aeron.driver.MediaDriver;
-import io.aeron.logbuffer.LogBufferDescriptor;
-import org.agrona.SystemUtil;
-import org.agrona.collections.MutableInteger;
-import org.junit.After;
-import org.junit.Test;
 import io.aeron.driver.ThreadingMode;
 import io.aeron.logbuffer.FragmentHandler;
+import io.aeron.logbuffer.LogBufferDescriptor;
 import io.aeron.protocol.DataHeaderFlyweight;
+import io.aeron.test.Tests;
+import org.agrona.CloseHelper;
 import org.agrona.IoUtil;
+import org.agrona.SystemUtil;
+import org.agrona.collections.MutableInteger;
 import org.agrona.concurrent.UnsafeBuffer;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 import java.io.File;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
-
-import static org.hamcrest.Matchers.is;
-import static org.junit.Assert.assertThat;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 public class MultiDriverTest
 {
-    private static final String MULTICAST_URI = "aeron:udp?endpoint=224.20.30.39:54326|interface=localhost";
+    private static final String MULTICAST_URI = "aeron:udp?endpoint=224.20.30.39:24326|interface=localhost";
 
-    private static final int STREAM_ID = 1;
+    private static final int STREAM_ID = 1001;
     private static final ThreadingMode THREADING_MODE = ThreadingMode.SHARED;
 
     private static final int TERM_BUFFER_LENGTH = LogBufferDescriptor.TERM_MIN_LENGTH;
@@ -90,22 +91,15 @@ public class MultiDriverTest
         clientB = Aeron.connect(new Aeron.Context().aeronDirectoryName(driverBContext.aeronDirectoryName()));
     }
 
-    @After
+    @AfterEach
     public void after()
     {
-        publication.close();
-        subscriptionA.close();
-        subscriptionB.close();
-
-        clientB.close();
-        clientA.close();
-        driverB.close();
-        driverA.close();
-
+        CloseHelper.closeAll(clientA, clientB, driverA, driverB);
         IoUtil.delete(new File(ROOT_DIR), true);
     }
 
-    @Test(timeout = 10_000)
+    @Test
+    @Timeout(10)
     public void shouldSpinUpAndShutdown()
     {
         launch();
@@ -116,13 +110,14 @@ public class MultiDriverTest
 
         while (!subscriptionA.isConnected() && !subscriptionB.isConnected())
         {
-            SystemTest.checkInterruptedStatus();
             Thread.yield();
+            Tests.checkInterruptStatus();
         }
     }
 
-    @Test(timeout = 10_000)
-    public void shouldJoinExistingStreamWithLockStepSendingReceiving() throws Exception
+    @Test
+    @Timeout(10)
+    public void shouldJoinExistingStreamWithLockStepSendingReceiving() throws InterruptedException
     {
         final int numMessagesToSendPreJoin = NUM_MESSAGES_PER_TERM / 2;
         final int numMessagesToSendPostJoin = NUM_MESSAGES_PER_TERM;
@@ -136,12 +131,12 @@ public class MultiDriverTest
         {
             while (publication.offer(buffer, 0, buffer.capacity()) < 0L)
             {
-                SystemTest.checkInterruptedStatus();
                 Thread.yield();
+                Tests.checkInterruptStatus();
             }
 
             final MutableInteger fragmentsRead = new MutableInteger();
-            SystemTest.executeUntil(
+            Tests.executeUntil(
                 () -> fragmentsRead.get() > 0,
                 (j) ->
                 {
@@ -153,7 +148,8 @@ public class MultiDriverTest
         }
 
         final CountDownLatch newImageLatch = new CountDownLatch(1);
-        subscriptionB = clientB.addSubscription(MULTICAST_URI, STREAM_ID, (image) -> newImageLatch.countDown(), null);
+        subscriptionB = clientB.addSubscription(MULTICAST_URI, STREAM_ID, (image) -> newImageLatch
+            .countDown(), null);
 
         newImageLatch.await();
 
@@ -161,12 +157,12 @@ public class MultiDriverTest
         {
             while (publication.offer(buffer, 0, buffer.capacity()) < 0L)
             {
-                SystemTest.checkInterruptedStatus();
                 Thread.yield();
+                Tests.checkInterruptStatus();
             }
 
             final MutableInteger fragmentsRead = new MutableInteger();
-            SystemTest.executeUntil(
+            Tests.executeUntil(
                 () -> fragmentsRead.get() > 0,
                 (j) ->
                 {
@@ -177,7 +173,7 @@ public class MultiDriverTest
                 TimeUnit.MILLISECONDS.toNanos(500));
 
             fragmentsRead.set(0);
-            SystemTest.executeUntil(
+            Tests.executeUntil(
                 () -> fragmentsRead.get() > 0,
                 (j) ->
                 {
@@ -188,12 +184,13 @@ public class MultiDriverTest
                 TimeUnit.MILLISECONDS.toNanos(500));
         }
 
-        assertThat(fragmentCountA.value, is(numMessagesToSendPreJoin + numMessagesToSendPostJoin));
-        assertThat(fragmentCountB.value, is(numMessagesToSendPostJoin));
+        assertEquals(numMessagesToSendPreJoin + numMessagesToSendPostJoin, fragmentCountA.value);
+        assertEquals(numMessagesToSendPostJoin, fragmentCountB.value);
     }
 
-    @Test(timeout = 10_000)
-    public void shouldJoinExistingIdleStreamWithLockStepSendingReceiving() throws Exception
+    @Test
+    @Timeout(10)
+    public void shouldJoinExistingIdleStreamWithLockStepSendingReceiving() throws InterruptedException
     {
         final int numMessagesToSendPreJoin = 0;
         final int numMessagesToSendPostJoin = NUM_MESSAGES_PER_TERM;
@@ -205,12 +202,13 @@ public class MultiDriverTest
 
         while (!publication.isConnected() && !subscriptionA.isConnected())
         {
-            SystemTest.checkInterruptedStatus();
             Thread.yield();
+            Tests.checkInterruptStatus();
         }
 
         final CountDownLatch newImageLatch = new CountDownLatch(1);
-        subscriptionB = clientB.addSubscription(MULTICAST_URI, STREAM_ID, (image) -> newImageLatch.countDown(), null);
+        subscriptionB = clientB.addSubscription(MULTICAST_URI, STREAM_ID, (image) -> newImageLatch
+            .countDown(), null);
 
         newImageLatch.await();
 
@@ -218,12 +216,12 @@ public class MultiDriverTest
         {
             while (publication.offer(buffer, 0, buffer.capacity()) < 0L)
             {
-                SystemTest.checkInterruptedStatus();
                 Thread.yield();
+                Tests.checkInterruptStatus();
             }
 
             final MutableInteger fragmentsRead = new MutableInteger();
-            SystemTest.executeUntil(
+            Tests.executeUntil(
                 () -> fragmentsRead.get() > 0,
                 (j) ->
                 {
@@ -234,7 +232,7 @@ public class MultiDriverTest
                 TimeUnit.MILLISECONDS.toNanos(500));
 
             fragmentsRead.set(0);
-            SystemTest.executeUntil(
+            Tests.executeUntil(
                 () -> fragmentsRead.get() > 0,
                 (j) ->
                 {
@@ -245,7 +243,7 @@ public class MultiDriverTest
                 TimeUnit.MILLISECONDS.toNanos(500));
         }
 
-        assertThat(fragmentCountA.value, is(numMessagesToSendPreJoin + numMessagesToSendPostJoin));
-        assertThat(fragmentCountB.value, is(numMessagesToSendPostJoin));
+        assertEquals(numMessagesToSendPreJoin + numMessagesToSendPostJoin, fragmentCountA.value);
+        assertEquals(numMessagesToSendPostJoin, fragmentCountB.value);
     }
 }

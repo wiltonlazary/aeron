@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,7 +20,7 @@
 
 #include <cstdint>
 #include <string>
-#include <stddef.h>
+#include <cstddef>
 #include <command/Flyweight.h>
 #include <concurrent/AtomicBuffer.h>
 #include <util/Index.h>
@@ -32,7 +32,7 @@ namespace aeron { namespace protocol
 /**
  * HeaderFlyweight for Data Header
  * <p>
- * <a href="https://github.com/real-logic/Aeron/wiki/Protocol-Specification#data-frame">Data Frame</a>
+ * <a href="https://github.com/real-logic/aeron/wiki/Transport-Protocol-Specification#data-frame">Data Frame</a>
  */
 #pragma pack(push)
 #pragma pack(4)

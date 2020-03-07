@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,15 +17,20 @@ package io.aeron.archive;
 
 import io.aeron.Aeron;
 import io.aeron.CommonContext;
+import io.aeron.Counter;
 import io.aeron.Image;
+import io.aeron.archive.checksum.Checksum;
+import io.aeron.archive.checksum.Checksums;
 import io.aeron.archive.client.AeronArchive;
 import io.aeron.archive.client.ArchiveException;
 import io.aeron.exceptions.ConcurrentConcludeException;
-import org.agrona.BitUtil;
-import org.agrona.CloseHelper;
-import org.agrona.ErrorHandler;
-import org.agrona.IoUtil;
+import io.aeron.exceptions.ConfigurationException;
+import io.aeron.security.Authenticator;
+import io.aeron.security.AuthenticatorSupplier;
+import org.agrona.*;
 import org.agrona.concurrent.*;
+import org.agrona.concurrent.errors.DistinctErrorLog;
+import org.agrona.concurrent.errors.LoggingErrorHandler;
 import org.agrona.concurrent.status.AtomicCounter;
 import org.agrona.concurrent.status.StatusIndicator;
 
@@ -40,11 +45,14 @@ import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
 import java.util.function.Supplier;
 
 import static io.aeron.archive.ArchiveThreadingMode.DEDICATED;
-import static io.aeron.driver.status.SystemCounterDescriptor.SYSTEM_COUNTER_TYPE_ID;
 import static io.aeron.logbuffer.LogBufferDescriptor.TERM_MAX_LENGTH;
 import static io.aeron.logbuffer.LogBufferDescriptor.TERM_MIN_LENGTH;
 import static java.lang.System.getProperty;
+import static java.nio.charset.StandardCharsets.US_ASCII;
 import static java.util.concurrent.atomic.AtomicIntegerFieldUpdater.newUpdater;
+import static org.agrona.BitUtil.CACHE_LINE_LENGTH;
+import static org.agrona.BitUtil.isPowerOfTwo;
+import static org.agrona.BufferUtil.allocateDirectAligned;
 import static org.agrona.SystemUtil.*;
 
 /**
@@ -58,22 +66,35 @@ public class Archive implements AutoCloseable
 
     Archive(final Context ctx)
     {
-        this.ctx = ctx;
-        ctx.conclude();
-
-        final ArchiveConductor conductor = DEDICATED == ctx.threadingMode() ?
-            new DedicatedModeArchiveConductor(ctx) :
-            new SharedModeArchiveConductor(ctx);
-
-        if (ArchiveThreadingMode.INVOKER == ctx.threadingMode())
+        try
         {
-            conductorInvoker = new AgentInvoker(ctx.errorHandler(), ctx.errorCounter(), conductor);
-            conductorRunner = null;
+            ctx.conclude();
+            this.ctx = ctx;
+
+            final ArchiveConductor conductor = DEDICATED == ctx.threadingMode() ?
+                new DedicatedModeArchiveConductor(ctx) :
+                new SharedModeArchiveConductor(ctx);
+
+            if (ArchiveThreadingMode.INVOKER == ctx.threadingMode())
+            {
+                conductorInvoker = new AgentInvoker(ctx.errorHandler(), ctx.errorCounter(), conductor);
+                conductorRunner = null;
+            }
+            else
+            {
+                conductorInvoker = null;
+                conductorRunner = new AgentRunner(
+                    ctx.idleStrategy(), ctx.errorHandler(), ctx.errorCounter(), conductor);
+            }
         }
-        else
+        catch (final ConcurrentConcludeException ex)
         {
-            conductorInvoker = null;
-            conductorRunner = new AgentRunner(ctx.idleStrategy(), ctx.errorHandler(), ctx.errorCounter(), conductor);
+            throw ex;
+        }
+        catch (final Throwable ex)
+        {
+            CloseHelper.quietClose(ctx::close);
+            throw ex;
         }
     }
 
@@ -90,7 +111,6 @@ public class Archive implements AutoCloseable
         try (Archive ignore = launch())
         {
             new ShutdownSignalBarrier().await();
-
             System.out.println("Shutdown Archive...");
         }
     }
@@ -165,12 +185,28 @@ public class Archive implements AutoCloseable
     public static class Configuration
     {
         /**
+         * Filename for the single instance of a {@link Catalog} contents for an archive.
+         */
+        static final String CATALOG_FILE_NAME = "archive.catalog";
+
+        /**
+         * Recording segment file suffix extension.
+         */
+        static final String RECORDING_SEGMENT_SUFFIX = ".rec";
+
+        /**
+         * Maximum block length of data read from disk in a single operation during a replay.
+         */
+        static final int MAX_BLOCK_LENGTH = 2 * 1024 * 1024;
+
+        /**
          * Directory in which the archive stores it files such as the catalog and recordings.
          */
         public static final String ARCHIVE_DIR_PROP_NAME = "aeron.archive.dir";
 
         /**
          * Default directory for the archive files.
+         *
          * @see #ARCHIVE_DIR_PROP_NAME
          */
         public static final String ARCHIVE_DIR_DEFAULT = "aeron-archive";
@@ -183,6 +219,7 @@ public class Archive implements AutoCloseable
 
         /**
          * Default segment file length which is multiple of terms.
+         *
          * @see #SEGMENT_FILE_LENGTH_PROP_NAME
          */
         public static final int SEGMENT_FILE_LENGTH_DEFAULT = 128 * 1024 * 1024;
@@ -199,12 +236,13 @@ public class Archive implements AutoCloseable
 
         /**
          * Default is to use normal file writes which may mean some data loss in the event of a power failure.
+         *
          * @see #FILE_SYNC_LEVEL_PROP_NAME
          */
         public static final int FILE_SYNC_LEVEL_DEFAULT = 0;
 
         /**
-         * The level at which catalog updates should be sync'ed to disk.
+         * The level at which catalog updates and directory should be sync'ed to disk.
          * <ul>
          * <li>0 - normal writes.</li>
          * <li>1 - sync file data.</li>
@@ -215,6 +253,7 @@ public class Archive implements AutoCloseable
 
         /**
          * Default is to use normal file writes which may mean some data loss in the event of a power failure.
+         *
          * @see #CATALOG_FILE_SYNC_LEVEL_PROP_NAME
          */
         public static final int CATALOG_FILE_SYNC_LEVEL_DEFAULT = FILE_SYNC_LEVEL_DEFAULT;
@@ -225,12 +264,23 @@ public class Archive implements AutoCloseable
         public static final String THREADING_MODE_PROP_NAME = "aeron.archive.threading.mode";
 
         /**
-         * {@link IdleStrategy} to be used for the archive {@link Agent}s when not busy.
+         * Default {@link IdleStrategy} to be used for the archive {@link Agent}s when not busy.
          */
         public static final String ARCHIVE_IDLE_STRATEGY_PROP_NAME = "aeron.archive.idle.strategy";
 
         /**
+         * The {@link IdleStrategy} to be used for the archive recorder {@link Agent} when not busy.
+         */
+        public static final String ARCHIVE_RECORDER_IDLE_STRATEGY_PROP_NAME = "aeron.archive.recorder.idle.strategy";
+
+        /**
+         * The {@link IdleStrategy} to be used for the archive replayer {@link Agent} when not busy.
+         */
+        public static final String ARCHIVE_REPLAYER_IDLE_STRATEGY_PROP_NAME = "aeron.archive.replayer.idle.strategy";
+
+        /**
          * Default {@link IdleStrategy} to be used for the archive {@link Agent}s when not busy.
+         *
          * @see #ARCHIVE_IDLE_STRATEGY_PROP_NAME
          */
         public static final String DEFAULT_IDLE_STRATEGY = "org.agrona.concurrent.BackoffIdleStrategy";
@@ -246,6 +296,7 @@ public class Archive implements AutoCloseable
         /**
          * Default maximum number of concurrent recordings. Unless on a very fast SSD and having sufficient memory
          * for the page cache then this number should be kept low, especially when sync'ing writes.
+         *
          * @see #MAX_CONCURRENT_RECORDINGS_PROP_NAME
          */
         public static final int MAX_CONCURRENT_RECORDINGS_DEFAULT = 20;
@@ -257,7 +308,7 @@ public class Archive implements AutoCloseable
         public static final String MAX_CONCURRENT_REPLAYS_PROP_NAME = "aeron.archive.max.concurrent.replays";
 
         /**
-         * Default maximum number of concurrent replays. Unless on a  fast SSD and having sufficient memory
+         * Default maximum number of concurrent replays. Unless on a fast SSD and having sufficient memory
          * for the page cache then this number should be kept low.
          */
         public static final int MAX_CONCURRENT_REPLAYS_DEFAULT = 20;
@@ -271,6 +322,7 @@ public class Archive implements AutoCloseable
 
         /**
          * Default limit for the entries in the {@link Catalog}
+         *
          * @see #MAX_CATALOG_ENTRIES_PROP_NAME
          */
         public static final long MAX_CATALOG_ENTRIES_DEFAULT = Catalog.DEFAULT_MAX_ENTRIES;
@@ -283,6 +335,7 @@ public class Archive implements AutoCloseable
         /**
          * Default timeout for connecting back to a client for a control session or replay. You may want to
          * increase this on higher latency networks.
+         *
          * @see #CONNECT_TIMEOUT_PROP_NAME
          */
         public static final long CONNECT_TIMEOUT_DEFAULT_NS = TimeUnit.SECONDS.toNanos(5);
@@ -295,6 +348,7 @@ public class Archive implements AutoCloseable
         /**
          * Default for long to linger a replay connection which defaults to
          * {@link io.aeron.driver.Configuration#publicationLingerTimeoutNs()}.
+         *
          * @see #REPLAY_LINGER_TIMEOUT_PROP_NAME
          */
         public static final long REPLAY_LINGER_TIMEOUT_DEFAULT_NS =
@@ -312,24 +366,48 @@ public class Archive implements AutoCloseable
 
         /**
          * Channel for receiving replication streams replayed from another archive.
+         *
          * @see #REPLICATION_CHANNEL_PROP_NAME
          */
-        public static final String REPLICATION_CHANNEL_DEFAULT = "aeron:udp?endpoint=8040";
+        public static final String REPLICATION_CHANNEL_DEFAULT = "aeron:udp?endpoint=localhost:8040";
 
         /**
-         * Filename for the single instance of a {@link Catalog} contents for an archive.
+         * Name of class to use as a supplier of {@link Authenticator} for the archive.
          */
-        static final String CATALOG_FILE_NAME = "archive.catalog";
+        public static final String AUTHENTICATOR_SUPPLIER_PROP_NAME = "aeron.archive.authenticator.supplier";
 
         /**
-         * Recording segment file suffix extension.
+         * Name of the class to use as a supplier of {@link Authenticator} for the archive. Default is
+         * a non-authenticating option.
          */
-        static final String RECORDING_SEGMENT_SUFFIX = ".rec";
+        public static final String AUTHENTICATOR_SUPPLIER_DEFAULT = "io.aeron.security.DefaultAuthenticatorSupplier";
 
         /**
-         * Maximum block length of data read from disk in a single operation during a replay.
+         * The type id of the {@link Counter} used for keeping track of the number of errors that have occurred.
          */
-        static final int MAX_BLOCK_LENGTH = 2 * 1024 * 1024;
+        public static final int ARCHIVE_ERROR_COUNT_TYPE_ID = 101;
+
+        /**
+         * Size in bytes of the error buffer for the archive when not externally provided.
+         */
+        public static final String ERROR_BUFFER_LENGTH_PROP_NAME = "aeron.archive.error.buffer.length";
+
+        /**
+         * Size in bytes of the error buffer for the archive when not eternally provided.
+         */
+        public static final int ERROR_BUFFER_LENGTH_DEFAULT = 1024 * 1024;
+
+        /**
+         * Property that specifies fully qualified class name of the {@link io.aeron.archive.checksum.Checksum}
+         * to be used for checksum computation during recording.
+         */
+        public static final String RECORD_CHECKSUM_PROP_NAME = "aeron.archive.record.checksum";
+
+        /**
+         * Property that specifies fully qualified class name of the {@link io.aeron.archive.checksum.Checksum}
+         * to be used for checksum validation during replay.
+         */
+        public static final String REPLAY_CHECKSUM_PROP_NAME = "aeron.archive.replay.checksum";
 
         /**
          * Get the directory name to be used for storing the archive.
@@ -362,6 +440,7 @@ public class Archive implements AutoCloseable
          * </ul>
          *
          * @return level at which files should be sync'ed to disk.
+         * @see #FILE_SYNC_LEVEL_PROP_NAME
          */
         public static int fileSyncLevel()
         {
@@ -369,7 +448,7 @@ public class Archive implements AutoCloseable
         }
 
         /**
-         * The level at which the catalog file should be sync'ed to disk.
+         * The level at which the catalog file and directory should be sync'ed to disk.
          * <ul>
          * <li>0 - normal writes.</li>
          * <li>1 - sync file data.</li>
@@ -377,6 +456,7 @@ public class Archive implements AutoCloseable
          * </ul>
          *
          * @return level at which files should be sync'ed to disk.
+         * @see #CATALOG_FILE_SYNC_LEVEL_PROP_NAME
          */
         public static int catalogFileSyncLevel()
         {
@@ -390,15 +470,15 @@ public class Archive implements AutoCloseable
          */
         public static ArchiveThreadingMode threadingMode()
         {
-            return ArchiveThreadingMode.valueOf(System.getProperty(
-                THREADING_MODE_PROP_NAME, DEDICATED.name()));
+            return ArchiveThreadingMode.valueOf(System.getProperty(THREADING_MODE_PROP_NAME, DEDICATED.name()));
         }
 
         /**
-         * Create a supplier of {@link IdleStrategy}s that will use the system property.
+         * Create a supplier of {@link IdleStrategy}s for the {@link #ARCHIVE_IDLE_STRATEGY_PROP_NAME}
+         * system property.
          *
          * @param controllableStatus if a {@link org.agrona.concurrent.ControllableIdleStrategy} is required.
-         * @return the new idle strategy
+         * @return the new idle strategy {@link Supplier}.
          */
         public static Supplier<IdleStrategy> idleStrategySupplier(final StatusIndicator controllableStatus)
         {
@@ -407,6 +487,42 @@ public class Archive implements AutoCloseable
                 final String name = System.getProperty(ARCHIVE_IDLE_STRATEGY_PROP_NAME, DEFAULT_IDLE_STRATEGY);
                 return io.aeron.driver.Configuration.agentIdleStrategy(name, controllableStatus);
             };
+        }
+
+        /**
+         * Create a supplier of {@link IdleStrategy}s for the {@link #ARCHIVE_RECORDER_IDLE_STRATEGY_PROP_NAME}
+         * system property.
+         *
+         * @param controllableStatus if a {@link org.agrona.concurrent.ControllableIdleStrategy} is required.
+         * @return the new idle strategy {@link Supplier}.
+         */
+        public static Supplier<IdleStrategy> recorderIdleStrategySupplier(final StatusIndicator controllableStatus)
+        {
+            final String name = System.getProperty(ARCHIVE_RECORDER_IDLE_STRATEGY_PROP_NAME);
+            if (null == name)
+            {
+                return null;
+            }
+
+            return () -> io.aeron.driver.Configuration.agentIdleStrategy(name, controllableStatus);
+        }
+
+        /**
+         * Create a supplier of {@link IdleStrategy}s for the {@link #ARCHIVE_REPLAYER_IDLE_STRATEGY_PROP_NAME}
+         * system property.
+         *
+         * @param controllableStatus if a {@link org.agrona.concurrent.ControllableIdleStrategy} is required.
+         * @return the new idle strategy {@link Supplier}.
+         */
+        public static Supplier<IdleStrategy> replayerIdleStrategySupplier(final StatusIndicator controllableStatus)
+        {
+            final String name = System.getProperty(ARCHIVE_REPLAYER_IDLE_STRATEGY_PROP_NAME);
+            if (null == name)
+            {
+                return null;
+            }
+
+            return () -> io.aeron.driver.Configuration.agentIdleStrategy(name, controllableStatus);
         }
 
         /**
@@ -484,6 +600,66 @@ public class Archive implements AutoCloseable
         {
             return System.getProperty(REPLICATION_CHANNEL_PROP_NAME, REPLICATION_CHANNEL_DEFAULT);
         }
+
+        /**
+         * Size in bytes of the error buffer in the mark file.
+         *
+         * @return length of error buffer in bytes.
+         * @see #ERROR_BUFFER_LENGTH_PROP_NAME
+         */
+        public static int errorBufferLength()
+        {
+            return getSizeAsInt(ERROR_BUFFER_LENGTH_PROP_NAME, ERROR_BUFFER_LENGTH_DEFAULT);
+        }
+
+        /**
+         * The value {@link #AUTHENTICATOR_SUPPLIER_DEFAULT} or system property
+         * {@link #AUTHENTICATOR_SUPPLIER_PROP_NAME} if set.
+         *
+         * @return {@link #AUTHENTICATOR_SUPPLIER_DEFAULT} or system property
+         * {@link #AUTHENTICATOR_SUPPLIER_PROP_NAME} if set.
+         */
+        public static AuthenticatorSupplier authenticatorSupplier()
+        {
+            final String supplierClassName = System.getProperty(
+                AUTHENTICATOR_SUPPLIER_PROP_NAME, AUTHENTICATOR_SUPPLIER_DEFAULT);
+
+            AuthenticatorSupplier supplier = null;
+            try
+            {
+                supplier = (AuthenticatorSupplier)Class.forName(supplierClassName).getConstructor().newInstance();
+            }
+            catch (final Exception ex)
+            {
+                LangUtil.rethrowUnchecked(ex);
+            }
+
+            return supplier;
+        }
+
+        /**
+         * Fully qualified class name of the {@link io.aeron.archive.checksum.Checksum} implementation to use during
+         * recording to compute checksums. Non-empty value means that checksum is enabled for recording.
+         *
+         * @return class that implements {@link io.aeron.archive.checksum.Checksum} interface
+         * @see Configuration#RECORD_CHECKSUM_PROP_NAME
+         */
+        public static String recordChecksum()
+        {
+            return getProperty(RECORD_CHECKSUM_PROP_NAME);
+        }
+
+        /**
+         * Fully qualified class name of the {@link io.aeron.archive.checksum.Checksum} implementation to use during
+         * replay for the checksum. Non-empty value means that checksum is enabled for replay.
+         *
+         * @return class that implements {@link io.aeron.archive.checksum.Checksum} interface
+         * @see Configuration#REPLAY_CHECKSUM_PROP_NAME
+         */
+        public static String replayChecksum()
+        {
+            return getProperty(REPLAY_CHECKSUM_PROP_NAME);
+        }
     }
 
     /**
@@ -521,6 +697,7 @@ public class Archive implements AutoCloseable
         private int controlMtuLength = AeronArchive.Configuration.controlMtuLength();
         private String recordingEventsChannel = AeronArchive.Configuration.recordingEventsChannel();
         private int recordingEventsStreamId = AeronArchive.Configuration.recordingEventsStreamId();
+        private boolean recordingEventsEnabled = AeronArchive.Configuration.recordingEventsEnabled();
         private String replicationChannel = Configuration.replicationChannel();
 
         private long connectTimeoutNs = Configuration.connectTimeoutNs();
@@ -535,8 +712,12 @@ public class Archive implements AutoCloseable
         private CountDownLatch abortLatch;
 
         private Supplier<IdleStrategy> idleStrategySupplier;
+        private Supplier<IdleStrategy> replayerIdleStrategySupplier;
+        private Supplier<IdleStrategy> recorderIdleStrategySupplier;
         private EpochClock epochClock;
+        private AuthenticatorSupplier authenticatorSupplier;
 
+        private int errorBufferLength = 0;
         private ErrorHandler errorHandler;
         private AtomicCounter errorCounter;
         private CountedErrorHandler countedErrorHandler;
@@ -544,6 +725,13 @@ public class Archive implements AutoCloseable
         private AgentInvoker mediaDriverAgentInvoker;
         private int maxConcurrentRecordings = Configuration.maxConcurrentRecordings();
         private int maxConcurrentReplays = Configuration.maxConcurrentReplays();
+
+        private Checksum recordChecksum;
+        private Checksum replayChecksum;
+
+        private UnsafeBuffer dataBuffer;
+        private UnsafeBuffer replayBuffer;
+        private UnsafeBuffer recordChecksumBuffer;
 
         /**
          * Perform a shallow copy of the object.
@@ -573,11 +761,54 @@ public class Archive implements AutoCloseable
                 throw new ConcurrentConcludeException();
             }
 
-            Objects.requireNonNull(errorHandler, "Error handler must be supplied");
+            if (catalogFileSyncLevel < fileSyncLevel)
+            {
+                throw new ConfigurationException(
+                    "catalogFileSyncLevel " + catalogFileSyncLevel + " < fileSyncLevel " + fileSyncLevel);
+            }
+
+            if (null == archiveDir)
+            {
+                archiveDir = new File(archiveDirectoryName);
+            }
+
+            if (deleteArchiveOnStart)
+            {
+                IoUtil.delete(archiveDir, false);
+            }
+
+            if (!archiveDir.exists() && !archiveDir.mkdirs())
+            {
+                throw new ArchiveException(
+                    "failed to create archive dir: " + archiveDir.getAbsolutePath());
+            }
+
+            archiveDirChannel = channelForDirectorySync(archiveDir, catalogFileSyncLevel);
 
             if (null == epochClock)
             {
-                epochClock = new SystemEpochClock();
+                epochClock = SystemEpochClock.INSTANCE;
+            }
+
+            if (null != aeron)
+            {
+                aeronDirectoryName = aeron.context().aeronDirectoryName();
+            }
+
+            if (null == markFile)
+            {
+                if (0 == errorBufferLength && null == errorHandler)
+                {
+                    errorBufferLength = Configuration.errorBufferLength();
+                }
+
+                markFile = new ArchiveMarkFile(this);
+            }
+
+            if (null == errorHandler)
+            {
+                errorHandler = new LoggingErrorHandler(new DistinctErrorLog(
+                    markFile.errorBuffer(), epochClock, US_ASCII));
             }
 
             if (null == aeron)
@@ -596,7 +827,7 @@ public class Archive implements AutoCloseable
 
                 if (null == errorCounter)
                 {
-                    errorCounter = aeron.addCounter(SYSTEM_COUNTER_TYPE_ID, "Archive errors");
+                    errorCounter = aeron.addCounter(Configuration.ARCHIVE_ERROR_COUNT_TYPE_ID, "Archive errors");
                 }
             }
 
@@ -621,25 +852,28 @@ public class Archive implements AutoCloseable
                 idleStrategySupplier = Configuration.idleStrategySupplier(null);
             }
 
-            if (null == archiveDir)
+            if (DEDICATED == threadingMode)
             {
-                archiveDir = new File(archiveDirectoryName);
+                if (null == recorderIdleStrategySupplier)
+                {
+                    recorderIdleStrategySupplier = Configuration.recorderIdleStrategySupplier(null);
+                    if (null == recorderIdleStrategySupplier)
+                    {
+                        recorderIdleStrategySupplier = idleStrategySupplier;
+                    }
+                }
+
+                if (null == replayerIdleStrategySupplier)
+                {
+                    replayerIdleStrategySupplier = Configuration.replayerIdleStrategySupplier(null);
+                    if (null == replayerIdleStrategySupplier)
+                    {
+                        replayerIdleStrategySupplier = idleStrategySupplier;
+                    }
+                }
             }
 
-            if (deleteArchiveOnStart && archiveDir.exists())
-            {
-                IoUtil.delete(archiveDir, false);
-            }
-
-            if (!archiveDir.exists() && !archiveDir.mkdirs())
-            {
-                throw new ArchiveException(
-                    "failed to create archive dir: " + archiveDir.getAbsolutePath());
-            }
-
-            archiveDirChannel = channelForDirectorySync(archiveDir, catalogFileSyncLevel);
-
-            if (!BitUtil.isPowerOfTwo(segmentFileLength))
+            if (!isPowerOfTwo(segmentFileLength))
             {
                 throw new ArchiveException("segment file length not a power of 2: " + segmentFileLength);
             }
@@ -648,10 +882,13 @@ public class Archive implements AutoCloseable
                 throw new ArchiveException("segment file length not in valid range: " + segmentFileLength);
             }
 
-            if (null == markFile)
+            if (null == authenticatorSupplier)
             {
-                markFile = new ArchiveMarkFile(this);
+                authenticatorSupplier = Configuration.authenticatorSupplier();
             }
+
+            concludeRecordChecksum();
+            concludeReplayChecksum();
 
             if (null == catalog)
             {
@@ -664,11 +901,13 @@ public class Archive implements AutoCloseable
                 archiveClientContext = new AeronArchive.Context();
             }
 
-            archiveClientContext.aeron(aeron).lock(new NoOpLock()).errorHandler(errorHandler);
+            archiveClientContext.aeron(aeron).lock(NoOpLock.INSTANCE).errorHandler(errorHandler);
 
             int expectedCount = DEDICATED == threadingMode ? 2 : 0;
             expectedCount += aeron.conductorAgentInvoker() == null ? 1 : 0;
             abortLatch = new CountDownLatch(expectedCount);
+
+            markFile.signalReady();
         }
 
         /**
@@ -996,6 +1235,30 @@ public class Archive implements AutoCloseable
         }
 
         /**
+         * Should the recording events channel be enabled.
+         *
+         * @return true if the recording events channel should be enabled.
+         * @see io.aeron.archive.client.AeronArchive.Configuration#RECORDING_EVENTS_ENABLED_PROP_NAME
+         */
+        public boolean recordingEventsEnabled()
+        {
+            return recordingEventsEnabled;
+        }
+
+        /**
+         * Set if the recording events channel should be enabled.
+         *
+         * @param recordingEventsEnabled indication of if the recording events channel should be enabled.
+         * @return this for a fluent API.
+         * @see io.aeron.archive.client.AeronArchive.Configuration#RECORDING_EVENTS_ENABLED_PROP_NAME
+         */
+        public Context recordingEventsEnabled(final boolean recordingEventsEnabled)
+        {
+            this.recordingEventsEnabled = recordingEventsEnabled;
+            return this;
+        }
+
+        /**
          * Get the channel URI for replicating stream from another archive as replays.
          *
          * @return the channel URI for replicating stream from another archive as replays.
@@ -1070,7 +1333,58 @@ public class Archive implements AutoCloseable
         }
 
         /**
-         * Provides an {@link IdleStrategy} supplier for idling the conductor.
+         * Provides an explicit {@link Checksum} for checksum computation during recording.
+         *
+         * @param recordChecksum to be used for recordings.
+         * @return this for a fluent API.
+         * @see Configuration#RECORD_CHECKSUM_PROP_NAME
+         */
+        public Context recordChecksum(final Checksum recordChecksum)
+        {
+            this.recordChecksum = recordChecksum;
+            return this;
+        }
+
+        /**
+         * Get the {@link Checksum} for checksum computation during recording.
+         *
+         * @return the {@link Checksum} instance for checksum computation during recording or
+         * {@code null} if no {@link Checksum} was configured.
+         * @see Configuration#RECORD_CHECKSUM_PROP_NAME
+         */
+        public Checksum recordChecksum()
+        {
+            return recordChecksum;
+        }
+
+        /**
+         * The {@link Checksum} for checksum computation during replay.
+         *
+         * @param replayChecksum to be used for replays.
+         * @return this for a fluent API.
+         * @see Configuration#REPLAY_CHECKSUM_PROP_NAME
+         */
+        public Context replayChecksum(final Checksum replayChecksum)
+        {
+            this.replayChecksum = replayChecksum;
+            return this;
+        }
+
+        /**
+         * Get the {@link Checksum} for checksum computation during replay.
+         *
+         * @return the {@link Checksum} instance for checksum computation during replay or
+         * {@code null} if no replay {@link Checksum} was configured.
+         * @see Configuration#REPLAY_CHECKSUM_PROP_NAME
+         */
+        public Checksum replayChecksum()
+        {
+            return replayChecksum;
+        }
+
+        /**
+         * Provides an {@link IdleStrategy} supplier for idling the conductor or composite {@link Agent}. Which is also
+         * the default for recorder and replayer {@link Agent}s.
          *
          * @param idleStrategySupplier supplier for idling the conductor.
          * @return this for a fluent API.
@@ -1082,13 +1396,58 @@ public class Archive implements AutoCloseable
         }
 
         /**
-         * Get a new {@link IdleStrategy} based on configured supplier.
+         * Get a new {@link IdleStrategy} for idling the conductor or composite {@link Agent}. Which is also
+         * the default for recorder and replayer {@link Agent}s.
          *
-         * @return a new {@link IdleStrategy} based on configured supplier.
+         * @return a new {@link IdleStrategy} for idling the conductor or composite {@link Agent}.
          */
         public IdleStrategy idleStrategy()
         {
             return idleStrategySupplier.get();
+        }
+
+        /**
+         * Provides an {@link IdleStrategy} supplier for idling the recorder {@link Agent}.
+         *
+         * @param idleStrategySupplier supplier for idling the conductor.
+         * @return this for a fluent API.
+         */
+        public Context recorderIdleStrategySupplier(final Supplier<IdleStrategy> idleStrategySupplier)
+        {
+            this.recorderIdleStrategySupplier = idleStrategySupplier;
+            return this;
+        }
+
+        /**
+         * Get a new {@link IdleStrategy} for idling the recorder {@link Agent}.
+         *
+         * @return a new {@link IdleStrategy} for idling the recorder {@link Agent}.
+         */
+        public IdleStrategy recorderIdleStrategy()
+        {
+            return recorderIdleStrategySupplier.get();
+        }
+
+        /**
+         * Provides an {@link IdleStrategy} supplier for idling the replayer {@link Agent}.
+         *
+         * @param idleStrategySupplier supplier for idling the replayer.
+         * @return this for a fluent API.
+         */
+        public Context replayerIdleStrategySupplier(final Supplier<IdleStrategy> idleStrategySupplier)
+        {
+            this.replayerIdleStrategySupplier = idleStrategySupplier;
+            return this;
+        }
+
+        /**
+         * Get a new {@link IdleStrategy} for idling the replayer {@link Agent}.
+         *
+         * @return a new {@link IdleStrategy} for idling the replayer {@link Agent}.
+         */
+        public IdleStrategy replayerIdleStrategy()
+        {
+            return replayerIdleStrategySupplier.get();
         }
 
         /**
@@ -1145,6 +1504,8 @@ public class Archive implements AutoCloseable
          * </ul>
          *
          * @return the level to be applied for file write.
+         * @see #catalogFileSyncLevel()
+         * @see Configuration#FILE_SYNC_LEVEL_PROP_NAME
          */
         int fileSyncLevel()
         {
@@ -1161,6 +1522,8 @@ public class Archive implements AutoCloseable
          *
          * @param syncLevel to be applied for file writes.
          * @return this for a fluent API.
+         * @see #catalogFileSyncLevel()
+         * @see Configuration#FILE_SYNC_LEVEL_PROP_NAME
          */
         public Context fileSyncLevel(final int syncLevel)
         {
@@ -1177,6 +1540,8 @@ public class Archive implements AutoCloseable
          * </ul>
          *
          * @return the level to be applied for file write.
+         * @see #fileSyncLevel()
+         * @see Configuration#CATALOG_FILE_SYNC_LEVEL_PROP_NAME
          */
         int catalogFileSyncLevel()
         {
@@ -1193,6 +1558,8 @@ public class Archive implements AutoCloseable
          *
          * @param syncLevel to be applied for file writes.
          * @return this for a fluent API.
+         * @see #fileSyncLevel()
+         * @see Configuration#CATALOG_FILE_SYNC_LEVEL_PROP_NAME
          */
         public Context catalogFileSyncLevel(final int syncLevel)
         {
@@ -1313,6 +1680,30 @@ public class Archive implements AutoCloseable
         }
 
         /**
+         * Set the error buffer length in bytes to use.
+         *
+         * @param errorBufferLength in bytes to use.
+         * @return this for a fluent API.
+         * @see Configuration#ERROR_BUFFER_LENGTH_PROP_NAME
+         */
+        public Context errorBufferLength(final int errorBufferLength)
+        {
+            this.errorBufferLength = errorBufferLength;
+            return this;
+        }
+
+        /**
+         * The error buffer length in bytes.
+         *
+         * @return error buffer length in bytes.
+         * @see Configuration#ERROR_BUFFER_LENGTH_PROP_NAME
+         */
+        public int errorBufferLength()
+        {
+            return errorBufferLength;
+        }
+
+        /**
          * Get the error counter that will record the number of errors observed.
          *
          * @return the error counter that will record the number of errors observed.
@@ -1380,8 +1771,19 @@ public class Archive implements AutoCloseable
 
         /**
          * Delete the archive directory if the {@link #archiveDir()} value is not null.
+         * <p>
+         * Use {@link #deleteDirectory()} instead.
          */
+        @Deprecated
         public void deleteArchiveDirectory()
+        {
+            deleteDirectory();
+        }
+
+        /**
+         * Delete the archive directory if the {@link #archiveDir()} value is not null.
+         */
+        public void deleteDirectory()
         {
             if (null != archiveDir)
             {
@@ -1528,9 +1930,122 @@ public class Archive implements AutoCloseable
             return maxCatalogEntries;
         }
 
+        /**
+         * Get the {@link AuthenticatorSupplier} that should be used for the Archive.
+         *
+         * @return the {@link AuthenticatorSupplier} to be used for the Archive.
+         */
+        public AuthenticatorSupplier authenticatorSupplier()
+        {
+            return authenticatorSupplier;
+        }
+
+        /**
+         * Set the {@link AuthenticatorSupplier} that will be used for the Archive.
+         *
+         * @param authenticatorSupplier {@link AuthenticatorSupplier} to use for the Archive.
+         * @return this for a fluent API.
+         */
+        public Context authenticatorSupplier(final AuthenticatorSupplier authenticatorSupplier)
+        {
+            this.authenticatorSupplier = authenticatorSupplier;
+            return this;
+        }
+
         CountDownLatch abortLatch()
         {
             return abortLatch;
+        }
+
+        void concludeRecordChecksum()
+        {
+            if (null == recordChecksum)
+            {
+                final String checksumClass = Configuration.recordChecksum();
+                if (!Strings.isEmpty(checksumClass))
+                {
+                    recordChecksum = Checksums.newInstance(checksumClass);
+                }
+            }
+        }
+
+        void concludeReplayChecksum()
+        {
+            if (null == replayChecksum)
+            {
+                final String checksumClass = Configuration.replayChecksum();
+                if (!Strings.isEmpty(checksumClass))
+                {
+                    replayChecksum = Checksums.newInstance(checksumClass);
+                }
+            }
+        }
+
+        Context dataBuffer(final UnsafeBuffer dataBuffer)
+        {
+            this.dataBuffer = dataBuffer;
+            return this;
+        }
+
+        UnsafeBuffer dataBuffer()
+        {
+            if (null == dataBuffer)
+            {
+                dataBuffer = allocateBuffer();
+            }
+            return dataBuffer;
+        }
+
+        Context replayBuffer(final UnsafeBuffer replayBuffer)
+        {
+            this.replayBuffer = replayBuffer;
+            return this;
+        }
+
+        UnsafeBuffer replayBuffer()
+        {
+            if (DEDICATED != threadingMode)
+            {
+                return dataBuffer();
+            }
+
+            if (null == replayBuffer)
+            {
+                replayBuffer = allocateBuffer();
+            }
+
+            return replayBuffer;
+        }
+
+        Context recordChecksumBuffer(final UnsafeBuffer recordChecksumBuffer)
+        {
+            this.recordChecksumBuffer = recordChecksumBuffer;
+            return this;
+        }
+
+        UnsafeBuffer recordChecksumBuffer()
+        {
+            if (null == recordChecksum)
+            {
+                return null;
+            }
+
+            if (DEDICATED != threadingMode)
+            {
+                return dataBuffer();
+            }
+
+            if (null == recordChecksumBuffer)
+            {
+                recordChecksumBuffer = allocateBuffer();
+            }
+
+            return recordChecksumBuffer;
+        }
+
+        private UnsafeBuffer allocateBuffer()
+        {
+            return new UnsafeBuffer(allocateDirectAligned(Configuration.MAX_BLOCK_LENGTH, CACHE_LINE_LENGTH));
         }
 
         /**
@@ -1540,29 +2055,22 @@ public class Archive implements AutoCloseable
          */
         public void close()
         {
-            CloseHelper.close(catalog);
-            CloseHelper.close(markFile);
-            CloseHelper.close(archiveDirChannel);
+            CloseHelper.close(countedErrorHandler, catalog);
+            CloseHelper.close(countedErrorHandler, markFile);
+            CloseHelper.close(countedErrorHandler, archiveDirChannel);
             archiveDirChannel = null;
+
+            CloseHelper.quietClose(errorCounter);
+            if (errorHandler instanceof AutoCloseable)
+            {
+                CloseHelper.quietClose((AutoCloseable)errorHandler);
+            }
 
             if (ownsAeronClient)
             {
                 CloseHelper.close(aeron);
             }
         }
-    }
-
-    /**
-     * Position of the recorded stream at the beginning of a segment file. If a recording starts within a term
-     * then the base position can be before the recording started.
-     *
-     * @param position          of the stream to calculate the segment base position from.
-     * @param segmentFileLength which is a multiple of term length.
-     * @return the position of the recorded stream at the beginning of a segment file.
-     */
-    static long segmentFilePosition(final long position, final int segmentFileLength)
-    {
-        return (position - (position & (segmentFileLength - 1)));
     }
 
     /**

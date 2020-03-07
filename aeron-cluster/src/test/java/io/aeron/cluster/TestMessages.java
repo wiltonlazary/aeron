@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,4 +20,5 @@ class TestMessages
     static final String NO_OP = "No op!           ";
     static final String REGISTER_TIMER = "Register a timer!";
     static final String ECHO_IPC_INGRESS = "Echo as IPC ingress";
+    static final String POISON_MESSAGE = "You should never get this message!";
 }

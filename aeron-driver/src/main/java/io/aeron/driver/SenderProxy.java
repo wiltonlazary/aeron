@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,7 +15,9 @@
  */
 package io.aeron.driver;
 
+import io.aeron.ChannelUri;
 import io.aeron.driver.media.SendChannelEndpoint;
+import org.agrona.concurrent.AgentTerminationException;
 import org.agrona.concurrent.status.AtomicCounter;
 
 import java.net.InetSocketAddress;
@@ -95,27 +97,42 @@ public class SenderProxy
         }
     }
 
-    public void addDestination(final SendChannelEndpoint channelEndpoint, final InetSocketAddress address)
+    public void addDestination(
+        final SendChannelEndpoint channelEndpoint, final ChannelUri channelUri, final InetSocketAddress address)
     {
         if (notConcurrent())
         {
-            sender.onAddDestination(channelEndpoint, address);
+            sender.onAddDestination(channelEndpoint, channelUri, address);
         }
         else
         {
-            offer(() -> sender.onAddDestination(channelEndpoint, address));
+            offer(() -> sender.onAddDestination(channelEndpoint, channelUri, address));
         }
     }
 
-    public void removeDestination(final SendChannelEndpoint channelEndpoint, final InetSocketAddress address)
+    public void removeDestination(
+        final SendChannelEndpoint channelEndpoint, final ChannelUri channelUri, final InetSocketAddress address)
     {
         if (notConcurrent())
         {
-            sender.onRemoveDestination(channelEndpoint, address);
+            sender.onRemoveDestination(channelEndpoint, channelUri, address);
         }
         else
         {
-            offer(() -> sender.onRemoveDestination(channelEndpoint, address));
+            offer(() -> sender.onRemoveDestination(channelEndpoint, channelUri, address));
+        }
+    }
+
+    public void onResolutionChange(
+        final SendChannelEndpoint channelEndpoint, final String endpoint, final InetSocketAddress newAddress)
+    {
+        if (notConcurrent())
+        {
+            sender.onResolutionChange(channelEndpoint, endpoint, newAddress);
+        }
+        else
+        {
+            offer(() -> sender.onResolutionChange(channelEndpoint, endpoint, newAddress));
         }
     }
 
@@ -128,12 +145,16 @@ public class SenderProxy
     {
         while (!commandQueue.offer(cmd))
         {
-            if (Thread.currentThread().isInterrupted())
+            if (!failCount.isClosed())
             {
-                break;
+                failCount.increment();
             }
-            failCount.incrementOrdered();
+
             Thread.yield();
+            if (Thread.interrupted())
+            {
+                throw new AgentTerminationException("unexpected interrupt");
+            }
         }
     }
 }

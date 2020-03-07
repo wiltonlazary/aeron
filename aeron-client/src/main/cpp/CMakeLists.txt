@@ -1,5 +1,5 @@
 #
-# Copyright 2014-2019 Real Logic Ltd.
+# Copyright 2014-2020 Real Logic Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,6 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+
+if (MSVC AND "${CMAKE_SYSTEM_NAME}" MATCHES "Windows")
+    set(BUILD_SHARED_LIBS ON)
+endif ()
 
 SET(SOURCE
     Publication.cpp
@@ -41,6 +45,8 @@ SET(HEADERS
     BufferBuilder.h
     FragmentAssembler.h
     ControlledFragmentAssembler.h
+    ImageFragmentAssembler.h
+    ImageControlledFragmentAssembler.h
     ExclusivePublication.h
     Counter.h
     ChannelUri.h
@@ -128,34 +134,55 @@ SET(HEADERS
 
 # static library
 add_library(aeron_client STATIC ${SOURCE} ${HEADERS})
+add_library(aeron_client_shared SHARED ${SOURCE} ${HEADERS})
 
 target_include_directories(aeron_client
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
-)
+    )
+
+target_include_directories(aeron_client_shared
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
+    )
 
 if (MSVC)
     string(REPLACE "/" "\\\\" NATIVE_PROJECT_SOURCE_DIR "${PROJECT_SOURCE_DIR}")
-    string(TOLOWER "${NATIVE_PROJECT_SOURCE_DIR}" NATIVE_PROJECT_SOURCE_DIR)
-else()
+    if (${CMAKE_VERSION} VERSION_LESS "3.13.0")
+        string(TOLOWER "${NATIVE_PROJECT_SOURCE_DIR}" NATIVE_PROJECT_SOURCE_DIR)
+    endif ()
+else ()
     set(NATIVE_PROJECT_SOURCE_DIR "${PROJECT_SOURCE_DIR}")
-endif()
+endif ()
 
 target_compile_definitions(aeron_client
     PUBLIC $<$<NOT:$<CONFIG:Debug>>:DISABLE_BOUNDS_CHECKS>
     # relative file paths for use in exceptions
     PUBLIC "__PROJECT_SOURCE_DIR__=\"${NATIVE_PROJECT_SOURCE_DIR}\""
-)
+    )
+
+target_compile_definitions(aeron_client_shared
+    PUBLIC $<$<NOT:$<CONFIG:Debug>>:DISABLE_BOUNDS_CHECKS>
+    # relative file paths for use in exceptions
+    PUBLIC "__PROJECT_SOURCE_DIR__=\"${NATIVE_PROJECT_SOURCE_DIR}\""
+    PUBLIC CLIENT_SHARED DLL_EXPORT
+    )
 
 if (NOT WIN32)
     set(CMAKE_THREAD_PREFER_PTHREAD TRUE)
     set(THREADS_PREFER_PTHREAD_FLAG TRUE)
-endif()
+endif ()
 
 target_link_libraries(aeron_client
     INTERFACE ${CMAKE_THREAD_LIBS_INIT}
-)
+    )
+
+target_link_libraries(aeron_client_shared
+    INTERFACE ${CMAKE_THREAD_LIBS_INIT}
+    )
 
 if (AERON_INSTALL_TARGETS)
-    install(TARGETS aeron_client ARCHIVE DESTINATION lib)
-    install(DIRECTORY . DESTINATION  include FILES_MATCHING PATTERN "*.h")
-endif()
+    install(TARGETS aeron_client_shared aeron_client
+        RUNTIME DESTINATION lib
+        LIBRARY DESTINATION lib
+        ARCHIVE DESTINATION lib)
+    install(DIRECTORY . DESTINATION include FILES_MATCHING PATTERN "*.h")
+endif ()

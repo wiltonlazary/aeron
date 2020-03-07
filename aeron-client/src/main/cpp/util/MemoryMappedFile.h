@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@
 
 #include <cstdint>
 #include <memory>
+#include "util/Export.h"
 
 #ifdef _WIN32
     #ifndef NOMINMAX
@@ -31,7 +32,7 @@
 
 namespace aeron { namespace util {
 
-class MemoryMappedFile
+class CLIENT_EXPORT MemoryMappedFile
 {
 public:
     typedef std::shared_ptr<MemoryMappedFile> ptr_t;
@@ -73,9 +74,9 @@ private:
     };
 
 #ifdef _WIN32
-    MemoryMappedFile(const FileHandle fd, size_t offset, size_t length, bool readOnly);
+    MemoryMappedFile(FileHandle fd, size_t offset, size_t length, bool readOnly);
 #else
-    MemoryMappedFile(const FileHandle fd, off_t offset, size_t length, bool readOnly);
+    MemoryMappedFile(FileHandle fd, off_t offset, size_t length, bool readOnly);
 #endif
 
     uint8_t* doMapping(size_t size, FileHandle fd, size_t offset, bool readOnly);

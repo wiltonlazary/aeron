@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -240,10 +240,22 @@ public class ImageBuffersReadyFlyweight
     }
 
     /**
-     * Set the source identity string in ASCII
+     * Append the source identity to an {@link Appendable}.
+     *
+     * @param appendable to append source identity to.
+     */
+    public void appendSourceIdentity(final Appendable appendable)
+    {
+        buffer.getStringAscii(offset + sourceIdentityOffset(), appendable);
+    }
+
+    /**
+     * Set the source identity string in ASCII.
+     * <p>Note: Can be called only after log file name was set!</p>
      *
      * @param value for the source identity
      * @return flyweight
+     * @see #logFileName(String)
      */
     public ImageBuffersReadyFlyweight sourceIdentity(final String value)
     {

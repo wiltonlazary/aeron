@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,19 +15,46 @@
  */
 package io.aeron.driver.media;
 
-import org.junit.Test;
+import io.aeron.driver.DefaultNameResolver;
+import io.aeron.driver.NameResolver;
+import org.junit.jupiter.api.Test;
 
 import java.net.Inet6Address;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.UnknownHostException;
 
+import static io.aeron.CommonContext.ENDPOINT_PARAM_NAME;
+import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.instanceOf;
-import static org.hamcrest.Matchers.is;
-import static org.junit.Assert.assertThat;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 public class SocketAddressParserTest
 {
+    static final DefaultNameResolver DEFAULT_RESOLVER = DefaultNameResolver.INSTANCE;
+
+    static final String LOOKUP_RESOLVER_NAME = "StreamX";
+    static final String LOOKUP_RESOLVER_HOSTNAME = "192.168.1.20";
+    static final int LOOKUP_RESOLVER_PORT = 55;
+    static final NameResolver LOOKUP_RESOLVER = new NameResolver()
+    {
+        public InetAddress resolve(final String name, final String uriParamName, final boolean isReResolution)
+        {
+            return DEFAULT_RESOLVER.resolve(name, uriParamName, isReResolution);
+        }
+
+        public String lookup(final String name, final String uriParamName, final boolean isReLookup)
+        {
+            if (name.equals(LOOKUP_RESOLVER_NAME))
+            {
+                return LOOKUP_RESOLVER_HOSTNAME + ":" + LOOKUP_RESOLVER_PORT;
+            }
+
+            return name;
+        }
+    };
+
     @Test
     public void shouldParseIpV4AddressAndPort() throws Exception
     {
@@ -40,46 +67,53 @@ public class SocketAddressParserTest
         assertCorrectParse("localhost", 55);
     }
 
-    @Test(expected = IllegalArgumentException.class)
+    @Test
     public void shouldRejectOnInvalidPort()
     {
-        SocketAddressParser.parse("192.168.1.20:aa");
+        assertThrows(IllegalArgumentException.class, () -> SocketAddressParser.parse(
+            "192.168.1.20:aa", ENDPOINT_PARAM_NAME, false, DEFAULT_RESOLVER));
     }
 
-    @Test(expected = IllegalArgumentException.class)
+    @Test
     public void shouldRejectOnInvalidPort2()
     {
-        SocketAddressParser.parse("192.168.1.20::123");
+        assertThrows(IllegalArgumentException.class, () -> SocketAddressParser.parse(
+            "192.168.1.20::123", ENDPOINT_PARAM_NAME, false, DEFAULT_RESOLVER));
     }
 
-    @Test(expected = IllegalArgumentException.class)
+    @Test
     public void shouldRejectOnMissingPort()
     {
-        SocketAddressParser.parse("192.168.1.20");
+        assertThrows(IllegalArgumentException.class, () -> SocketAddressParser.parse(
+            "192.168.1.20", ENDPOINT_PARAM_NAME, false, DEFAULT_RESOLVER));
     }
 
-    @Test(expected = IllegalArgumentException.class)
+    @Test
     public void shouldRejectOnEmptyPort()
     {
-        SocketAddressParser.parse("192.168.1.20:");
+        assertThrows(IllegalArgumentException.class, () -> SocketAddressParser.parse(
+            "192.168.1.20:", ENDPOINT_PARAM_NAME, false, DEFAULT_RESOLVER));
     }
 
-    @Test(expected = IllegalArgumentException.class)
+    @Test
     public void shouldRejectOnEmptyIpV6Port()
     {
-        SocketAddressParser.parse("[::1]:");
+        assertThrows(IllegalArgumentException.class, () -> SocketAddressParser.parse(
+            "[::1]:", ENDPOINT_PARAM_NAME, false, DEFAULT_RESOLVER));
     }
 
-    @Test(expected = IllegalArgumentException.class)
+    @Test
     public void shouldRejectOnInvalidIpV6()
     {
-        SocketAddressParser.parse("[FG07::789:1:0:0:3]:111");
+        assertThrows(IllegalArgumentException.class, () -> SocketAddressParser.parse(
+            "[FG07::789:1:0:0:3]:111", ENDPOINT_PARAM_NAME, false, DEFAULT_RESOLVER));
     }
 
-    @Test(expected = IllegalArgumentException.class)
+    @Test
     public void shouldRejectOnInvalidIpV6Scope()
     {
-        SocketAddressParser.parse("[FC07::789:1:0:0:3%^]:111");
+        assertThrows(IllegalArgumentException.class, () -> SocketAddressParser.parse(
+            "[FC07::789:1:0:0:3%^]:111", ENDPOINT_PARAM_NAME, false, DEFAULT_RESOLVER));
     }
 
     @Test
@@ -93,21 +127,42 @@ public class SocketAddressParserTest
     @Test
     public void shouldParseWithScope()
     {
-        final InetSocketAddress address = SocketAddressParser.parse("[::1%12~_.-34]:1234");
+        final InetSocketAddress address = SocketAddressParser.parse(
+            "[::1%12~_.-34]:1234", ENDPOINT_PARAM_NAME, false, DEFAULT_RESOLVER);
         assertThat(address.getAddress(), instanceOf(Inet6Address.class));
+    }
+
+    @Test
+    public void shouldParseAndLookupResolverForName() throws UnknownHostException
+    {
+        final InetSocketAddress socketAddress = SocketAddressParser.parse(
+            LOOKUP_RESOLVER_NAME, ENDPOINT_PARAM_NAME, false, LOOKUP_RESOLVER);
+        assertEquals(InetAddress.getByName(LOOKUP_RESOLVER_HOSTNAME), socketAddress.getAddress());
+        assertEquals(LOOKUP_RESOLVER_PORT, socketAddress.getPort());
+    }
+
+    @Test
+    public void shouldParseAndPassThroughLookupForUnknownName() throws UnknownHostException
+    {
+        final InetSocketAddress socketAddress = SocketAddressParser.parse(
+            LOOKUP_RESOLVER_HOSTNAME + ":" + LOOKUP_RESOLVER_PORT, ENDPOINT_PARAM_NAME, false, LOOKUP_RESOLVER);
+        assertEquals(InetAddress.getByName(LOOKUP_RESOLVER_HOSTNAME), socketAddress.getAddress());
+        assertEquals(LOOKUP_RESOLVER_PORT, socketAddress.getPort());
     }
 
     private void assertCorrectParse(final String host, final int port) throws UnknownHostException
     {
-        final InetSocketAddress address = SocketAddressParser.parse(host + ":" + port);
-        assertThat(address.getAddress(), is(InetAddress.getByName(host)));
-        assertThat(address.getPort(), is(port));
+        final InetSocketAddress address = SocketAddressParser.parse(
+            host + ":" + port, ENDPOINT_PARAM_NAME, false, DEFAULT_RESOLVER);
+        assertEquals(InetAddress.getByName(host), address.getAddress());
+        assertEquals(port, address.getPort());
     }
 
     private void assertCorrectParseIpV6(final String host, final int port) throws UnknownHostException
     {
-        final InetSocketAddress address = SocketAddressParser.parse("[" + host + "]:" + port);
-        assertThat(address.getAddress(), is(InetAddress.getByName(host)));
-        assertThat(address.getPort(), is(port));
+        final InetSocketAddress address = SocketAddressParser.parse(
+            "[" + host + "]:" + port, ENDPOINT_PARAM_NAME, false, DEFAULT_RESOLVER);
+        assertEquals(InetAddress.getByName(host), address.getAddress());
+        assertEquals(port, address.getPort());
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -44,6 +44,17 @@ class ControlRequestDecoders
     final StopAllReplaysRequestDecoder stopAllReplaysRequest = new StopAllReplaysRequestDecoder();
     final ReplicateRequestDecoder replicateRequest = new ReplicateRequestDecoder();
     final StopReplicationRequestDecoder stopReplicationRequest = new StopReplicationRequestDecoder();
+    final StartPositionRequestDecoder startPositionRequest = new StartPositionRequestDecoder();
+    final DetachSegmentsRequestDecoder detachSegmentsRequest = new DetachSegmentsRequestDecoder();
+    final DeleteDetachedSegmentsRequestDecoder deleteDetachedSegmentsRequest =
+        new DeleteDetachedSegmentsRequestDecoder();
+    final PurgeSegmentsRequestDecoder purgeSegmentsRequest = new PurgeSegmentsRequestDecoder();
+    final AttachSegmentsRequestDecoder attachSegmentsRequest = new AttachSegmentsRequestDecoder();
+    final MigrateSegmentsRequestDecoder migrateSegmentsRequest = new MigrateSegmentsRequestDecoder();
+    final AuthConnectRequestDecoder authConnectRequest = new AuthConnectRequestDecoder();
+    final ChallengeResponseDecoder challengeResponse = new ChallengeResponseDecoder();
+    final KeepAliveRequestDecoder keepAliveRequest = new KeepAliveRequestDecoder();
+    final TaggedReplicateRequestDecoder taggedReplicateRequest = new TaggedReplicateRequestDecoder();
 
     final ExpandableArrayBuffer tempBuffer = new ExpandableArrayBuffer();
 }

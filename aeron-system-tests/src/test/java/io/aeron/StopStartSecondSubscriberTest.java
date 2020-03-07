@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,12 +15,14 @@
  */
 package io.aeron;
 
-import org.agrona.*;
-import org.agrona.collections.MutableInteger;
-import org.junit.After;
-import org.junit.Test;
 import io.aeron.driver.MediaDriver;
 import io.aeron.logbuffer.FragmentHandler;
+import io.aeron.test.Tests;
+import org.agrona.*;
+import org.agrona.collections.MutableInteger;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -28,18 +30,18 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BooleanSupplier;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Test that a second subscriber can be stopped and started again while data is being published.
  */
 public class StopStartSecondSubscriberTest
 {
-    public static final String CHANNEL1 = "aeron:udp?endpoint=localhost:54325";
-    public static final String CHANNEL2 = "aeron:udp?endpoint=localhost:54326";
-    private static final int STREAM_ID1 = 1;
-    private static final int STREAM_ID2 = 2;
+    public static final String CHANNEL1 = "aeron:udp?endpoint=localhost:24325";
+    public static final String CHANNEL2 = "aeron:udp?endpoint=localhost:24326";
+    private static final int STREAM_ID1 = 1001;
+    private static final int STREAM_ID2 = 1002;
 
     private MediaDriver driverOne;
     private MediaDriver driverTwo;
@@ -62,13 +64,13 @@ public class StopStartSecondSubscriberTest
     {
         driverOne = MediaDriver.launchEmbedded(
             new MediaDriver.Context()
-                .dirDeleteOnShutdown(true)
+                .dirDeleteOnStart(true)
                 .errorHandler(Throwable::printStackTrace)
                 .termBufferSparseFile(true));
 
         driverTwo = MediaDriver.launchEmbedded(
             new MediaDriver.Context()
-                .dirDeleteOnShutdown(true)
+                .dirDeleteOnStart(true)
                 .errorHandler(Throwable::printStackTrace)
                 .termBufferSparseFile(true));
 
@@ -83,25 +85,30 @@ public class StopStartSecondSubscriberTest
         publicationTwo = publisherTwo.addPublication(channelTwo, streamTwo);
     }
 
-    @After
+    @AfterEach
     public void after()
     {
-        CloseHelper.close(subscriberOne);
-        CloseHelper.close(publisherOne);
-        CloseHelper.close(subscriberTwo);
-        CloseHelper.close(publisherTwo);
+        CloseHelper.closeAll(
+            subscriberOne,
+            publisherOne,
+            subscriberTwo,
+            publisherTwo,
+            driverOne,
+            driverTwo);
 
-        CloseHelper.close(driverOne);
-        CloseHelper.close(driverTwo);
+        driverOne.context().deleteDirectory();
+        driverTwo.context().deleteDirectory();
     }
 
-    @Test(timeout = 10_000)
+    @Test
+    @Timeout(10)
     public void shouldSpinUpAndShutdown()
     {
         launch(CHANNEL1, STREAM_ID1, CHANNEL2, STREAM_ID2);
     }
 
-    @Test(timeout = 10000)
+    @Test
+    @Timeout(10)
     public void shouldReceivePublishedMessage()
     {
         launch(CHANNEL1, STREAM_ID1, CHANNEL2, STREAM_ID2);
@@ -112,19 +119,19 @@ public class StopStartSecondSubscriberTest
 
         while (publicationOne.offer(buffer, 0, BitUtil.SIZE_OF_INT) < 0L)
         {
-            SystemTest.checkInterruptedStatus();
             Thread.yield();
+            Tests.checkInterruptStatus();
         }
 
         while (publicationTwo.offer(buffer, 0, BitUtil.SIZE_OF_INT) < 0L)
         {
-            SystemTest.checkInterruptedStatus();
             Thread.yield();
+            Tests.checkInterruptStatus();
         }
 
         final MutableInteger fragmentsRead1 = new MutableInteger();
         final MutableInteger fragmentsRead2 = new MutableInteger();
-        SystemTest.executeUntil(
+        Tests.executeUntil(
             () -> fragmentsRead1.get() >= messagesPerPublication && fragmentsRead2.get() >= messagesPerPublication,
             (i) ->
             {
@@ -139,25 +146,29 @@ public class StopStartSecondSubscriberTest
         assertEquals(messagesPerPublication, subTwoCount.get());
     }
 
-    @Test(timeout = 10_000)
+    @Test
+    @Timeout(10)
     public void shouldReceiveMessagesAfterStopStartOnSameChannelSameStream()
     {
         shouldReceiveMessagesAfterStopStart(CHANNEL1, STREAM_ID1, CHANNEL1, STREAM_ID1);
     }
 
-    @Test(timeout = 10_000)
+    @Test
+    @Timeout(10)
     public void shouldReceiveMessagesAfterStopStartOnSameChannelDifferentStreams()
     {
         shouldReceiveMessagesAfterStopStart(CHANNEL1, STREAM_ID1, CHANNEL1, STREAM_ID2);
     }
 
-    @Test(timeout = 10_000)
+    @Test
+    @Timeout(10)
     public void shouldReceiveMessagesAfterStopStartOnDifferentChannelsSameStream()
     {
         shouldReceiveMessagesAfterStopStart(CHANNEL1, STREAM_ID1, CHANNEL2, STREAM_ID1);
     }
 
-    @Test(timeout = 10_000)
+    @Test
+    @Timeout(10)
     public void shouldReceiveMessagesAfterStopStartOnDifferentChannelsDifferentStreams()
     {
         shouldReceiveMessagesAfterStopStart(CHANNEL1, STREAM_ID1, CHANNEL2, STREAM_ID2);
@@ -170,6 +181,7 @@ public class StopStartSecondSubscriberTest
             while (running.get() && publication.offer(buffer, 0, BitUtil.SIZE_OF_INT) < 0L)
             {
                 Thread.yield();
+                Tests.checkInterruptStatus();
             }
         }
     }
@@ -197,7 +209,7 @@ public class StopStartSecondSubscriberTest
         final BooleanSupplier fragmentsReadCondition =
             () -> fragmentsReadOne.get() >= numMessages && fragmentsReadTwo.get() >= numMessages;
 
-        SystemTest.executeUntil(
+        Tests.executeUntil(
             fragmentsReadCondition,
             (i) ->
             {
@@ -218,7 +230,7 @@ public class StopStartSecondSubscriberTest
 
         subscriptionTwo = subscriberTwo.addSubscription(channelTwo, streamTwo);
 
-        SystemTest.executeUntil(
+        Tests.executeUntil(
             fragmentsReadCondition,
             (i) ->
             {
@@ -231,12 +243,12 @@ public class StopStartSecondSubscriberTest
 
         running.set(false);
 
-        assertTrue("Expecting subscriberOne to receive messages the entire time",
-            subOneCount.get() >= numMessages * 2);
-        assertTrue("Expecting subscriberTwo to receive messages before being stopped and started",
-            subTwoCount.get() >= numMessages);
-        assertTrue("Expecting subscriberTwo to receive messages after being stopped and started",
-            subscriber2AfterRestartCount.get() >= numMessages);
+        assertTrue(subOneCount.get() >= numMessages * 2,
+            "Expecting subscriberOne to receive messages the entire time");
+        assertTrue(subTwoCount.get() >= numMessages,
+            "Expecting subscriberTwo to receive messages before being stopped and started");
+        assertTrue(subscriber2AfterRestartCount.get() >= numMessages,
+            "Expecting subscriberTwo to receive messages after being stopped and started");
 
         executor.shutdown();
 
@@ -244,7 +256,7 @@ public class StopStartSecondSubscriberTest
         {
             while (!executor.awaitTermination(1, TimeUnit.SECONDS))
             {
-                System.err.println("Still awaiting termination");
+                System.err.println("awaiting termination");
             }
         }
         catch (final InterruptedException ex)

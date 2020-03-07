@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,7 +15,6 @@
  */
 
 #include "aeron_socket.h"
-#include "aeron_driver_conductor_proxy.h"
 
 #if defined(AERON_COMPILER_GCC)
 
@@ -27,7 +26,7 @@ void aeron_net_init()
 {
 }
 
-int set_socket_non_blocking(aeron_fd_t fd)
+int set_socket_non_blocking(aeron_socket_t fd)
 {
     int flags;
     if ((flags = fcntl(fd, F_GETFL, 0)) < 0)
@@ -44,19 +43,19 @@ int set_socket_non_blocking(aeron_fd_t fd)
     return 0;
 }
 
-int aeron_socket(int domain, int type, int protocol)
+aeron_socket_t aeron_socket(int domain, int type, int protocol)
 {
     return socket(domain, type, protocol);
 }
 
-void aeron_close_socket(int socket)
+void aeron_close_socket(aeron_socket_t socket)
 {
     close(socket);
 }
 
 #elif defined(AERON_COMPILER_MSVC) && defined(AERON_CPU_X64)
 
-#if  _WIN32_WINNT < 0x0600
+#if _WIN32_WINNT < 0x0600
 #error Unsupported windows version
 #endif
 
@@ -76,7 +75,7 @@ void aeron_net_init()
     }
 }
 
-int set_socket_non_blocking(aeron_fd_t fd)
+int set_socket_non_blocking(aeron_socket_t fd)
 {
     u_long iMode = 1;
     int iResult = ioctlsocket(fd, FIONBIO, &iMode);
@@ -257,7 +256,7 @@ void freeifaddrs(struct ifaddrs *current)
 #include <iphlpapi.h>
 #include <stdio.h>
 
-ssize_t recvmsg(aeron_fd_t fd, struct msghdr* msghdr, int flags)
+ssize_t recvmsg(aeron_socket_t fd, struct msghdr* msghdr, int flags)
 {
     DWORD size = 0;
     const int result = WSARecvFrom(
@@ -285,7 +284,7 @@ ssize_t recvmsg(aeron_fd_t fd, struct msghdr* msghdr, int flags)
     return size;
 }
 
-ssize_t sendmsg(aeron_fd_t fd, struct msghdr* msghdr, int flags)
+ssize_t sendmsg(aeron_socket_t fd, struct msghdr* msghdr, int flags)
 {
     DWORD size = 0;
     const int result = WSASendTo(
@@ -313,13 +312,19 @@ ssize_t sendmsg(aeron_fd_t fd, struct msghdr* msghdr, int flags)
     return size;
 }
 
-int aeron_socket(int domain, int type, int protocol)
+int poll(struct pollfd* fds, nfds_t nfds, int timeout)
 {
-    aeron_net_init();
-    return socket(domain, type, protocol);
+    return WSAPoll(fds, nfds, timeout);
 }
 
-void aeron_close_socket(int socket)
+aeron_socket_t aeron_socket(int domain, int type, int protocol)
+{
+    aeron_net_init();
+    const SOCKET handle = socket(domain, type, protocol);
+    return handle != INVALID_SOCKET ? handle : -1;
+}
+
+void aeron_close_socket(aeron_socket_t socket)
 {
     closesocket(socket);
 }
@@ -327,3 +332,16 @@ void aeron_close_socket(int socket)
 #else
 #error Unsupported platform!
 #endif
+
+/* aeron_getsockopt and aeron_setsockopt ensure a consistent signature between platforms
+ * (MSVC uses char* instead of void* for optval, which causes warnings)
+ */
+int aeron_getsockopt(aeron_socket_t fd, int level, int optname, void* optval, socklen_t* optlen)
+{
+    return getsockopt(fd, level, optname, optval, optlen);
+}
+
+int aeron_setsockopt(aeron_socket_t fd, int level, int optname, const void* optval, socklen_t optlen)
+{
+    return setsockopt(fd, level, optname, optval, optlen);
+}

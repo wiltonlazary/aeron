@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -48,7 +48,7 @@ inline int aeron_number_of_trailing_zeroes(int32_t value)
 
     return 32;
 #else
-    static char table[32] =
+    char table[32] =
     {
         0, 1, 2, 24, 3, 19, 6, 25,
         22, 4, 20, 10, 16, 7, 12, 26,
@@ -61,9 +61,33 @@ inline int aeron_number_of_trailing_zeroes(int32_t value)
         return 32;
     }
 
-    uint32_t index = static_cast<uint32_t>((value & -value) * 0x04D7651F);
+    uint32_t index = (uint32_t)((value & -value) * 0x04D7651F);
 
     return table[index >> 27];
+#endif
+}
+
+inline int aeron_number_of_trailing_zeroes_u64(uint64_t value)
+{
+#if defined(__GNUC__)
+    if (0 == value)
+    {
+        return 64;
+    }
+
+    return __builtin_ctzll(value);
+#elif defined(_MSC_VER)
+    unsigned long r;
+
+    if (_BitScanForward64(&r, (__int64)value))
+        return r;
+
+    return 64;
+#else
+    int lower_tzc = aeron_number_of_trailing_zeroes((int32_t) (value & UINT64_C(0xFFFFFFFF)));
+    int upper_tzc = aeron_number_of_trailing_zeroes((int32_t) ((value >> 32u) & UINT64_C(0xFFFFFFFF)));
+
+    return lower_tzc == 32 ? upper_tzc + lower_tzc : lower_tzc;
 #endif
 }
 

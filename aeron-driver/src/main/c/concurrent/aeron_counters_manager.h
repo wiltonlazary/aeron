@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,7 +19,9 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include "aeronmd.h"
 #include "util/aeron_bitutil.h"
+#include "util/aeron_clock.h"
 #include "aeron_atomic.h"
 
 #pragma pack(push)
@@ -55,8 +57,6 @@ aeron_counter_metadata_descriptor_t;
 
 #define AERON_COUNTER_NOT_FREE_TO_REUSE (INT64_MAX)
 
-typedef int64_t (*aeron_counters_manager_clock_func_t)();
-
 typedef struct aeron_counters_manager_stct
 {
     uint8_t *values;
@@ -69,7 +69,7 @@ typedef struct aeron_counters_manager_stct
     int32_t free_list_index;
     size_t free_list_length;
 
-    aeron_counters_manager_clock_func_t clock_func;
+    aeron_clock_func_t clock_func;
     int64_t free_to_reuse_timeout_ms;
 }
 aeron_counters_manager_t;
@@ -82,7 +82,7 @@ int aeron_counters_manager_init(
     size_t metadata_length,
     uint8_t *values_buffer,
     size_t values_length,
-    aeron_counters_manager_clock_func_t clock_func,
+    aeron_clock_func_t clock_func,
     int64_t free_to_reuse_timeout_ms);
 
 void aeron_counters_manager_close(aeron_counters_manager_t *manager);
@@ -94,6 +94,9 @@ int32_t aeron_counters_manager_allocate(
     size_t key_length,
     const char *label,
     size_t label_length);
+
+void aeron_counters_manager_update_label(
+    volatile aeron_counters_manager_t *manager, int32_t counter_id, size_t label_length, const char *label);
 
 int32_t aeron_counters_manager_next_counter_id(volatile aeron_counters_manager_t *manager);
 

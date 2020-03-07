@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,22 +15,19 @@
  */
 package io.aeron.archive;
 
-import java.io.File;
-
-import org.agrona.IoUtil;
-import org.agrona.concurrent.EpochClock;
-import org.junit.*;
-
-import static org.hamcrest.Matchers.is;
-import static org.junit.Assert.assertThat;
-import static org.junit.Assert.assertTrue;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoMoreInteractions;
-
-
 import io.aeron.Aeron;
 import io.aeron.archive.client.RecordingDescriptorConsumer;
+import org.agrona.IoUtil;
+import org.agrona.concurrent.EpochClock;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+
+import java.io.File;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.*;
 
 public class CatalogViewTest
 {
@@ -39,7 +36,7 @@ public class CatalogViewTest
     private static final int SEGMENT_LENGTH = 2 * TERM_LENGTH;
     private static final int MTU_LENGTH = 1024;
 
-    private final File archiveDir = TestUtil.makeTestDirectory();
+    private final File archiveDir = ArchiveTests.makeTestDirectory();
 
     private long currentTimeMs = 1;
     private final EpochClock clock = () -> currentTimeMs;
@@ -49,21 +46,21 @@ public class CatalogViewTest
     private long recordingThreeId;
     private RecordingDescriptorConsumer mockRecordingDescriptorConsumer = mock(RecordingDescriptorConsumer.class);
 
-    @Before
+    @BeforeEach
     public void before()
     {
         try (Catalog catalog = new Catalog(archiveDir, null, 0, MAX_ENTRIES, clock))
         {
             recordingOneId = catalog.addNewRecording(
-                    10L, 4L, 0, SEGMENT_LENGTH, TERM_LENGTH, MTU_LENGTH, 7, 1, "channelG", "channelG?tag=f", "sourceA");
+                10L, 4L, 0, SEGMENT_LENGTH, TERM_LENGTH, MTU_LENGTH, 7, 1, "channelG", "channelG?tag=f", "sourceA");
             recordingTwoId = catalog.addNewRecording(
-                    11L, 5L, 0, SEGMENT_LENGTH, TERM_LENGTH, MTU_LENGTH, 8, 2, "channelH", "channelH?tag=f", "sourceV");
+                11L, 5L, 0, SEGMENT_LENGTH, TERM_LENGTH, MTU_LENGTH, 8, 2, "channelH", "channelH?tag=f", "sourceV");
             recordingThreeId = catalog.addNewRecording(
-                    12L, 6L, 0, SEGMENT_LENGTH, TERM_LENGTH, MTU_LENGTH, 9, 3, "channelK", "channelK?tag=f", "sourceB");
+                12L, 6L, 0, SEGMENT_LENGTH, TERM_LENGTH, MTU_LENGTH, 9, 3, "channelK", "channelK?tag=f", "sourceB");
         }
     }
 
-    @After
+    @AfterEach
     public void after()
     {
         IoUtil.delete(archiveDir, false);
@@ -73,7 +70,7 @@ public class CatalogViewTest
     public void shouldListAllRecordingsInCatalog()
     {
         final int count = CatalogView.listRecordings(archiveDir, mockRecordingDescriptorConsumer);
-        assertThat(count, is(3));
+        assertEquals(3, count);
 
         verify(mockRecordingDescriptorConsumer).onRecordingDescriptor(
             Aeron.NULL_VALUE, Aeron.NULL_VALUE, recordingOneId, 4L, Aeron.NULL_VALUE, 10L,

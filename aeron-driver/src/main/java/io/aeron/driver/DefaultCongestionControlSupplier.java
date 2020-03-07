@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -47,7 +47,7 @@ public class DefaultCongestionControlSupplier implements CongestionControlSuppli
     {
         final String ccStr = udpChannel.channelUri().get(CommonContext.CONGESTION_CONTROL_PARAM_NAME);
 
-        if (null == ccStr || "static".equals(ccStr))
+        if (null == ccStr || StaticWindowCongestionControl.CC_PARAM_VALUE.equals(ccStr))
         {
             return new StaticWindowCongestionControl(
                 registrationId,
@@ -62,7 +62,7 @@ public class DefaultCongestionControlSupplier implements CongestionControlSuppli
                 context,
                 countersManager);
         }
-        else if ("cubic".equals(ccStr))
+        else if (CubicCongestionControl.CC_PARAM_VALUE.equals(ccStr))
         {
             return new CubicCongestionControl(
                 registrationId,
@@ -77,9 +77,7 @@ public class DefaultCongestionControlSupplier implements CongestionControlSuppli
                 context,
                 countersManager);
         }
-        else
-        {
-            throw new IllegalArgumentException("unsupported congestion control : cc=" + ccStr);
-        }
+
+        throw new IllegalArgumentException("unsupported congestion control : cc=" + ccStr);
     }
 }

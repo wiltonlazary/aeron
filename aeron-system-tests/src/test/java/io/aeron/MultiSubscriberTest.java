@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,41 +17,42 @@ package io.aeron;
 
 import io.aeron.driver.MediaDriver;
 import io.aeron.driver.ThreadingMode;
-import org.agrona.CloseHelper;
-import org.agrona.DirectBuffer;
-import org.junit.After;
-import org.junit.Test;
-import org.mockito.ArgumentCaptor;
 import io.aeron.logbuffer.FragmentHandler;
 import io.aeron.logbuffer.Header;
+import io.aeron.test.Tests;
+import org.agrona.CloseHelper;
+import org.agrona.DirectBuffer;
 import org.agrona.concurrent.UnsafeBuffer;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
+import org.mockito.ArgumentCaptor;
 
-import static org.hamcrest.Matchers.is;
-import static org.junit.Assert.assertThat;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.Mockito.*;
 
 public class MultiSubscriberTest
 {
-    private static final String CHANNEL_1 = "aeron:udp?endpoint=localhost:54325|fruit=banana";
-    private static final String CHANNEL_2 = "aeron:udp?endpoint=localhost:54325|fruit=apple";
-    private static final int STREAM_ID = 1;
+    private static final String CHANNEL_1 = "aeron:udp?endpoint=localhost:24325|fruit=banana";
+    private static final String CHANNEL_2 = "aeron:udp?endpoint=localhost:24325|fruit=apple";
+    private static final int STREAM_ID = 1001;
     private static final int FRAGMENT_COUNT_LIMIT = 10;
 
     private final MediaDriver driver = MediaDriver.launch(new MediaDriver.Context()
         .errorHandler(Throwable::printStackTrace)
-        .dirDeleteOnShutdown(true)
         .threadingMode(ThreadingMode.SHARED));
 
     private final Aeron aeron = Aeron.connect();
 
-    @After
+    @AfterEach
     public void after()
     {
-        CloseHelper.close(aeron);
-        CloseHelper.close(driver);
+        CloseHelper.closeAll(aeron, driver);
+        driver.context().deleteDirectory();
     }
 
-    @Test(timeout = 10_000)
+    @Test
+    @Timeout(10)
     public void shouldReceiveMessageOnSeparateSubscriptions()
     {
         final FragmentHandler mockFragmentHandlerOne = mock(FragmentHandler.class);
@@ -67,31 +68,31 @@ public class MultiSubscriberTest
             final byte[] expectedBytes = "Hello, World! here is a small message".getBytes();
             final UnsafeBuffer srcBuffer = new UnsafeBuffer(expectedBytes);
 
-            assertThat(subscriptionOne.poll(adapterOne, FRAGMENT_COUNT_LIMIT), is(0));
-            assertThat(subscriptionTwo.poll(adapterTwo, FRAGMENT_COUNT_LIMIT), is(0));
+            assertEquals(0, subscriptionOne.poll(adapterOne, FRAGMENT_COUNT_LIMIT));
+            assertEquals(0, subscriptionTwo.poll(adapterTwo, FRAGMENT_COUNT_LIMIT));
 
             while (!subscriptionOne.isConnected() || !subscriptionTwo.isConnected())
             {
-                SystemTest.checkInterruptedStatus();
                 Thread.yield();
+                Tests.checkInterruptStatus();
             }
 
             while (publication.offer(srcBuffer) < 0L)
             {
-                SystemTest.checkInterruptedStatus();
                 Thread.yield();
+                Tests.checkInterruptStatus();
             }
 
             while (subscriptionOne.poll(adapterOne, FRAGMENT_COUNT_LIMIT) == 0)
             {
-                SystemTest.checkInterruptedStatus();
                 Thread.yield();
+                Tests.checkInterruptStatus();
             }
 
             while (subscriptionTwo.poll(adapterTwo, FRAGMENT_COUNT_LIMIT) == 0)
             {
-                SystemTest.checkInterruptedStatus();
                 Thread.yield();
+                Tests.checkInterruptStatus();
             }
 
             verifyData(srcBuffer, mockFragmentHandlerOne);
@@ -112,7 +113,7 @@ public class MultiSubscriberTest
         for (int i = 0; i < srcBuffer.capacity(); i++)
         {
             final int index = offset + i;
-            assertThat("same at " + index, capturedBuffer.getByte(index), is(srcBuffer.getByte(i)));
+            assertEquals(srcBuffer.getByte(i), capturedBuffer.getByte(index), "same at " + index);
         }
     }
 }

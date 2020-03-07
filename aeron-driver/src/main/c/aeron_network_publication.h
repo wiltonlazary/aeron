@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -35,8 +35,8 @@ typedef enum aeron_network_publication_state_enum
 }
 aeron_network_publication_state_t;
 
-#define AERON_NETWORK_PUBLICATION_HEARTBEAT_TIMEOUT_NS (100 * 1000 * 1000L)
-#define AERON_NETWORK_PUBLICATION_SETUP_TIMEOUT_NS (100 * 1000 * 1000L)
+#define AERON_NETWORK_PUBLICATION_HEARTBEAT_TIMEOUT_NS (100 * 1000 * 1000LL)
+#define AERON_NETWORK_PUBLICATION_SETUP_TIMEOUT_NS (100 * 1000 * 1000LL)
 
 #define AERON_NETWORK_PUBLICATION_MAX_MESSAGES_PER_SEND (2)
 
@@ -71,7 +71,7 @@ typedef struct aeron_network_publication_stct
     aeron_logbuffer_metadata_t *log_meta_data;
     aeron_send_channel_endpoint_t *endpoint;
     aeron_flow_control_strategy_t *flow_control;
-    aeron_clock_func_t nano_clock;
+    aeron_clock_cache_t *cached_clock;
 
     char *log_file_name;
     int64_t term_window_length;

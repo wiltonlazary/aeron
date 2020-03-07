@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,11 +29,14 @@ aeron_per_thread_error_t;
 int aeron_errcode();
 const char *aeron_errmsg();
 void aeron_set_err(int errcode, const char *format, ...);
+void aeron_set_err_from_last_err_code(const char* format, ...);
 
 const char *aeron_error_code_str(int errcode);
 
-#ifdef _MSC_VER
-void aeron_set_windows_error();
+#if defined(AERON_COMPILER_MSVC)
+bool aeron_error_dll_process_attach();
+void aeron_error_dll_thread_detach();
+void aeron_error_dll_process_detach();
 #endif
 
 #endif //AERON_ERROR_H

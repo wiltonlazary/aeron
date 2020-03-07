@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,36 +17,35 @@ package io.aeron;
 
 import io.aeron.driver.MediaDriver;
 import io.aeron.driver.ThreadingMode;
+import io.aeron.test.TestMediaDriver;
+import io.aeron.test.Tests;
 import org.agrona.CloseHelper;
-import org.junit.After;
-import org.junit.Test;
-import org.junit.experimental.theories.DataPoint;
-import org.junit.experimental.theories.Theories;
-import org.junit.experimental.theories.Theory;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static org.junit.Assert.*;
+import static java.util.Arrays.asList;
+import static org.junit.jupiter.api.Assertions.*;
 
-@RunWith(Theories.class)
 public class ImageAvailabilityTest
 {
-    @DataPoint
-    public static final String IPC_CHANNEL = "aeron:ipc?term-length=64k";
+    private static List<String> channels()
+    {
+        return asList(
+            "aeron:ipc?term-length=64k",
+            "aeron:udp?endpoint=localhost:24325|term-length=64k",
+            "aeron:udp?endpoint=224.20.30.39:24326|interface=localhost");
+    }
 
-    @DataPoint
-    public static final String UNICAST_CHANNEL = "aeron:udp?endpoint=localhost:54325|term-length=64k";
+    private static final int STREAM_ID = 1001;
 
-    @DataPoint
-    public static final String MULTICAST_CHANNEL = "aeron:udp?endpoint=224.20.30.39:54326|interface=localhost";
-
-    private static final int STREAM_ID = 1;
-
-    private final MediaDriver driver = MediaDriver.launch(new MediaDriver.Context()
+    private final TestMediaDriver driver = TestMediaDriver.launch(new MediaDriver.Context()
         .errorHandler(Throwable::printStackTrace)
-        .dirDeleteOnShutdown(true)
         .dirDeleteOnStart(true)
         .timerIntervalNs(TimeUnit.MILLISECONDS.toNanos(20))
         .threadingMode(ThreadingMode.SHARED));
@@ -55,15 +54,16 @@ public class ImageAvailabilityTest
         .useConductorAgentInvoker(true)
         .errorHandler(Throwable::printStackTrace));
 
-    @After
+    @AfterEach
     public void after()
     {
-        CloseHelper.close(aeron);
-        CloseHelper.close(driver);
+        CloseHelper.closeAll(aeron, driver);
+        driver.context().deleteDirectory();
     }
 
-    @Theory
-    @Test(timeout = 10_000)
+    @ParameterizedTest
+    @MethodSource("channels")
+    @Timeout(10)
     public void shouldCallImageHandlers(final String channel)
     {
         final AtomicInteger unavailableImageCount = new AtomicInteger();
@@ -74,13 +74,14 @@ public class ImageAvailabilityTest
         final String spyChannel = channel.contains("ipc") ? channel : CommonContext.SPY_PREFIX + channel;
 
         try (Subscription subOne = aeron.addSubscription(channel, STREAM_ID, availableHandler, unavailableHandler);
-            Subscription subTwo = aeron.addSubscription(spyChannel, STREAM_ID, availableHandler, unavailableHandler);
+            Subscription subTwo = aeron.addSubscription(
+                spyChannel, STREAM_ID, availableHandler, unavailableHandler);
             Publication publication = aeron.addPublication(channel, STREAM_ID))
         {
             while (!subOne.isConnected() || !subTwo.isConnected() || !publication.isConnected())
             {
-                SystemTest.checkInterruptedStatus();
                 Thread.yield();
+                Tests.checkInterruptStatus();
                 aeron.conductorAgentInvoker().invoke();
             }
 
@@ -99,8 +100,8 @@ public class ImageAvailabilityTest
 
             while (subOne.isConnected() || subTwo.isConnected())
             {
-                SystemTest.checkInterruptedStatus();
                 Thread.yield();
+                Tests.checkInterruptStatus();
                 aeron.conductorAgentInvoker().invoke();
             }
 
@@ -114,8 +115,9 @@ public class ImageAvailabilityTest
         }
     }
 
-    @Theory
-    @Test(timeout = 10_000)
+    @ParameterizedTest
+    @MethodSource("channels")
+    @Timeout(10)
     public void shouldCallImageHandlersWithPublisherOnDifferentClient(final String channel)
     {
         final AtomicInteger unavailableImageCount = new AtomicInteger();
@@ -130,13 +132,14 @@ public class ImageAvailabilityTest
 
         try (Aeron aeronTwo = Aeron.connect(ctx);
             Subscription subOne = aeron.addSubscription(channel, STREAM_ID, availableHandler, unavailableHandler);
-            Subscription subTwo = aeron.addSubscription(spyChannel, STREAM_ID, availableHandler, unavailableHandler);
+            Subscription subTwo = aeron.addSubscription(
+                spyChannel, STREAM_ID, availableHandler, unavailableHandler);
             Publication publication = aeronTwo.addPublication(channel, STREAM_ID))
         {
             while (!subOne.isConnected() || !subTwo.isConnected() || !publication.isConnected())
             {
-                SystemTest.checkInterruptedStatus();
                 Thread.yield();
+                Tests.checkInterruptStatus();
                 aeron.conductorAgentInvoker().invoke();
             }
 
@@ -155,8 +158,8 @@ public class ImageAvailabilityTest
 
             while (subOne.isConnected() || subTwo.isConnected())
             {
-                SystemTest.checkInterruptedStatus();
                 Thread.yield();
+                Tests.checkInterruptStatus();
                 aeron.conductorAgentInvoker().invoke();
             }
 

@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,15 +16,41 @@
 
 #include <stdio.h>
 #include <inttypes.h>
+#include <aeron_driver_context.h>
 #include "aeron_socket.h"
 #include "aeron_system_counters.h"
 #include "util/aeron_netutil.h"
 #include "util/aeron_error.h"
-#include "aeron_driver_context.h"
 #include "aeron_alloc.h"
 #include "collections/aeron_int64_to_ptr_hash_map.h"
 #include "media/aeron_receive_channel_endpoint.h"
 #include "aeron_driver_receiver.h"
+
+int aeron_receive_channel_endpoint_set_group_tag(
+    aeron_receive_channel_endpoint_t *endpoint,
+    aeron_udp_channel_t *channel,
+    aeron_driver_context_t *context)
+{
+    int64_t group_tag = 0;
+    int rc = aeron_uri_get_int64(&channel->uri.params.udp.additional_params, AERON_URI_GTAG_KEY, &group_tag);
+    if (rc < 0)
+    {
+        return -1;
+    }
+
+    if (0 == rc)
+    {
+        endpoint->group_tag.is_present = context->receiver_group_tag.is_present;
+        endpoint->group_tag.value = context->receiver_group_tag.value;
+    }
+    else
+    {
+        endpoint->group_tag.is_present = true;
+        endpoint->group_tag.value = group_tag;
+    }
+
+    return 0;
+}
 
 int aeron_receive_channel_endpoint_create(
     aeron_receive_channel_endpoint_t **endpoint,
@@ -37,9 +63,7 @@ int aeron_receive_channel_endpoint_create(
 
     if (aeron_alloc((void **)&_endpoint, sizeof(aeron_receive_channel_endpoint_t)) < 0)
     {
-        int errcode = errno;
-
-        aeron_set_err(errcode, "could not allocate receive_channel_endpoint: %s", strerror(errcode));
+        aeron_set_err_from_last_err_code("could not allocate receive_channel_endpoint");
         return -1;
     }
 
@@ -52,9 +76,7 @@ int aeron_receive_channel_endpoint_create(
     if (aeron_int64_to_ptr_hash_map_init(
         &_endpoint->stream_id_to_refcnt_map, 16, AERON_INT64_TO_PTR_HASH_MAP_DEFAULT_LOAD_FACTOR) < 0)
     {
-        int errcode = errno;
-
-        aeron_set_err(errcode, "could not init stream_id_to_refcnt_map: %s", strerror(errcode));
+        aeron_set_err_from_last_err_code("could not init stream_id_to_refcnt_map");
         return -1;
     }
 
@@ -65,6 +87,8 @@ int aeron_receive_channel_endpoint_create(
     _endpoint->transport.fd = -1;
     _endpoint->channel_status.counter_id = -1;
     _endpoint->transport_bindings = context->udp_channel_transport_bindings;
+    _endpoint->data_paths = &context->receiver_proxy->receiver->data_paths;
+    _endpoint->transport.data_paths = _endpoint->data_paths;
 
     if (context->udp_channel_transport_bindings->init_func(
         &_endpoint->transport,
@@ -93,8 +117,14 @@ int aeron_receive_channel_endpoint_create(
     _endpoint->channel_status.counter_id = status_indicator->counter_id;
     _endpoint->channel_status.value_addr = status_indicator->value_addr;
 
-    _endpoint->receiver_id = context->receiver_id;
+    _endpoint->receiver_id = context->next_receiver_id++;
     _endpoint->receiver_proxy = context->receiver_proxy;
+
+    if (aeron_receive_channel_endpoint_set_group_tag(_endpoint, channel, context) < 0)
+    {
+        aeron_receive_channel_endpoint_delete(NULL, _endpoint);
+        return -1;
+    }
 
     _endpoint->short_sends_counter = aeron_system_counter_addr(system_counters, AERON_SYSTEM_COUNTER_SHORT_SENDS);
     _endpoint->possible_ttl_asymmetry_counter =
@@ -133,7 +163,7 @@ int aeron_receive_channel_endpoint_delete(
 
 int aeron_receive_channel_endpoint_sendmsg(aeron_receive_channel_endpoint_t *endpoint, struct msghdr *msghdr)
 {
-    return endpoint->transport_bindings->sendmsg_func(&endpoint->transport, msghdr);
+    return endpoint->data_paths->sendmsg_func(endpoint->data_paths, &endpoint->transport, msghdr);
 }
 
 int aeron_receive_channel_endpoint_send_sm(
@@ -146,12 +176,19 @@ int aeron_receive_channel_endpoint_send_sm(
     int32_t receiver_window,
     uint8_t flags)
 {
-    uint8_t buffer[sizeof(aeron_status_message_header_t)];
+    uint8_t buffer[sizeof(aeron_status_message_header_t) + sizeof(aeron_status_message_optional_header_t)];
     aeron_status_message_header_t *sm_header = (aeron_status_message_header_t *) buffer;
+    aeron_status_message_optional_header_t *sm_optional_header =
+        (aeron_status_message_optional_header_t *)(buffer + sizeof(aeron_status_message_header_t));
+
     struct iovec iov[1];
     struct msghdr msghdr;
 
-    sm_header->frame_header.frame_length = sizeof(aeron_status_message_header_t);
+    const int32_t frame_length = endpoint->group_tag.is_present ?
+        sizeof(aeron_status_message_header_t) + sizeof(aeron_status_message_optional_header_t) :
+        sizeof(aeron_status_message_header_t);
+
+    sm_header->frame_header.frame_length = frame_length;
     sm_header->frame_header.version = AERON_FRAME_HEADER_VERSION;
     sm_header->frame_header.flags = flags;
     sm_header->frame_header.type = AERON_HDR_TYPE_SM;
@@ -161,9 +198,10 @@ int aeron_receive_channel_endpoint_send_sm(
     sm_header->consumption_term_offset = term_offset;
     sm_header->receiver_window = receiver_window;
     sm_header->receiver_id = endpoint->receiver_id;
+    sm_optional_header->group_tag = endpoint->group_tag.value;
 
     iov[0].iov_base = buffer;
-    iov[0].iov_len = sizeof(aeron_status_message_header_t);
+    iov[0].iov_len = (size_t)frame_length;
     msghdr.msg_iov = iov;
     msghdr.msg_iovlen = 1;
     msghdr.msg_flags = 0;
@@ -277,7 +315,12 @@ int aeron_receive_channel_endpoint_send_rttm(
 }
 
 void aeron_receive_channel_endpoint_dispatch(
-    void *receiver_clientd, void *endpoint_clientd, uint8_t *buffer, size_t length, struct sockaddr_storage *addr)
+    aeron_udp_channel_data_paths_t *data_paths,
+    void *receiver_clientd,
+    void *endpoint_clientd,
+    uint8_t *buffer,
+    size_t length,
+    struct sockaddr_storage *addr)
 {
     aeron_driver_receiver_t *receiver = (aeron_driver_receiver_t *)receiver_clientd;
     aeron_frame_header_t *frame_header = (aeron_frame_header_t *)buffer;
@@ -381,18 +424,14 @@ int32_t aeron_receive_channel_endpoint_incref_to_stream(
 
         if (aeron_alloc((void **)&count, sizeof(aeron_stream_id_refcnt_t)) < 0)
         {
-            int errcode = errno;
-
-            aeron_set_err(errcode, "could not allocate aeron_stream_id_refcnt: %s", strerror(errcode));
+            aeron_set_err_from_last_err_code("could not allocate aeron_stream_id_refcnt");
             return -1;
         }
 
         count->refcnt = 0;
         if (aeron_int64_to_ptr_hash_map_put(&endpoint->stream_id_to_refcnt_map, stream_id, count) < 0)
         {
-            int errcode = errno;
-
-            aeron_set_err(errcode, "could not put aeron_stream_id_refcnt: %s", strerror(errcode));
+            aeron_set_err_from_last_err_code("could not put aeron_stream_id_refcnt");
             return -1;
         }
 
@@ -515,3 +554,5 @@ extern size_t aeron_receive_channel_endpoint_stream_count(aeron_receive_channel_
 extern void aeron_receive_channel_endpoint_receiver_release(aeron_receive_channel_endpoint_t *endpoint);
 extern bool aeron_receive_channel_endpoint_has_receiver_released(aeron_receive_channel_endpoint_t *endpoint);
 extern bool aeron_receive_channel_endpoint_should_elicit_setup_message(aeron_receive_channel_endpoint_t *endpoint);
+extern int aeron_receive_channel_endpoint_bind_addr_and_port(
+    aeron_receive_channel_endpoint_t *endpoint, char *buffer, size_t length);

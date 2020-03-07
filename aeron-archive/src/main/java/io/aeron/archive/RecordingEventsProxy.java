@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -82,10 +82,11 @@ class RecordingEventsProxy implements AutoCloseable
         while (--attempts > 0);
     }
 
-    void progress(final long recordingId, final long startPosition, final long position)
+    boolean progress(final long recordingId, final long startPosition, final long position)
     {
         final int length = MessageHeaderEncoder.ENCODED_LENGTH + RecordingProgressEncoder.BLOCK_LENGTH;
         final long result = publication.tryClaim(length, bufferClaim);
+
         if (result > 0)
         {
             recordingProgressEncoder
@@ -95,18 +96,21 @@ class RecordingEventsProxy implements AutoCloseable
                 .position(position);
 
             bufferClaim.commit();
+            return true;
         }
         else
         {
             checkResult(result);
         }
+
+        return false;
     }
 
     void stopped(final long recordingId, final long startPosition, final long stopPosition)
     {
         final int length = MessageHeaderEncoder.ENCODED_LENGTH + RecordingStoppedEncoder.BLOCK_LENGTH;
-
         int attempts = SEND_ATTEMPTS;
+
         do
         {
             final long result = publication.tryClaim(length, bufferClaim);

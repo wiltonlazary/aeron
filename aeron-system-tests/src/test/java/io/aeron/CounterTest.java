@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,27 +18,29 @@ package io.aeron;
 import io.aeron.driver.MediaDriver;
 import io.aeron.driver.ThreadingMode;
 import io.aeron.status.ReadableCounter;
+import io.aeron.test.TestMediaDriver;
+import io.aeron.test.Tests;
 import org.agrona.CloseHelper;
 import org.agrona.concurrent.UnsafeBuffer;
 import org.agrona.concurrent.status.CountersReader;
-import org.junit.After;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
-import static org.hamcrest.Matchers.is;
-import static org.hamcrest.MatcherAssert.assertThat;
-import static org.junit.Assert.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.mockito.Mockito.*;
 
 public class CounterTest
 {
-    private static final int COUNTER_TYPE_ID = 101;
+    private static final int COUNTER_TYPE_ID = 1101;
     private static final String COUNTER_LABEL = "counter label";
 
     private final UnsafeBuffer labelBuffer = new UnsafeBuffer(new byte[COUNTER_LABEL.length()]);
 
     private Aeron clientA;
     private Aeron clientB;
-    private MediaDriver driver;
+    private TestMediaDriver driver;
 
     private final AvailableCounterHandler availableCounterHandlerClientA = mock(AvailableCounterHandler.class);
     private final UnavailableCounterHandler unavailableCounterHandlerClientA = mock(UnavailableCounterHandler.class);
@@ -51,9 +53,8 @@ public class CounterTest
     {
         labelBuffer.putStringWithoutLengthAscii(0, COUNTER_LABEL);
 
-        driver = MediaDriver.launch(
+        driver = TestMediaDriver.launch(
             new MediaDriver.Context()
-                .dirDeleteOnShutdown(true)
                 .errorHandler(Throwable::printStackTrace)
                 .threadingMode(ThreadingMode.SHARED));
 
@@ -68,16 +69,16 @@ public class CounterTest
                 .unavailableCounterHandler(unavailableCounterHandlerClientB));
     }
 
-    @After
+    @AfterEach
     public void after()
     {
-        CloseHelper.quietClose(clientB);
-        CloseHelper.quietClose(clientA);
+        CloseHelper.closeAll(clientA, clientB, driver);
 
-        CloseHelper.close(driver);
+        driver.context().deleteDirectory();
     }
 
-    @Test(timeout = 2000)
+    @Test
+    @Timeout(10)
     public void shouldBeAbleToAddCounter()
     {
         launch();
@@ -93,13 +94,14 @@ public class CounterTest
 
         assertFalse(counter.isClosed());
 
-        verify(availableCounterHandlerClientA, timeout(1000))
+        verify(availableCounterHandlerClientA, timeout(5000L))
             .onAvailableCounter(any(CountersReader.class), eq(counter.registrationId()), eq(counter.id()));
-        verify(availableCounterHandlerClientB, timeout(1000))
+        verify(availableCounterHandlerClientB, timeout(5000L))
             .onAvailableCounter(any(CountersReader.class), eq(counter.registrationId()), eq(counter.id()));
     }
 
-    @Test(timeout = 2000)
+    @Test
+    @Timeout(10)
     public void shouldBeAbleToAddReadableCounterWithinHandler()
     {
         availableCounterHandlerClientB = this::createReadableCounter;
@@ -117,16 +119,16 @@ public class CounterTest
 
         while (null == readableCounter)
         {
-            SystemTest.checkInterruptedStatus();
-            SystemTest.sleep(1);
+            Tests.sleep(1);
         }
 
-        assertThat(readableCounter.state(), is(CountersReader.RECORD_ALLOCATED));
-        assertThat(readableCounter.counterId(), is(counter.id()));
-        assertThat(readableCounter.registrationId(), is(counter.registrationId()));
+        assertEquals(CountersReader.RECORD_ALLOCATED, readableCounter.state());
+        assertEquals(counter.id(), readableCounter.counterId());
+        assertEquals(counter.registrationId(), readableCounter.registrationId());
     }
 
-    @Test(timeout = 2000)
+    @Test
+    @Timeout(10)
     public void shouldCloseReadableCounterOnUnavailableCounter()
     {
         availableCounterHandlerClientB = this::createReadableCounter;
@@ -145,19 +147,17 @@ public class CounterTest
 
         while (null == readableCounter)
         {
-            SystemTest.checkInterruptedStatus();
-            SystemTest.sleep(1);
+            Tests.sleep(1);
         }
 
         assertFalse(readableCounter.isClosed());
-        assertThat(readableCounter.state(), is(CountersReader.RECORD_ALLOCATED));
+        assertEquals(CountersReader.RECORD_ALLOCATED, readableCounter.state());
 
         counter.close();
 
         while (!readableCounter.isClosed())
         {
-            SystemTest.checkInterruptedStatus();
-            SystemTest.sleep(1);
+            Tests.sleep(1);
         }
     }
 
@@ -170,8 +170,8 @@ public class CounterTest
     private void unavailableCounterHandler(
         @SuppressWarnings("unused") final CountersReader countersReader, final long registrationId, final int counterId)
     {
-        assertThat(registrationId, is(readableCounter.registrationId()));
-        assertThat(counterId, is(readableCounter.counterId()));
+        assertEquals(readableCounter.registrationId(), registrationId);
+        assertEquals(readableCounter.counterId(), counterId);
 
         readableCounter.close();
     }

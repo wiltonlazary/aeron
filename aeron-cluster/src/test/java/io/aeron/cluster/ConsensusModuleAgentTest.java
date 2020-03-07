@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,8 +27,8 @@ import org.agrona.collections.MutableLong;
 import org.agrona.concurrent.AgentInvoker;
 import org.agrona.concurrent.NoOpIdleStrategy;
 import org.agrona.concurrent.status.AtomicCounter;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.mockito.Mockito;
@@ -39,10 +39,9 @@ import static io.aeron.cluster.ClusterControl.ToggleState.*;
 import static io.aeron.cluster.ConsensusModule.Configuration.*;
 import static io.aeron.cluster.ConsensusModuleAgent.SLOW_TICK_INTERVAL_NS;
 import static io.aeron.cluster.client.AeronCluster.Configuration.PROTOCOL_SEMANTIC_VERSION;
-import static java.lang.Boolean.TRUE;
-import static org.hamcrest.core.Is.is;
-import static org.junit.Assert.assertThat;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.Mockito.*;
+import static java.lang.Boolean.TRUE;
 
 public class ConsensusModuleAgentTest
 {
@@ -62,7 +61,7 @@ public class ConsensusModuleAgentTest
         .moduleStateCounter(mock(Counter.class))
         .commitPositionCounter(mock(Counter.class))
         .controlToggleCounter(mock(Counter.class))
-        .clusterNodeCounter(mock(Counter.class))
+        .clusterNodeRoleCounter(mock(Counter.class))
         .timedOutClientCounter(mockTimedOutClientCounter)
         .idleStrategySupplier(NoOpIdleStrategy::new)
         .aeron(mockAeron)
@@ -73,7 +72,7 @@ public class ConsensusModuleAgentTest
         .logPublisher(mockLogPublisher)
         .egressPublisher(mockEgressPublisher);
 
-    @Before
+    @BeforeEach
     public void before()
     {
         when(mockAeron.conductorAgentInvoker()).thenReturn(mock(AgentInvoker.class));
@@ -102,7 +101,7 @@ public class ConsensusModuleAgentTest
         final long correlationIdOne = 1L;
         agent.state(ConsensusModule.State.ACTIVE);
         agent.role(Cluster.Role.LEADER);
-        agent.appendedPositionCounter(mock(ReadableCounter.class));
+        agent.appendPositionCounter(mock(ReadableCounter.class));
         agent.onSessionConnect(correlationIdOne, 2, PROTOCOL_SEMANTIC_VERSION, RESPONSE_CHANNEL_ONE, new byte[0]);
 
         clock.update(17, TimeUnit.MILLISECONDS);
@@ -134,7 +133,7 @@ public class ConsensusModuleAgentTest
         final long correlationId = 1L;
         agent.state(ConsensusModule.State.ACTIVE);
         agent.role(Cluster.Role.LEADER);
-        agent.appendedPositionCounter(mock(ReadableCounter.class));
+        agent.appendPositionCounter(mock(ReadableCounter.class));
         agent.onSessionConnect(correlationId, 2, PROTOCOL_SEMANTIC_VERSION, RESPONSE_CHANNEL_ONE, new byte[0]);
 
         agent.doWork();
@@ -170,7 +169,7 @@ public class ConsensusModuleAgentTest
         final long correlationId = 1L;
         agent.state(ConsensusModule.State.ACTIVE);
         agent.role(Cluster.Role.LEADER);
-        agent.appendedPositionCounter(mock(ReadableCounter.class));
+        agent.appendPositionCounter(mock(ReadableCounter.class));
         agent.onSessionConnect(correlationId, 2, PROTOCOL_SEMANTIC_VERSION, RESPONSE_CHANNEL_ONE, new byte[0]);
 
         agent.doWork();
@@ -209,6 +208,7 @@ public class ConsensusModuleAgentTest
         final MutableLong controlValue = new MutableLong(NEUTRAL.code());
         final Counter mockControlToggle = mock(Counter.class);
         when(mockControlToggle.get()).thenAnswer((invocation) -> controlValue.value);
+
         doAnswer(
             (invocation) ->
             {
@@ -217,32 +217,45 @@ public class ConsensusModuleAgentTest
             })
             .when(mockControlToggle).set(anyLong());
 
+        doAnswer(
+            (invocation) ->
+            {
+                final long expected = invocation.getArgument(0);
+                if (expected == controlValue.value)
+                {
+                    controlValue.value = invocation.getArgument(1);
+                    return true;
+                }
+                return false;
+            })
+            .when(mockControlToggle).compareAndSet(anyLong(), anyLong());
+
         ctx.moduleStateCounter(mockState);
         ctx.controlToggleCounter(mockControlToggle);
         ctx.epochClock(clock).clusterClock(clock);
 
         final ConsensusModuleAgent agent = new ConsensusModuleAgent(ctx);
-        agent.appendedPositionCounter(mock(ReadableCounter.class));
+        agent.appendPositionCounter(mock(ReadableCounter.class));
 
-        assertThat((int)stateValue.get(), is(ConsensusModule.State.INIT.code()));
+        assertEquals(ConsensusModule.State.INIT.code(), stateValue.get());
 
         agent.state(ConsensusModule.State.ACTIVE);
         agent.role(Cluster.Role.LEADER);
-        assertThat((int)stateValue.get(), is(ConsensusModule.State.ACTIVE.code()));
+        assertEquals(ConsensusModule.State.ACTIVE.code(), stateValue.get());
 
-        controlValue.value = SUSPEND.code();
+        SUSPEND.toggle(mockControlToggle);
         clock.update(SLOW_TICK_INTERVAL_MS, TimeUnit.MILLISECONDS);
         agent.doWork();
 
-        assertThat((int)stateValue.get(), is(ConsensusModule.State.SUSPENDED.code()));
-        assertThat((int)controlValue.get(), is(NEUTRAL.code()));
+        assertEquals(ConsensusModule.State.SUSPENDED.code(), stateValue.get());
+        assertEquals(SUSPEND.code(), controlValue.get());
 
-        controlValue.value = RESUME.code();
+        RESUME.toggle(mockControlToggle);
         clock.update(SLOW_TICK_INTERVAL_MS * 2, TimeUnit.MILLISECONDS);
         agent.doWork();
 
-        assertThat((int)stateValue.get(), is(ConsensusModule.State.ACTIVE.code()));
-        assertThat((int)controlValue.get(), is(NEUTRAL.code()));
+        assertEquals(ConsensusModule.State.ACTIVE.code(), stateValue.get());
+        assertEquals(NEUTRAL.code(), controlValue.get());
 
         final InOrder inOrder = Mockito.inOrder(mockLogPublisher);
         inOrder.verify(mockLogPublisher).appendClusterAction(anyLong(), anyLong(), eq(ClusterAction.SUSPEND));

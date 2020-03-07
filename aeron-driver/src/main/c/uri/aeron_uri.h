@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -59,11 +59,13 @@ aeron_uri_params_t;
 #define AERON_URI_SESSION_ID_KEY "session-id"
 #define AERON_URI_GROUP_KEY "group"
 #define AERON_URI_REJOIN_KEY "rejoin"
+#define AERON_URI_FC_KEY "fc"
+#define AERON_URI_GTAG_KEY "gtag"
 #define AERON_URI_CC_KEY "cc"
 
 typedef struct aeron_uri_publication_params_stct
 {
-    bool is_replay;
+    bool has_position;
     bool is_sparse;
     bool signal_eos;
     size_t mtu_length;
@@ -72,6 +74,8 @@ typedef struct aeron_uri_publication_params_stct
     int32_t initial_term_id;
     int32_t term_id;
     uint64_t linger_timeout_ns;
+    bool has_session_id;
+    int32_t session_id;
 }
 aeron_uri_publication_params_t;
 
@@ -82,26 +86,28 @@ typedef struct aeron_uri_subscription_params_stct
     bool is_tether;
     bool is_rejoin;
     aeron_inferable_boolean_t group;
+    bool has_session_id;
+    int32_t session_id;
 }
 aeron_uri_subscription_params_t;
 
 typedef struct aeron_udp_channel_params_stct
 {
-    const char *endpoint_key;
-    const char *interface_key;
-    const char *ttl_key;
-    const char *control_key;
-    const char *control_mode_key;
-    const char *channel_tag_key;
-    const char *entity_tag_key;
+    const char *endpoint;
+    const char *bind_interface;
+    const char *control;
+    const char *control_mode;
+    const char *channel_tag;
+    const char *entity_tag;
+    const char *ttl;
     aeron_uri_params_t additional_params;
 }
 aeron_udp_channel_params_t;
 
 typedef struct aeron_ipc_channel_params_stct
 {
-    const char *channel_tag_key;
-    const char *entity_tag_key;
+    const char *channel_tag;
+    const char *entity_tag;
     aeron_uri_params_t additional_params;
 }
 aeron_ipc_channel_params_t;
@@ -140,6 +146,7 @@ void aeron_uri_close(aeron_uri_t *params);
 uint8_t aeron_uri_multicast_ttl(aeron_uri_t *uri);
 
 const char *aeron_uri_find_param_value(aeron_uri_params_t *uri_params, const char *key);
+int aeron_uri_get_int64(aeron_uri_params_t *uri_params, const char *key, int64_t *retval);
 
 typedef struct aeron_driver_context_stct aeron_driver_context_t;
 typedef struct aeron_driver_conductor_stct aeron_driver_conductor_t;

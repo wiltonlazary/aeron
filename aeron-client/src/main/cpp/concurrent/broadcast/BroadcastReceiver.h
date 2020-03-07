@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,7 +28,7 @@ namespace aeron { namespace concurrent { namespace broadcast {
 class BroadcastReceiver
 {
 public:
-    BroadcastReceiver(AtomicBuffer& buffer) :
+    explicit BroadcastReceiver(AtomicBuffer& buffer) :
         m_buffer(buffer),
         m_capacity(buffer.capacity() - BroadcastBufferDescriptor::TRAILER_LENGTH),
         m_mask(m_capacity - 1),

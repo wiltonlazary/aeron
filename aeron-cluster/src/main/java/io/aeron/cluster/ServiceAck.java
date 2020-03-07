@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,26 +15,24 @@
  */
 package io.aeron.cluster;
 
-import static io.aeron.Aeron.NULL_VALUE;
+import io.aeron.cluster.client.ClusterException;
+
+import java.util.ArrayDeque;
 
 /**
  * State holder for ACKs from each of the services.
  */
 class ServiceAck
 {
-    private long logPosition = NULL_VALUE;
-    private long ackId = NULL_VALUE;
-    private long relevantId = NULL_VALUE;
+    private final long ackId;
+    private final long logPosition;
+    private final long relevantId;
 
-    long logPosition()
-    {
-        return logPosition;
-    }
-
-    ServiceAck logPosition(final long logPosition)
+    ServiceAck(final long ackId, final long logPosition, final long relevantId)
     {
         this.logPosition = logPosition;
-        return this;
+        this.ackId = ackId;
+        this.relevantId = relevantId;
     }
 
     long ackId()
@@ -42,10 +40,9 @@ class ServiceAck
         return ackId;
     }
 
-    ServiceAck ackId(final long ackId)
+    long logPosition()
     {
-        this.ackId = ackId;
-        return this;
+        return logPosition;
     }
 
     long relevantId()
@@ -53,33 +50,58 @@ class ServiceAck
         return relevantId;
     }
 
-    ServiceAck relevantId(final long relevantId)
+    static boolean hasReachedPosition(final long logPosition, final long ackId, final ArrayDeque<ServiceAck>[] queues)
     {
-        this.relevantId = relevantId;
-        return this;
-    }
-
-    static boolean hasReachedPosition(final long position, final long ackId, final ServiceAck[] serviceAcks)
-    {
-        for (final ServiceAck serviceAck : serviceAcks)
+        for (int serviceId = 0, length = queues.length; serviceId < length; serviceId++)
         {
-            if (serviceAck.logPosition() < position || serviceAck.ackId() < ackId)
+            final ArrayDeque<ServiceAck> serviceAckQueue = queues[serviceId];
+            final ServiceAck serviceAck = serviceAckQueue.peek();
+
+            if (null == serviceAck)
             {
                 return false;
+            }
+
+            if (serviceAck.ackId != ackId)
+            {
+                throw new ClusterException(ackId + " ack out of sequence " + serviceAck);
+            }
+
+            if (serviceAck.logPosition != logPosition)
+            {
+                throw new ClusterException(logPosition + " log position out of sequence " + serviceAck);
             }
         }
 
         return true;
     }
 
-    static ServiceAck[] newArray(final int serviceCount)
+    static void removeHead(final ArrayDeque<ServiceAck>[] queues)
     {
-        final ServiceAck[] states = new ServiceAck[serviceCount];
+        for (final ArrayDeque<ServiceAck> queue : queues)
+        {
+            queue.pollFirst();
+        }
+    }
+
+    static ArrayDeque<ServiceAck>[] newArray(final int serviceCount)
+    {
+        @SuppressWarnings("unchecked") final ArrayDeque<ServiceAck>[] queues = new ArrayDeque[serviceCount];
+
         for (int i = 0; i < serviceCount; i++)
         {
-            states[i] = new ServiceAck();
+            queues[i] = new ArrayDeque<>();
         }
 
-        return states;
+        return queues;
+    }
+
+    public String toString()
+    {
+        return "ServiceAck{" +
+            "ackId=" + ackId +
+            ", logPosition=" + logPosition +
+            ", relevantId=" + relevantId +
+            '}';
     }
 }

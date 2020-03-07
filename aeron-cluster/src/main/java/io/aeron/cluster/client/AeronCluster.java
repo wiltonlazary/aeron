@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -49,13 +49,13 @@ import static org.agrona.SystemUtil.getDurationInNanos;
 public final class AeronCluster implements AutoCloseable
 {
     /**
-     * Length of a session message header for an ingress or egress with a cluster.
+     * Length of a session message header for cluster ingress or egress.
      */
     public static final int SESSION_HEADER_LENGTH =
         MessageHeaderEncoder.ENCODED_LENGTH + SessionMessageHeaderEncoder.BLOCK_LENGTH;
 
-    static final int SEND_ATTEMPTS = 3;
-    static final int FRAGMENT_LIMIT = 10;
+    private static final int SEND_ATTEMPTS = 3;
+    private static final int FRAGMENT_LIMIT = 10;
 
     private final long clusterSessionId;
     private long leadershipTermId;
@@ -114,13 +114,23 @@ public final class AeronCluster implements AutoCloseable
             final AgentInvoker aeronClientInvoker = aeron.conductorAgentInvoker();
 
             AeronCluster aeronCluster;
+            int step = asyncConnect.step();
             while (null == (aeronCluster = asyncConnect.poll()))
             {
                 if (null != aeronClientInvoker)
                 {
                     aeronClientInvoker.invoke();
                 }
-                idleStrategy.idle();
+
+                if (step != asyncConnect.step())
+                {
+                    step = asyncConnect.step();
+                    idleStrategy.reset();
+                }
+                else
+                {
+                    idleStrategy.idle();
+                }
             }
 
             return aeronCluster;
@@ -133,11 +143,10 @@ public final class AeronCluster implements AutoCloseable
         {
             if (!ctx.ownsAeronClient())
             {
-                CloseHelper.close(subscription);
-                CloseHelper.close(asyncConnect);
+                CloseHelper.quietCloseAll(subscription, asyncConnect);
             }
 
-            ctx.close();
+            CloseHelper.quietClose(ctx::close);
 
             throw ex;
         }
@@ -186,7 +195,7 @@ public final class AeronCluster implements AutoCloseable
         }
     }
 
-    private AeronCluster(
+    AeronCluster(
         final Context ctx,
         final MessageHeaderEncoder messageHeaderEncoder,
         final Publication publication,
@@ -238,8 +247,9 @@ public final class AeronCluster implements AutoCloseable
 
         if (!ctx.ownsAeronClient())
         {
-            CloseHelper.close(subscription);
-            CloseHelper.close(publication);
+            final ErrorHandler errorHandler = ctx.errorHandler();
+            CloseHelper.close(errorHandler, subscription);
+            CloseHelper.close(errorHandler, publication);
         }
 
         ctx.close();
@@ -337,10 +347,10 @@ public final class AeronCluster implements AutoCloseable
      *     }
      * }</pre>
      *
-     * @param length      of the range to claim, in bytes.
+     * @param length      of the range to claim in bytes. The additional bytes for the session header will be added.
      * @param bufferClaim to be populated if the claim succeeds.
      * @return The new stream position, otherwise a negative error value as specified in
-     *         {@link io.aeron.Publication#tryClaim(int, BufferClaim)}.
+     * {@link io.aeron.Publication#tryClaim(int, BufferClaim)}.
      * @throws IllegalArgumentException if the length is greater than {@link io.aeron.Publication#maxPayloadLength()}.
      * @see Publication#tryClaim(int, BufferClaim)
      * @see BufferClaim#commit()
@@ -692,13 +702,12 @@ public final class AeronCluster implements AutoCloseable
             {
                 sessionCloseRequestEncoder
                     .wrapAndApplyHeader(bufferClaim.buffer(), bufferClaim.offset(), messageHeaderEncoder)
+                    .leadershipTermId(leadershipTermId)
                     .clusterSessionId(clusterSessionId);
 
                 bufferClaim.commit();
                 break;
             }
-
-            checkResult(result);
 
             if (--attempts <= 0)
             {
@@ -718,16 +727,6 @@ public final class AeronCluster implements AutoCloseable
         else
         {
             return ctx.aeron().addPublication(channel, streamId);
-        }
-    }
-
-    private static void checkResult(final long result)
-    {
-        if (result == Publication.NOT_CONNECTED ||
-            result == Publication.CLOSED ||
-            result == Publication.MAX_POSITION_EXCEEDED)
-        {
-            throw new ClusterException("unexpected publication state: " + result);
         }
     }
 
@@ -996,7 +995,7 @@ public final class AeronCluster implements AutoCloseable
          */
         public long messageTimeoutNs()
         {
-            return messageTimeoutNs;
+            return CommonContext.checkDebugTimeout(messageTimeoutNs, TimeUnit.NANOSECONDS);
         }
 
         /**
@@ -1394,11 +1393,13 @@ public final class AeronCluster implements AutoCloseable
     {
         private final Subscription egressSubscription;
         private final long deadlineNs;
-        private long correlationId;
+        private long correlationId = Aeron.NULL_VALUE;
         private long clusterSessionId;
         private long leadershipTermId;
         private int leaderMemberId;
         private int step = 0;
+        private int messageLength = 0;
+        private boolean isChallenged = false;
 
         private final Context ctx;
         private final NanoClock nanoClock;
@@ -1426,27 +1427,32 @@ public final class AeronCluster implements AutoCloseable
         {
             if (5 != step)
             {
-                CloseHelper.close(ingressPublication);
-                CloseHelper.close(egressSubscription);
-                endpointByMemberIdMap.values().forEach(MemberEndpoint::disconnect);
+                final ErrorHandler errorHandler = ctx.errorHandler();
+                CloseHelper.close(errorHandler, ingressPublication);
+                CloseHelper.close(errorHandler, egressSubscription);
+                for (final MemberEndpoint memberEndpoint : endpointByMemberIdMap.values())
+                {
+                    CloseHelper.close(errorHandler, memberEndpoint::disconnect);
+                }
+
                 ctx.close();
             }
         }
 
         /**
-         * Indicates which step in the connect process has been reached.
+         * Indicates which step in the connect process has reached.
          *
-         * @return which step in the connect process has been reached.
+         * @return which step in the connect process has reached.
          */
         public int step()
         {
             return step;
         }
 
-        private void step(final int step)
+        private void step(final int newStep)
         {
-            //System.out.println(this.step + " -> " + step);
-            this.step = step;
+            //System.out.println("AeronCluster.AsyncConnect " + step + " -> " + newStep);
+            step = newStep;
         }
 
         /**
@@ -1549,30 +1555,36 @@ public final class AeronCluster implements AutoCloseable
 
         private void prepareConnectRequest()
         {
-            correlationId = ctx.aeron().nextCorrelationId();
-            final byte[] encodedCredentials = ctx.credentialsSupplier().encodedCredentials();
+            if (Aeron.NULL_VALUE == correlationId || isChallenged)
+            {
+                correlationId = ctx.aeron().nextCorrelationId();
+                final byte[] encodedCredentials = ctx.credentialsSupplier().encodedCredentials();
 
-            new SessionConnectRequestEncoder()
-                .wrapAndApplyHeader(buffer, 0, messageHeaderEncoder)
-                .correlationId(correlationId)
-                .responseStreamId(ctx.egressStreamId())
-                .version(Configuration.PROTOCOL_SEMANTIC_VERSION)
-                .responseChannel(ctx.egressChannel())
-                .putEncodedCredentials(encodedCredentials, 0, encodedCredentials.length);
+                final SessionConnectRequestEncoder encoder = new SessionConnectRequestEncoder();
+                encoder
+                    .wrapAndApplyHeader(buffer, 0, messageHeaderEncoder)
+                    .correlationId(correlationId)
+                    .responseStreamId(ctx.egressStreamId())
+                    .version(Configuration.PROTOCOL_SEMANTIC_VERSION)
+                    .responseChannel(ctx.egressChannel())
+                    .putEncodedCredentials(encodedCredentials, 0, encodedCredentials.length);
+
+                messageLength = MessageHeaderEncoder.ENCODED_LENGTH + encoder.encodedLength();
+            }
 
             step(2);
         }
 
         private void sendMessage()
         {
-            final long result = ingressPublication.offer(buffer);
+            final long result = ingressPublication.offer(buffer, 0, messageLength);
             if (result > 0)
             {
                 step(3);
             }
-            else if (Publication.CLOSED == result)
+            else if (Publication.CLOSED == result || Publication.NOT_CONNECTED == result)
             {
-                throw new ClusterException("unexpected close from cluster");
+                throw new ClusterException("unexpected loss of connection to cluster");
             }
         }
 
@@ -1584,6 +1596,7 @@ public final class AeronCluster implements AutoCloseable
             {
                 if (egressPoller.isChallenged())
                 {
+                    isChallenged = true;
                     clusterSessionId = egressPoller.clusterSessionId();
                     prepareChallengeResponse(ctx.credentialsSupplier().onChallenge(egressPoller.encodedChallenge()));
                     step(2);
@@ -1616,11 +1629,14 @@ public final class AeronCluster implements AutoCloseable
         {
             correlationId = ctx.aeron().nextCorrelationId();
 
-            new ChallengeResponseEncoder()
+            final ChallengeResponseEncoder encoder = new ChallengeResponseEncoder();
+            encoder
                 .wrapAndApplyHeader(buffer, 0, messageHeaderEncoder)
                 .correlationId(correlationId)
                 .clusterSessionId(clusterSessionId)
                 .putEncodedCredentials(encodedCredentials, 0, encodedCredentials.length);
+
+            messageLength = MessageHeaderEncoder.ENCODED_LENGTH + encoder.encodedLength();
 
             step(2);
         }
@@ -1693,4 +1709,3 @@ public final class AeronCluster implements AutoCloseable
         }
     }
 }
-

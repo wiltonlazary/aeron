@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -45,6 +45,8 @@ public:
         m_tags.reset(nullptr);
         m_alias.reset(nullptr);
         m_cc.reset(nullptr);
+        m_fc.reset(nullptr);
+        m_gtag.reset(nullptr);
         m_reliable.reset(nullptr);
         m_ttl.reset(nullptr);
         m_mtu.reset(nullptr);
@@ -138,6 +140,18 @@ public:
         return *this;
     }
 
+    inline this_t& flowControl(const std::string& flowControl)
+    {
+        m_fc.reset(new std::string(flowControl));
+        return *this;
+    }
+
+    inline this_t& groupTag(std::int64_t gtag)
+    {
+        m_gtag.reset(new Value(gtag));
+        return *this;
+    }
+
     inline this_t& reliable(bool reliable)
     {
         m_reliable.reset(new Value(reliable ? 1 : 0));
@@ -163,7 +177,7 @@ public:
             throw IllegalArgumentException("MTU not in range 32-65504: " + std::to_string(mtu), SOURCEINFO);
         }
 
-        if ((mtu & (concurrent::logbuffer::FrameDescriptor::FRAME_ALIGNMENT - 1)) != 0)
+        if (0 != (mtu & static_cast<std::uint32_t>(concurrent::logbuffer::FrameDescriptor::FRAME_ALIGNMENT - 1)))
         {
             throw IllegalArgumentException(
                 "MTU not a multiple of FRAME_ALIGNMENT: mtu=" + std::to_string(mtu), SOURCEINFO);
@@ -199,7 +213,7 @@ public:
             throw IllegalArgumentException("term offset not in range 0-1g: " + std::to_string(termOffset), SOURCEINFO);
         }
 
-        if (0 != (termOffset & (concurrent::logbuffer::FrameDescriptor::FRAME_ALIGNMENT - 1)))
+        if (0 != (termOffset & static_cast<std::uint32_t>(concurrent::logbuffer::FrameDescriptor::FRAME_ALIGNMENT - 1)))
         {
             throw IllegalArgumentException(
                 "term offset not multiple of FRAME_ALIGNMENT: " + std::to_string(termOffset), SOURCEINFO);
@@ -359,6 +373,16 @@ public:
             sb << CONGESTION_CONTROL_PARAM_NAME << '=' << *m_cc << '|';
         }
 
+        if (m_fc)
+        {
+            sb << FLOW_CONTROL_PARAM_NAME << '=' << *m_fc << '|';
+        }
+
+        if (m_gtag)
+        {
+            sb << GROUP_TAG_PARAM_NAME << '=' << std::to_string(m_gtag->value) << '|';
+        }
+
         if (m_sparse)
         {
             sb << SPARSE_PARAM_NAME << '=' << (m_sparse->value == 1 ? "true" : "false") << '|';
@@ -414,6 +438,7 @@ private:
     std::unique_ptr<std::string> m_tags;
     std::unique_ptr<std::string> m_alias;
     std::unique_ptr<std::string> m_cc;
+    std::unique_ptr<std::string> m_fc;
     std::unique_ptr<Value> m_reliable;
     std::unique_ptr<Value> m_ttl;
     std::unique_ptr<Value> m_mtu;
@@ -422,6 +447,7 @@ private:
     std::unique_ptr<Value> m_termId;
     std::unique_ptr<Value> m_termOffset;
     std::unique_ptr<Value> m_sessionId;
+    std::unique_ptr<Value> m_gtag;
     std::unique_ptr<Value> m_linger;
     std::unique_ptr<Value> m_sparse;
     std::unique_ptr<Value> m_eos;

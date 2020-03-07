@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -121,7 +121,8 @@ TEST_F(ManyToOneRingBufferTest, shouldRejectWriteWhenInsufficientSpace)
 {
     util::index_t length = 100;
     util::index_t head = 0;
-    util::index_t tail = head + (CAPACITY - util::BitUtil::align(length - RecordDescriptor::ALIGNMENT, RecordDescriptor::ALIGNMENT));
+    util::index_t tail =
+        head + (CAPACITY - util::BitUtil::align(length - RecordDescriptor::ALIGNMENT, RecordDescriptor::ALIGNMENT));
     util::index_t srcIndex = 0;
 
     m_ab.putInt64(HEAD_COUNTER_INDEX, head);
@@ -200,7 +201,8 @@ TEST_F(ManyToOneRingBufferTest, shouldReadNothingFromEmptyBuffer)
     m_ab.putInt64(TAIL_COUNTER_INDEX, tail);
 
     int timesCalled = 0;
-    const int messagesRead = m_ringBuffer.read([&](std::int32_t, concurrent::AtomicBuffer&, util::index_t, util::index_t)
+    const int messagesRead = m_ringBuffer.read(
+        [&](std::int32_t, concurrent::AtomicBuffer&, util::index_t, util::index_t)
         {
             timesCalled++;
         });
@@ -224,10 +226,11 @@ TEST_F(ManyToOneRingBufferTest, shouldReadSingleMessage)
     m_ab.putInt32(RecordDescriptor::lengthOffset(0), recordLength);
 
     int timesCalled = 0;
-    const int messagesRead = m_ringBuffer.read([&](std::int32_t, concurrent::AtomicBuffer&, util::index_t, util::index_t)
-    {
-        timesCalled++;
-    });
+    const int messagesRead = m_ringBuffer.read(
+        [&](std::int32_t, concurrent::AtomicBuffer&, util::index_t, util::index_t)
+        {
+            timesCalled++;
+        });
 
     EXPECT_EQ(messagesRead, 1);
     EXPECT_EQ(timesCalled, 1);
@@ -252,10 +255,11 @@ TEST_F(ManyToOneRingBufferTest, shouldNotReadSingleMessagePartWayThroughWriting)
     m_ab.putInt32(RecordDescriptor::lengthOffset(0), -recordLength);
 
     int timesCalled = 0;
-    const int messagesRead = m_ringBuffer.read([&](std::int32_t, concurrent::AtomicBuffer&, util::index_t, util::index_t)
-    {
-        timesCalled++;
-    });
+    const int messagesRead = m_ringBuffer.read(
+        [&](std::int32_t, concurrent::AtomicBuffer&, util::index_t, util::index_t)
+        {
+            timesCalled++;
+        });
 
     EXPECT_EQ(messagesRead, 0);
     EXPECT_EQ(timesCalled, 0);
@@ -280,10 +284,11 @@ TEST_F(ManyToOneRingBufferTest, shouldReadTwoMessages)
     m_ab.putInt32(RecordDescriptor::lengthOffset(0 + alignedRecordLength), recordLength);
 
     int timesCalled = 0;
-    const int messagesRead = m_ringBuffer.read([&](std::int32_t, concurrent::AtomicBuffer&, util::index_t, util::index_t)
-    {
-        timesCalled++;
-    });
+    const int messagesRead = m_ringBuffer.read(
+        [&](std::int32_t, concurrent::AtomicBuffer&, util::index_t, util::index_t)
+        {
+            timesCalled++;
+        });
 
     EXPECT_EQ(messagesRead, 2);
     EXPECT_EQ(timesCalled, 2);
@@ -291,7 +296,7 @@ TEST_F(ManyToOneRingBufferTest, shouldReadTwoMessages)
 
     for (int i = 0; i < RecordDescriptor::ALIGNMENT * 2; i += 4)
     {
-        EXPECT_EQ(m_ab.getInt32(i), 0) << "buffer has not been zeroed between indexes " << i << "-" << i+3;
+        EXPECT_EQ(m_ab.getInt32(i), 0) << "buffer has not been zeroed between indexes " << i << "-" << i + 3;
     }
 }
 
@@ -313,10 +318,12 @@ TEST_F(ManyToOneRingBufferTest, shouldLimitReadOfMessages)
     m_ab.putInt32(RecordDescriptor::lengthOffset(0 + alignedRecordLength), recordLength);
 
     int timesCalled = 0;
-    const int messagesRead = m_ringBuffer.read([&](std::int32_t, concurrent::AtomicBuffer&, util::index_t, util::index_t)
-    {
-        timesCalled++;
-    }, 1);
+    const int messagesRead = m_ringBuffer.read(
+        [&](std::int32_t, concurrent::AtomicBuffer&, util::index_t, util::index_t)
+        {
+            timesCalled++;
+        },
+        1);
 
     EXPECT_EQ(messagesRead, 1);
     EXPECT_EQ(timesCalled, 1);
@@ -324,7 +331,7 @@ TEST_F(ManyToOneRingBufferTest, shouldLimitReadOfMessages)
 
     for (int i = 0; i < RecordDescriptor::ALIGNMENT; i += 4)
     {
-        EXPECT_EQ(m_ab.getInt32(i), 0) << "buffer has not been zeroed between indexes " << i << "-" << i+3;
+        EXPECT_EQ(m_ab.getInt32(i), 0) << "buffer has not been zeroed between indexes " << i << "-" << i + 3;
     }
     EXPECT_EQ(m_ab.getInt32(RecordDescriptor::lengthOffset(alignedRecordLength)), recordLength);
 }
@@ -347,7 +354,8 @@ TEST_F(ManyToOneRingBufferTest, shouldCopeWithExceptionFromHandler)
     m_ab.putInt32(RecordDescriptor::lengthOffset(0 + alignedRecordLength), recordLength);
 
     int timesCalled = 0;
-    auto handler = [&](std::int32_t, concurrent::AtomicBuffer&, util::index_t, util::index_t)
+    auto handler =
+        [&](std::int32_t, concurrent::AtomicBuffer&, util::index_t, util::index_t)
         {
             timesCalled++;
             if (2 == timesCalled)
@@ -373,7 +381,7 @@ TEST_F(ManyToOneRingBufferTest, shouldCopeWithExceptionFromHandler)
 
     for (int i = 0; i < RecordDescriptor::ALIGNMENT * 2; i += 4)
     {
-        EXPECT_EQ(m_ab.getInt32(i), 0) << "buffer has not been zeroed between indexes " << i << "-" << i+3;
+        EXPECT_EQ(m_ab.getInt32(i), 0) << "buffer has not been zeroed between indexes " << i << "-" << i + 3;
     }
 }
 
@@ -486,7 +494,7 @@ TEST_F(ManyToOneRingBufferTest, shouldNotUnblockGapWithMessageRaceWhenScanForwar
 #define NUM_IDS_PER_THREAD (10 * 1000 * 1000)
 #define NUM_PUBLISHERS (2)
 
-TEST(ManyToOneRingBufferConcurrentTest, shouldProvideCcorrelationIds)
+TEST(ManyToOneRingBufferConcurrentTest, shouldProvideCorrelationIds)
 {
     AERON_DECL_ALIGNED(buffer_t mpscBuffer, 16);
     mpscBuffer.fill(0);
@@ -499,19 +507,20 @@ TEST(ManyToOneRingBufferConcurrentTest, shouldProvideCcorrelationIds)
 
     for (int i = 0; i < NUM_PUBLISHERS; i++)
     {
-        threads.push_back(std::thread([&]()
-        {
-            countDown--;
-            while (countDown > 0)
+        threads.push_back(std::thread(
+            [&]()
             {
-                std::this_thread::yield(); // spin until we is ready
-            }
+                countDown--;
+                while (countDown > 0)
+                {
+                    std::this_thread::yield(); // spin until we is ready
+                }
 
-            for (int m = 0; m < NUM_IDS_PER_THREAD; m++)
-            {
-                ringBuffer.nextCorrelationId();
-            }
-        }));
+                for (int m = 0; m < NUM_IDS_PER_THREAD; m++)
+                {
+                    ringBuffer.nextCorrelationId();
+                }
+            }));
     }
 
     for (std::thread &thr: threads)
@@ -536,33 +545,34 @@ TEST(ManyToOneRingBufferConcurrentTest, shouldExchangeMessages)
 
     for (int i = 0; i < NUM_PUBLISHERS; i++)
     {
-        threads.push_back(std::thread([&]()
-        {
-            AERON_DECL_ALIGNED(buffer_t srcBuffer, 16);
-            srcBuffer.fill(0);
-            AtomicBuffer srcAb(&srcBuffer[0], srcBuffer.size());
-            int id = publisherId.fetch_add(1);
-
-            countDown--;
-            while (countDown > 0)
+        threads.push_back(std::thread(
+            [&]()
             {
-                std::this_thread::yield(); // spin until we is ready
-            }
+                AERON_DECL_ALIGNED(buffer_t srcBuffer, 16);
+                srcBuffer.fill(0);
+                AtomicBuffer srcAb(&srcBuffer[0], srcBuffer.size());
+                int id = publisherId.fetch_add(1);
 
-            const int messageLength = 4 + 4;
-            const int messageNumOffset = 4;
-
-            srcAb.putInt32(0, id);
-
-            for (int m = 0; m < NUM_MESSAGES_PER_PUBLISHER; m++)
-            {
-                srcAb.putInt32(messageNumOffset, m);
-                while (!ringBuffer.write(MSG_TYPE_ID, srcAb, 0, messageLength))
+                countDown--;
+                while (countDown > 0)
                 {
-                    std::this_thread::yield();
+                    std::this_thread::yield(); // spin until we is ready
                 }
-            }
-        }));
+
+                const int messageLength = 4 + 4;
+                const int messageNumOffset = 4;
+
+                srcAb.putInt32(0, id);
+
+                for (int m = 0; m < NUM_MESSAGES_PER_PUBLISHER; m++)
+                {
+                    srcAb.putInt32(messageNumOffset, m);
+                    while (!ringBuffer.write(MSG_TYPE_ID, srcAb, 0, messageLength))
+                    {
+                        std::this_thread::yield();
+                    }
+                }
+            }));
     }
 
     try
@@ -570,25 +580,29 @@ TEST(ManyToOneRingBufferConcurrentTest, shouldExchangeMessages)
         int msgCount = 0;
         int counts[NUM_PUBLISHERS];
 
-        for (int i = 0; i < NUM_PUBLISHERS; i++)
+        for (int & count : counts)
         {
-            counts[i] = 0;
+            count = 0;
         }
 
         while (msgCount < (NUM_MESSAGES_PER_PUBLISHER * NUM_PUBLISHERS))
         {
-            const int readCount = ringBuffer.read([&counts](
-                std::int32_t msgTypeId, concurrent::AtomicBuffer &buffer, util::index_t index, util::index_t length)
-                {
-                    const std::int32_t id = buffer.getInt32(index);
-                    const std::int32_t messageNumber = buffer.getInt32(index + 4);
+            const int readCount = ringBuffer.read(
+                [&counts](
+                        std::int32_t msgTypeId,
+                        concurrent::AtomicBuffer &buffer,
+                        util::index_t index,
+                        util::index_t length)
+                    {
+                        const std::int32_t id = buffer.getInt32(index);
+                        const std::int32_t messageNumber = buffer.getInt32(index + 4);
 
-                    EXPECT_EQ(length, 4 + 4);
-                    ASSERT_EQ(msgTypeId, MSG_TYPE_ID);
+                        EXPECT_EQ(length, 4 + 4);
+                        ASSERT_EQ(msgTypeId, MSG_TYPE_ID);
 
-                    EXPECT_EQ(counts[id], messageNumber);
-                    counts[id]++;
-                });
+                        EXPECT_EQ(counts[id], messageNumber);
+                        counts[id]++;
+                    });
 
             if (0 == readCount)
             {

@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,42 +19,42 @@ import io.aeron.driver.MediaDriver;
 import io.aeron.driver.ThreadingMode;
 import io.aeron.logbuffer.FragmentHandler;
 import io.aeron.protocol.DataHeaderFlyweight;
+import io.aeron.test.TestMediaDriver;
+import io.aeron.test.Tests;
 import org.agrona.CloseHelper;
 import org.agrona.concurrent.UnsafeBuffer;
-import org.junit.After;
-import org.junit.Test;
-import org.junit.experimental.theories.DataPoint;
-import org.junit.experimental.theories.Theories;
-import org.junit.experimental.theories.Theory;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import java.nio.ByteBuffer;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static org.junit.Assert.*;
+import static java.util.Arrays.asList;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
-@RunWith(Theories.class)
 public class UntetheredSubscriptionTest
 {
-    @DataPoint
-    public static final String IPC_CHANNEL = "aeron:ipc?term-length=64k";
+    private static List<String> channels()
+    {
+        return asList(
+            "aeron:ipc?term-length=64k",
+            "aeron:udp?endpoint=localhost:24325|term-length=64k",
+            "aeron-spy:aeron:udp?endpoint=localhost:24325|term-length=64k");
+    }
 
-    @DataPoint
-    public static final String UNICAST_CHANNEL = "aeron:udp?endpoint=localhost:54325|term-length=64k";
-
-    @DataPoint
-    public static final String SPY_CHANNEL = "aeron-spy:aeron:udp?endpoint=localhost:54325|term-length=64k";
-
-    private static final int STREAM_ID = 1;
+    private static final int STREAM_ID = 1001;
     private static final int FRAGMENT_COUNT_LIMIT = 10;
     private static final int MESSAGE_LENGTH = 512 - DataHeaderFlyweight.HEADER_LENGTH;
 
-    private final MediaDriver driver = MediaDriver.launch(new MediaDriver.Context()
+    private final TestMediaDriver driver = TestMediaDriver.launch(new MediaDriver.Context()
         .errorHandler(Throwable::printStackTrace)
         .spiesSimulateConnection(true)
-        .dirDeleteOnShutdown(true)
         .dirDeleteOnStart(true)
         .timerIntervalNs(TimeUnit.MILLISECONDS.toNanos(20))
         .untetheredWindowLimitTimeoutNs(TimeUnit.MILLISECONDS.toNanos(100))
@@ -65,15 +65,16 @@ public class UntetheredSubscriptionTest
         .useConductorAgentInvoker(true)
         .errorHandler(Throwable::printStackTrace));
 
-    @After
+    @AfterEach
     public void after()
     {
-        CloseHelper.close(aeron);
-        CloseHelper.close(driver);
+        CloseHelper.closeAll(aeron, driver);
+        driver.context().deleteDirectory();
     }
 
-    @Theory
-    @Test(timeout = 10_000)
+    @ParameterizedTest
+    @MethodSource("channels")
+    @Timeout(10)
     public void shouldBecomeUnavailableWhenNotKeepingUp(final String channel)
     {
         final FragmentHandler fragmentHandler = (buffer, offset, length, header) -> {};
@@ -91,8 +92,8 @@ public class UntetheredSubscriptionTest
         {
             while (!tetheredSub.isConnected() || !untetheredSub.isConnected())
             {
-                SystemTest.checkInterruptedStatus();
                 Thread.yield();
+                Tests.checkInterruptStatus();
                 aeron.conductorAgentInvoker().invoke();
             }
 
@@ -100,8 +101,8 @@ public class UntetheredSubscriptionTest
             {
                 if (publication.offer(srcBuffer) < 0)
                 {
-                    SystemTest.checkInterruptedStatus();
                     Thread.yield();
+                    Tests.checkInterruptStatus();
                     aeron.conductorAgentInvoker().invoke();
                 }
 
@@ -119,8 +120,8 @@ public class UntetheredSubscriptionTest
 
                     while (publication.offer(srcBuffer) < 0)
                     {
-                        SystemTest.checkInterruptedStatus();
                         Thread.yield();
+                        Tests.checkInterruptStatus();
                         aeron.conductorAgentInvoker().invoke();
                     }
 
@@ -130,8 +131,9 @@ public class UntetheredSubscriptionTest
         }
     }
 
-    @Theory
-    @Test(timeout = 10_000)
+    @ParameterizedTest
+    @MethodSource("channels")
+    @Timeout(10)
     public void shouldRejoinAfterResting(final String channel)
     {
         final AtomicInteger unavailableImageCount = new AtomicInteger();
@@ -152,8 +154,8 @@ public class UntetheredSubscriptionTest
         {
             while (!tetheredSub.isConnected() || !untetheredSub.isConnected())
             {
-                SystemTest.checkInterruptedStatus();
                 Thread.yield();
+                Tests.checkInterruptStatus();
                 aeron.conductorAgentInvoker().invoke();
             }
 
@@ -161,8 +163,8 @@ public class UntetheredSubscriptionTest
             {
                 if (publication.offer(srcBuffer) < 0)
                 {
-                    SystemTest.checkInterruptedStatus();
                     Thread.yield();
+                    Tests.checkInterruptStatus();
                     aeron.conductorAgentInvoker().invoke();
                 }
 
@@ -177,8 +179,8 @@ public class UntetheredSubscriptionTest
                 {
                     while (availableImageCount.get() < 2)
                     {
-                        SystemTest.checkInterruptedStatus();
                         Thread.yield();
+                        Tests.checkInterruptStatus();
                         aeron.conductorAgentInvoker().invoke();
                     }
 

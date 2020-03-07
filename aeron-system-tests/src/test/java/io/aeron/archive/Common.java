@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,35 +18,33 @@ package io.aeron.archive;
 import io.aeron.FragmentAssembler;
 import io.aeron.Publication;
 import io.aeron.Subscription;
-import io.aeron.SystemTest;
 import io.aeron.archive.client.RecordingSignalAdapter;
 import io.aeron.archive.codecs.RecordingSignal;
 import io.aeron.archive.status.RecordingPos;
 import io.aeron.logbuffer.FragmentHandler;
 import io.aeron.logbuffer.LogBufferDescriptor;
+import io.aeron.test.Tests;
 import org.agrona.ExpandableArrayBuffer;
 import org.agrona.collections.MutableInteger;
 import org.agrona.collections.MutableReference;
 import org.agrona.concurrent.status.CountersReader;
 
 import static io.aeron.Aeron.NULL_VALUE;
-import static org.hamcrest.core.Is.is;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertThat;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class Common
 {
-    static final long MAX_CATALOG_ENTRIES = 1024;
-    static final int TERM_BUFFER_LENGTH = LogBufferDescriptor.TERM_MIN_LENGTH;
+    static final long MAX_CATALOG_ENTRIES = 128;
+    static final int TERM_LENGTH = LogBufferDescriptor.TERM_MIN_LENGTH;
     static final int FRAGMENT_LIMIT = 10;
 
-    static int getRecordingCounterId(final CountersReader counters, final int sessionId)
+    static int awaitRecordingCounterId(final CountersReader counters, final int sessionId)
     {
         int counterId;
         while (NULL_VALUE == (counterId = RecordingPos.findCounterIdBySession(counters, sessionId)))
         {
-            SystemTest.checkInterruptedStatus();
             Thread.yield();
+            Tests.checkInterruptStatus();
         }
 
         return counterId;
@@ -62,8 +60,24 @@ class Common
 
             while (publication.offer(buffer, 0, length) <= 0)
             {
-                SystemTest.checkInterruptedStatus();
                 Thread.yield();
+                Tests.checkInterruptStatus();
+            }
+        }
+    }
+
+    static void offerToPosition(final Publication publication, final String prefix, final long minimumPosition)
+    {
+        final ExpandableArrayBuffer buffer = new ExpandableArrayBuffer();
+
+        for (int i = 0; publication.position() < minimumPosition; i++)
+        {
+            final int length = buffer.putStringWithoutLengthAscii(0, prefix + i);
+
+            while (publication.offer(buffer, 0, length) <= 0)
+            {
+                Thread.yield();
+                Tests.checkInterruptStatus();
             }
         }
     }
@@ -87,12 +101,12 @@ class Common
         {
             if (0 == subscription.poll(fragmentHandler, FRAGMENT_LIMIT))
             {
-                SystemTest.checkInterruptedStatus();
                 Thread.yield();
+                Tests.checkInterruptStatus();
             }
         }
 
-        assertThat(received.get(), is(count));
+        assertEquals(count, received.get());
     }
 
     static void awaitPosition(final CountersReader counters, final int counterId, final long position)
@@ -104,8 +118,8 @@ class Common
                 throw new IllegalStateException("count not active: " + counterId);
             }
 
-            SystemTest.checkInterruptedStatus();
             Thread.yield();
+            Tests.checkInterruptStatus();
         }
     }
 
@@ -113,8 +127,8 @@ class Common
     {
         while (0 == recordingSignalAdapter.poll())
         {
-            SystemTest.checkInterruptedStatus();
             Thread.yield();
+            Tests.checkInterruptStatus();
         }
     }
 
@@ -127,5 +141,17 @@ class Common
             pollForSignal(adapter);
         }
         while (signalRef.get() == null);
+    }
+
+    static void awaitSignalOrResponse(
+        final MutableReference<RecordingSignal> signalRef, final RecordingSignalAdapter adapter)
+    {
+        signalRef.set(null);
+
+        do
+        {
+            pollForSignal(adapter);
+        }
+        while (signalRef.get() == null && !adapter.isDone());
     }
 }

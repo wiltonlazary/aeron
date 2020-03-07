@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,7 +21,8 @@
 #include "command/aeron_control_protocol.h"
 
 #define AERON_AGENT_MASK_ENV_VAR "AERON_EVENT_LOG"
-#define RING_BUFFER_LENGTH (2 * 1024 * 1024)
+#define AERON_EVENT_LOG_FILENAME_ENV_VAR "AERON_EVENT_LOG_FILENAME"
+#define RING_BUFFER_LENGTH (8 * 1024 * 1024)
 #define MAX_CMD_LENGTH (512)
 #define MAX_FRAME_LENGTH (512)
 
@@ -33,9 +34,6 @@
 #define AERON_MAP_RAW_LOG_OP (0x10)
 
 #define AERON_MAP_RAW_LOG_OP_CLOSE (0x11)
-
-#define AERON_AGENT_RECEIVE_DATA_LOSS_RATE_ENV_VAR "AERON_DEBUG_RECEIVE_DATA_LOSS_RATE"
-#define AERON_AGENT_RECEIVE_DATA_LOSS_SEED_ENV_VAR "AERON_DEBUG_RECEIVE_DATA_LOSS_SEED"
 
 typedef struct aeron_driver_agent_cmd_log_header_stct
 {
@@ -80,7 +78,9 @@ aeron_driver_agent_map_raw_log_op_header_t;
 
 typedef int (*aeron_driver_context_init_t)(aeron_driver_context_t **);
 
-static const char *dissect_log_start(int64_t time_ms);
+int aeron_driver_agent_context_init(aeron_driver_context_t *context);
+
+const char *dissect_log_start(int64_t time_ms);
 
 void aeron_driver_agent_log_dissector(int32_t msg_type_id, const void *message, size_t length, void *clientd);
 

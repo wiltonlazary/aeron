@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,8 +32,7 @@ import java.nio.file.attribute.FileAttribute;
 import java.util.EnumSet;
 
 import static io.aeron.archive.Archive.segmentFileName;
-import static io.aeron.archive.client.AeronArchive.NULL_LENGTH;
-import static io.aeron.archive.client.AeronArchive.NULL_POSITION;
+import static io.aeron.archive.client.AeronArchive.*;
 import static io.aeron.logbuffer.FrameDescriptor.FRAME_ALIGNMENT;
 import static io.aeron.protocol.DataHeaderFlyweight.RESERVED_VALUE_OFFSET;
 import static java.nio.ByteOrder.LITTLE_ENDIAN;
@@ -94,7 +93,7 @@ class RecordingReader implements AutoCloseable
         final int segmentOffset = (int)(fromPosition - startTermBasePosition) & (segmentLength - 1);
         final int termId = ((int)(fromPosition >> positionBitsToShift) + recordingSummary.initialTermId);
 
-        segmentFilePosition = Archive.segmentFilePosition(fromPosition, segmentLength);
+        segmentFilePosition = segmentFileBasePosition(startPosition, fromPosition, termLength, segmentLength);
         openRecordingSegment();
 
         termOffset = (int)(fromPosition & (termLength - 1));
@@ -198,8 +197,9 @@ class RecordingReader implements AutoCloseable
 
     private void closeRecordingSegment()
     {
+        final MappedByteBuffer mappedSegmentBuffer = this.mappedSegmentBuffer;
+        this.mappedSegmentBuffer = null;
         IoUtil.unmap(mappedSegmentBuffer);
-        mappedSegmentBuffer = null;
     }
 
     private void openRecordingSegment()

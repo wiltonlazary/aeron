@@ -1,5 +1,5 @@
 ::
-:: Copyright 2014-2019 Real Logic Ltd.
+:: Copyright 2014-2020 Real Logic Limited.
 ::
 :: Licensed under the Apache License, Version 2.0 (the "License");
 :: you may not use this file except in compliance with the License.
@@ -15,8 +15,10 @@
 ::
 
 @echo off
+set /p VERSION=<..\..\version.txt
+
 "%JAVA_HOME%\bin\java" ^
-    -cp ..\build\libs\samples.jar ^
+    -cp ..\..\aeron-all\build\libs\aeron-all-%VERSION%.jar ^
     -XX:+UnlockExperimentalVMOptions ^
     -XX:+TrustFinalNonStaticFields ^
     -XX:BiasedLockingStartupDelay=0 ^
@@ -24,4 +26,5 @@
     -Djava.net.preferIPv4Stack=true ^
     -Dagrona.disable.bounds.checks=true ^
     -Daeron.sample.messageLength=256 ^
+    -Daeron.ipc.mtu.length=16k ^
     %JVM_OPTS% io.aeron.samples.EmbeddedExclusiveVectoredIpcThroughput %*

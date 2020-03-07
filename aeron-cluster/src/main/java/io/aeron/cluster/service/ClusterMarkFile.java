@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@
 package io.aeron.cluster.service;
 
 import io.aeron.Aeron;
+import io.aeron.CommonContext;
 import io.aeron.cluster.client.ClusterException;
 import io.aeron.cluster.codecs.mark.ClusterComponentType;
 import io.aeron.cluster.codecs.mark.MarkFileHeaderDecoder;
@@ -25,8 +26,6 @@ import org.agrona.*;
 import org.agrona.concurrent.AtomicBuffer;
 import org.agrona.concurrent.EpochClock;
 import org.agrona.concurrent.UnsafeBuffer;
-import org.agrona.concurrent.errors.ErrorConsumer;
-import org.agrona.concurrent.errors.ErrorLogReader;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -46,8 +45,8 @@ import static io.aeron.Aeron.NULL_VALUE;
 public class ClusterMarkFile implements AutoCloseable
 {
     public static final int MAJOR_VERSION = 0;
-    public static final int MINOR_VERSION = 0;
-    public static final int PATCH_VERSION = 1;
+    public static final int MINOR_VERSION = 1;
+    public static final int PATCH_VERSION = 0;
     public static final int SEMANTIC_VERSION = SemanticVersion.compose(MAJOR_VERSION, MINOR_VERSION, PATCH_VERSION);
 
     public static final int HEADER_LENGTH = 8 * 1024;
@@ -103,11 +102,10 @@ public class ClusterMarkFile implements AutoCloseable
         if (markFileExists)
         {
             final UnsafeBuffer existingErrorBuffer = new UnsafeBuffer(
-                this.buffer, headerDecoder.headerLength(), headerDecoder.errorBufferLength());
+                buffer, headerDecoder.headerLength(), headerDecoder.errorBufferLength());
 
             saveExistingErrors(file, existingErrorBuffer, System.err);
-
-            errorBuffer.setMemory(0, errorBufferLength, (byte)0);
+            existingErrorBuffer.setMemory(0, headerDecoder.errorBufferLength(), (byte)0);
         }
         else
         {
@@ -248,7 +246,7 @@ public class ClusterMarkFile implements AutoCloseable
         try
         {
             final ByteArrayOutputStream baos = new ByteArrayOutputStream();
-            final int observations = saveErrorLog(new PrintStream(baos, false, "UTF-8"), errorBuffer);
+            final int observations = CommonContext.printErrorLog(errorBuffer, new PrintStream(baos, false, "US-ASCII"));
             if (observations > 0)
             {
                 final SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd-HH-mm-ss-SSSZ");
@@ -270,24 +268,6 @@ public class ClusterMarkFile implements AutoCloseable
         {
             LangUtil.rethrowUnchecked(ex);
         }
-    }
-
-    public static int saveErrorLog(final PrintStream out, final AtomicBuffer errorBuffer)
-    {
-        final SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSSZ");
-        final ErrorConsumer errorConsumer = (count, firstTimestamp, lastTimestamp, ex) ->
-            out.format(
-            "***%n%d observations from %s to %s for:%n %s%n",
-            count,
-            dateFormat.format(new Date(firstTimestamp)),
-            dateFormat.format(new Date(lastTimestamp)),
-            ex);
-
-        final int distinctErrorCount = ErrorLogReader.read(errorBuffer, errorConsumer);
-
-        out.format("%n%d distinct errors observed.%n", distinctErrorCount);
-
-        return distinctErrorCount;
     }
 
     public static void checkHeaderLength(
@@ -322,5 +302,24 @@ public class ClusterMarkFile implements AutoCloseable
     public static String markFilenameForService(final int serviceId)
     {
         return SERVICE_FILENAME_PREFIX + serviceId + FILE_EXTENSION;
+    }
+
+    public ClusterNodeControlProperties loadControlProperties()
+    {
+        final MarkFileHeaderDecoder headerDecoder = new MarkFileHeaderDecoder();
+        headerDecoder.wrap(
+            this.headerDecoder.buffer(),
+            this.headerDecoder.initialOffset(),
+            MarkFileHeaderDecoder.BLOCK_LENGTH,
+            MarkFileHeaderDecoder.SCHEMA_VERSION);
+
+        final int toServiceStreamId = headerDecoder.serviceStreamId();
+        final int toConsensusModuleStreamId = headerDecoder.consensusModuleStreamId();
+        final String aeronDirectoryName = headerDecoder.aeronDirectory();
+        final String archiveChannel = headerDecoder.archiveChannel();
+        final String serviceControlChannel = headerDecoder.serviceControlChannel();
+
+        return new ClusterNodeControlProperties(
+            toServiceStreamId, toConsensusModuleStreamId, aeronDirectoryName, archiveChannel, serviceControlChannel);
     }
 }

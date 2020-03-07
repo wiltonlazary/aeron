@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -35,8 +35,10 @@ typedef struct aeron_udp_channel_stct
     size_t uri_length;
     size_t canonical_length;
     uint8_t multicast_ttl;
-    bool explicit_control;
-    bool multicast;
+    bool has_explicit_control;
+    bool is_manual_control_mode;
+    bool is_dynamic_control_mode;
+    bool is_multicast;
 }
 aeron_udp_channel_t;
 

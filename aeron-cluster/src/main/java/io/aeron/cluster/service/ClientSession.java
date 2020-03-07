@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,14 +15,11 @@
  */
 package io.aeron.cluster.service;
 
-import io.aeron.Aeron;
-import io.aeron.DirectBufferVector;
-import io.aeron.Publication;
+import io.aeron.*;
 import io.aeron.cluster.client.AeronCluster;
 import io.aeron.exceptions.RegistrationException;
 import io.aeron.logbuffer.BufferClaim;
-import org.agrona.CloseHelper;
-import org.agrona.DirectBuffer;
+import org.agrona.*;
 
 /**
  * Session representing a connected client to the cluster.
@@ -126,8 +123,8 @@ public class ClientSession
      * @param buffer containing message.
      * @param offset offset in the buffer at which the encoded message begins.
      * @param length in bytes of the encoded message.
-     * @return the same as {@link Publication#offer(DirectBuffer, int, int)} when in {@link Cluster.Role#LEADER}
-     * otherwise {@link #MOCKED_OFFER}.
+     * @return the same as {@link Publication#offer(DirectBuffer, int, int)} when in {@link Cluster.Role#LEADER},
+     * otherwise {@link #MOCKED_OFFER} when a follower.
      */
     public long offer(final DirectBuffer buffer, final int offset, final int length)
     {
@@ -140,8 +137,8 @@ public class ClientSession
      *
      * @param vectors which make up the message.
      * @return the same as {@link Publication#offer(DirectBufferVector[])}.
-     * @see Publication#offer(DirectBufferVector[]) when in {@link Cluster.Role#LEADER}
-     * otherwise {@link #MOCKED_OFFER}.
+     * @see Publication#offer(DirectBufferVector[]) when in {@link Cluster.Role#LEADER},
+     * otherwise {@link #MOCKED_OFFER} when a follower.
      */
     public long offer(final DirectBufferVector[] vectors)
     {
@@ -173,10 +170,11 @@ public class ClientSession
      *     }
      * }</pre>
      *
-     * @param length      of the range to claim, in bytes.
+     * @param length      of the range to claim in bytes. The additional bytes for the session header will be added.
      * @param bufferClaim to be populated if the claim succeeds.
      * @return The new stream position, otherwise a negative error value as specified in
-     *         {@link io.aeron.Publication#tryClaim(int, BufferClaim)}.
+     *         {@link io.aeron.Publication#tryClaim(int, BufferClaim)} when in {@link Cluster.Role#LEADER},
+     *         otherwise {@link #MOCKED_OFFER} when a follower.
      * @throws IllegalArgumentException if the length is greater than {@link io.aeron.Publication#maxPayloadLength()}.
      * @see Publication#tryClaim(int, BufferClaim)
      * @see BufferClaim#commit()
@@ -212,9 +210,9 @@ public class ClientSession
         isClosing = false;
     }
 
-    void disconnect()
+    void disconnect(final ErrorHandler errorHandler)
     {
-        CloseHelper.close(responsePublication);
+        CloseHelper.close(errorHandler, responsePublication);
         responsePublication = null;
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,21 +20,20 @@ import io.aeron.logbuffer.FrameDescriptor;
 import io.aeron.status.ChannelEndpointStatus;
 import org.agrona.concurrent.UnsafeBuffer;
 import org.agrona.concurrent.status.ReadablePosition;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
 import java.nio.ByteBuffer;
 
 import static io.aeron.logbuffer.LogBufferDescriptor.*;
 import static java.nio.ByteBuffer.allocateDirect;
-import static org.hamcrest.Matchers.is;
-import static org.junit.Assert.*;
+import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 public class PublicationTest
 {
     private static final String CHANNEL = "aeron:udp?endpoint=localhost:40124";
-    private static final int STREAM_ID_1 = 2;
+    private static final int STREAM_ID_1 = 1002;
     private static final int SESSION_ID_1 = 13;
     private static final int TERM_ID_1 = 1;
     private static final int CORRELATION_ID = 2000;
@@ -53,7 +52,7 @@ public class PublicationTest
     private final ReadablePosition publicationLimit = mock(ReadablePosition.class);
     private ConcurrentPublication publication;
 
-    @Before
+    @BeforeEach
     public void setUp()
     {
         when(publicationLimit.getVolatile()).thenReturn(2L * SEND_BUFFER_CAPACITY);
@@ -97,7 +96,7 @@ public class PublicationTest
     public void shouldEnsureThePublicationIsOpenBeforeReadingPosition()
     {
         publication.close();
-        assertThat(publication.position(), is(Publication.CLOSED));
+        assertEquals(Publication.CLOSED, publication.position());
 
         verify(conductor).releasePublication(publication);
     }
@@ -107,7 +106,7 @@ public class PublicationTest
     {
         publication.close();
         assertTrue(publication.isClosed());
-        assertThat(publication.offer(atomicSendBuffer), is(Publication.CLOSED));
+        assertEquals(Publication.CLOSED, publication.offer(atomicSendBuffer));
     }
 
     @Test
@@ -115,7 +114,7 @@ public class PublicationTest
     {
         publication.close();
         final BufferClaim bufferClaim = new BufferClaim();
-        assertThat(publication.tryClaim(SEND_BUFFER_CAPACITY, bufferClaim), is(Publication.CLOSED));
+        assertEquals(Publication.CLOSED, publication.tryClaim(SEND_BUFFER_CAPACITY, bufferClaim));
     }
 
     @Test
@@ -136,13 +135,13 @@ public class PublicationTest
     @Test
     public void shouldReportInitialPosition()
     {
-        assertThat(publication.position(), is(0L));
+        assertEquals(0L, publication.position());
     }
 
     @Test
     public void shouldReportMaxMessageLength()
     {
-        assertThat(publication.maxMessageLength(), is(FrameDescriptor.computeMaxMessageLength(TERM_MIN_LENGTH)));
+        assertEquals(FrameDescriptor.computeMaxMessageLength(TERM_MIN_LENGTH), publication.maxMessageLength());
     }
 
     @Test

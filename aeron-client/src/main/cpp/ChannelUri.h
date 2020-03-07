@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -57,6 +57,8 @@ constexpr const char TETHER_PARAM_NAME[] = "tether";
 constexpr const char GROUP_PARAM_NAME[] = "group";
 constexpr const char REJOIN_PARAM_NAME[] = "rejoin";
 constexpr const char CONGESTION_CONTROL_PARAM_NAME[] = "cc";
+constexpr const char FLOW_CONTROL_PARAM_NAME[] = "fc";
+constexpr const char GROUP_TAG_PARAM_NAME[] = "gtag";
 
 using namespace aeron::util;
 
@@ -154,7 +156,7 @@ public:
 
     inline bool containsKey(const std::string& key)
     {
-        return (m_params->find(key) != m_params->end());
+        return m_params->find(key) != m_params->end();
     }
 
     std::string toString()

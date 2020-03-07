@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,6 +15,7 @@
  */
 package io.aeron.driver;
 
+import io.aeron.driver.media.UdpChannel;
 import io.aeron.protocol.StatusMessageFlyweight;
 
 import java.net.InetSocketAddress;
@@ -46,10 +47,12 @@ public interface FlowControl
     /**
      * Initialize the flow control strategy for a stream.
      *
+     * @param context          to allow access to media driver configuration
+     * @param udpChannel       for the stream.
      * @param initialTermId    at which the stream started.
      * @param termBufferLength to use as the length of each term buffer.
      */
-    void initialize(int initialTermId, int termBufferLength);
+    void initialize(MediaDriver.Context context, UdpChannel udpChannel, int initialTermId, int termBufferLength);
 
     /**
      * Perform any maintenance needed by the flow control strategy and return current sender limit position.
@@ -61,4 +64,15 @@ public interface FlowControl
      * @return the position limit to be employed by the sender.
      */
     long onIdle(long timeNs, long senderLimit, long senderPosition, boolean isEos);
+
+    /**
+     * Has the flow control strategy its required group of receivers to be considered connected? The
+     * result of this feeds into the determination of if a publication is connected.
+     *
+     * @return true if the required group of receivers are connected, otherwise false.
+     */
+    default boolean hasRequiredReceivers()
+    {
+        return true;
+    }
 }

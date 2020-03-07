@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,19 +16,22 @@
 package io.aeron.driver;
 
 import io.aeron.CommonContext;
-import org.junit.Test;
+import io.aeron.test.Tests;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.*;
 
 public class TerminateDriverTest
 {
     private final TerminationValidator mockTerminationValidator = mock(TerminationValidator.class);
 
-    @Test(timeout = 10_000)
+    @Test
+    @Timeout(10)
     public void shouldCallTerminationHookUponValidRequest()
     {
         final AtomicBoolean hasTerminated = new AtomicBoolean(false);
@@ -47,13 +50,15 @@ public class TerminateDriverTest
             while (!hasTerminated.get())
             {
                 Thread.yield();
+                Tests.checkInterruptStatus();
             }
         }
 
         verify(mockTerminationValidator).allowTermination(any(), any(), anyInt(), anyInt());
     }
 
-    @Test(timeout = 10_000)
+    @Test
+    @Timeout(10)
     public void shouldNotCallTerminationHookUponInvalidRequest()
     {
         final AtomicBoolean hasTerminated = new AtomicBoolean(false);
@@ -75,6 +80,7 @@ public class TerminateDriverTest
             while (!hasCalledTerminationValidator.get())
             {
                 Thread.yield();
+                Tests.checkInterruptStatus();
             }
         }
 

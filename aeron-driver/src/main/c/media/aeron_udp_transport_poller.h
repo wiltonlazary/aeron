@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,7 +21,10 @@
 #include <sys/epoll.h>
 #elif defined(HAVE_POLL)
 #include <poll.h>
+#elif defined(HAVE_WSAPOLL)
+#include "aeron_windows.h"
 #endif
+
 
 #include "media/aeron_udp_channel_transport.h"
 
@@ -46,7 +49,7 @@ typedef struct aeron_udp_transport_poller_stct
 #if defined(HAVE_EPOLL)
     int epoll_fd;
     struct epoll_event *epoll_events;
-#elif defined(HAVE_POLL)
+#elif defined(HAVE_POLL) || defined(HAVE_WSAPOLL)
     struct pollfd *pollfds;
 #endif
 

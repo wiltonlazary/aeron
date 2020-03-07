@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -54,8 +54,7 @@ inline static int read(
 
         if (lastObservationTimestamp >= sinceTimestamp)
         {
-            ErrorLogDescriptor::ErrorLogEntryDefn& entry =
-                buffer.overlayStruct<ErrorLogDescriptor::ErrorLogEntryDefn>(offset);
+            auto& entry = buffer.overlayStruct<ErrorLogDescriptor::ErrorLogEntryDefn>(offset);
 
             ++entries;
 

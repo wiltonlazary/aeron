@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,7 +26,6 @@
 
 using namespace aeron::concurrent;
 using namespace aeron::util;
-
 
 typedef std::array<std::uint8_t, 1024> buffer_t;
 static AERON_DECL_ALIGNED(buffer_t testBuffer, 16);
@@ -119,11 +118,14 @@ TEST (atomicBufferTests, concurrentTest)
 
     for (int i = 0; i < 8; i++)
     {
-        threads.push_back(std::thread([&]()
-        {
-            for (size_t n = 0; n < incCount; n++)
-                ab.getAndAddInt64(0, 1);
-        }));
+        threads.push_back(
+            std::thread([&]()
+            {
+                for (size_t n = 0; n < incCount; n++)
+                {
+                    ab.getAndAddInt64(0, 1);
+                }
+            }));
     }
 
     for (std::thread& t: threads)
@@ -144,7 +146,7 @@ struct testStruct
 };
 #pragma pack(pop)
 
-TEST (atomicBufferTests, checkStructOveray)
+TEST (atomicBufferTests, checkStructOverlay)
 {
     testBuffer.fill(0xff);
     AtomicBuffer ab(&testBuffer[0], testBuffer.size());
@@ -172,7 +174,7 @@ TEST (atomicBufferTests, checkStructOveray)
         ab.putInt32(20, 102);
         ab.putInt64(24, 103);
 
-        testStruct& s = ab.overlayStruct<testStruct>(16);
+        auto& s = ab.overlayStruct<testStruct>(16);
 
         ASSERT_EQ(s.f1, 101);
         ASSERT_EQ(s.f2, 102);

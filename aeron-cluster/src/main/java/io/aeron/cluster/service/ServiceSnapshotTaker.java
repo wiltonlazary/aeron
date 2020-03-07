@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,7 +15,7 @@
  */
 package io.aeron.cluster.service;
 
-import io.aeron.Publication;
+import io.aeron.ExclusivePublication;
 import io.aeron.cluster.codecs.*;
 import org.agrona.concurrent.AgentInvoker;
 import org.agrona.concurrent.IdleStrategy;
@@ -25,7 +25,7 @@ class ServiceSnapshotTaker extends SnapshotTaker
     private final ClientSessionEncoder clientSessionEncoder = new ClientSessionEncoder();
 
     ServiceSnapshotTaker(
-        final Publication publication, final IdleStrategy idleStrategy, final AgentInvoker aeronClientInvoker)
+        final ExclusivePublication publication, final IdleStrategy idleStrategy, final AgentInvoker aeronClientInvoker)
     {
         super(publication, idleStrategy, aeronClientInvoker);
     }

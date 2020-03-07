@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,7 +15,7 @@
  */
 package io.aeron;
 
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 import io.aeron.command.PublicationMessageFlyweight;
 import io.aeron.command.RemoveMessageFlyweight;
 import org.agrona.concurrent.MessageHandler;
@@ -25,16 +25,15 @@ import org.agrona.concurrent.ringbuffer.RingBuffer;
 
 import java.nio.ByteBuffer;
 
-import static org.hamcrest.Matchers.is;
-import static org.junit.Assert.assertThat;
 import static io.aeron.command.ControlProtocolEvents.*;
 import static org.agrona.concurrent.ringbuffer.RingBufferDescriptor.TRAILER_LENGTH;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 public class DriverProxyTest
 {
     public static final String CHANNEL = "aeron:udp?interface=localhost:40123|endpoint=localhost:40124";
 
-    private static final int STREAM_ID = 1;
+    private static final int STREAM_ID = 1001;
     private static final long CORRELATION_ID = 3;
     private static final long CLIENT_ID = 7;
     private final RingBuffer conductorBuffer = new ManyToOneRingBuffer(
@@ -57,8 +56,8 @@ public class DriverProxyTest
                 final RemoveMessageFlyweight message = new RemoveMessageFlyweight();
                 message.wrap(buffer, index);
 
-                assertThat(msgTypeId, is(REMOVE_PUBLICATION));
-                assertThat(message.registrationId(), is(CORRELATION_ID));
+                assertEquals(REMOVE_PUBLICATION, msgTypeId);
+                assertEquals(CORRELATION_ID, message.registrationId());
             }
         );
     }
@@ -73,9 +72,9 @@ public class DriverProxyTest
                 final PublicationMessageFlyweight publicationMessage = new PublicationMessageFlyweight();
                 publicationMessage.wrap(buffer, index);
 
-                assertThat(msgTypeId, is(expectedMsgTypeId));
-                assertThat(publicationMessage.channel(), is(CHANNEL));
-                assertThat(publicationMessage.streamId(), is(STREAM_ID));
+                assertEquals(expectedMsgTypeId, msgTypeId);
+                assertEquals(CHANNEL, publicationMessage.channel());
+                assertEquals(STREAM_ID, publicationMessage.streamId());
             }
         );
     }
@@ -91,8 +90,8 @@ public class DriverProxyTest
                 final RemoveMessageFlyweight removeMessage = new RemoveMessageFlyweight();
                 removeMessage.wrap(buffer, index);
 
-                assertThat(msgTypeId, is(REMOVE_SUBSCRIPTION));
-                assertThat(removeMessage.registrationId(), is(CORRELATION_ID));
+                assertEquals(REMOVE_SUBSCRIPTION, msgTypeId);
+                assertEquals(CORRELATION_ID, removeMessage.registrationId());
             }
         );
     }
@@ -100,6 +99,6 @@ public class DriverProxyTest
     private void assertReadsOneMessage(final MessageHandler handler)
     {
         final int messageCount = conductorBuffer.read(handler);
-        assertThat(messageCount, is(1));
+        assertEquals(1, messageCount);
     }
 }

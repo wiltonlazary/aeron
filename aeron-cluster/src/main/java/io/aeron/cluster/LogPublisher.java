@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,15 +15,13 @@
  */
 package io.aeron.cluster;
 
-import io.aeron.Publication;
+import io.aeron.*;
 import io.aeron.cluster.client.ClusterClock;
 import io.aeron.cluster.codecs.*;
 import io.aeron.exceptions.AeronException;
 import io.aeron.logbuffer.BufferClaim;
 import io.aeron.protocol.DataHeaderFlyweight;
-import org.agrona.BitUtil;
-import org.agrona.DirectBuffer;
-import org.agrona.ExpandableArrayBuffer;
+import org.agrona.*;
 import org.agrona.concurrent.UnsafeBuffer;
 
 import java.util.concurrent.TimeUnit;
@@ -49,24 +47,24 @@ class LogPublisher
     private final ExpandableArrayBuffer expandableArrayBuffer = new ExpandableArrayBuffer();
     private final BufferClaim bufferClaim = new BufferClaim();
 
-    private Publication publication;
+    private ExclusivePublication publication;
 
     LogPublisher()
     {
         sessionHeaderEncoder.wrapAndApplyHeader(sessionHeaderBuffer, 0, new MessageHeaderEncoder());
     }
 
-    void publication(final Publication publication)
+    void publication(final ExclusivePublication publication)
     {
         this.publication = publication;
     }
 
-    void disconnect()
+    void disconnect(final ErrorHandler errorHandler)
     {
         if (null != publication)
         {
-            publication.close();
-            publication = null;
+            CloseHelper.close(errorHandler, publication);
+            this.publication = null;
         }
     }
 

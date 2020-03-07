@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,14 +15,13 @@
  */
 package io.aeron.logbuffer;
 
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
 import org.agrona.concurrent.UnsafeBuffer;
 
 import static java.nio.ByteOrder.LITTLE_ENDIAN;
-import static org.hamcrest.Matchers.is;
-import static org.junit.Assert.assertThat;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.Mockito.*;
 
 import static io.aeron.logbuffer.FrameDescriptor.termOffsetOffset;
@@ -41,7 +40,7 @@ public class TermUnblockerTest
     private final UnsafeBuffer mockTermBuffer = mock(UnsafeBuffer.class);
     private final UnsafeBuffer mockLogMetaDataBuffer = mock(UnsafeBuffer.class);
 
-    @Before
+    @BeforeEach
     public void setUp()
     {
         when(mockTermBuffer.capacity()).thenReturn(TERM_BUFFER_CAPACITY);
@@ -54,8 +53,8 @@ public class TermUnblockerTest
         final int tailOffset = TERM_BUFFER_CAPACITY;
         when(mockTermBuffer.getIntVolatile(termOffset)).thenReturn(HEADER_LENGTH);
 
-        assertThat(TermUnblocker.unblock(
-            mockLogMetaDataBuffer, mockTermBuffer, termOffset, tailOffset, TERM_ID), is(NO_ACTION));
+        assertEquals(
+            NO_ACTION, TermUnblocker.unblock(mockLogMetaDataBuffer, mockTermBuffer, termOffset, tailOffset, TERM_ID));
     }
 
     @Test
@@ -64,8 +63,8 @@ public class TermUnblockerTest
         final int termOffset = 0;
         final int tailOffset = TERM_BUFFER_CAPACITY / 2;
 
-        assertThat(TermUnblocker.unblock(
-            mockLogMetaDataBuffer, mockTermBuffer, termOffset, tailOffset, TERM_ID), is(NO_ACTION));
+        assertEquals(
+            NO_ACTION, TermUnblocker.unblock(mockLogMetaDataBuffer, mockTermBuffer, termOffset, tailOffset, TERM_ID));
     }
 
     @Test
@@ -77,8 +76,8 @@ public class TermUnblockerTest
 
         when(mockTermBuffer.getIntVolatile(termOffset)).thenReturn(-messageLength);
 
-        assertThat(TermUnblocker.unblock(
-            mockLogMetaDataBuffer, mockTermBuffer, termOffset, tailOffset, TERM_ID), is(UNBLOCKED));
+        assertEquals(
+            UNBLOCKED, TermUnblocker.unblock(mockLogMetaDataBuffer, mockTermBuffer, termOffset, tailOffset, TERM_ID));
 
         final InOrder inOrder = inOrder(mockTermBuffer);
         inOrder.verify(mockTermBuffer).putShort(typeOffset(termOffset), (short)HDR_TYPE_PAD, LITTLE_ENDIAN);
@@ -95,8 +94,9 @@ public class TermUnblockerTest
 
         when(mockTermBuffer.getIntVolatile(termOffset)).thenReturn(0);
 
-        assertThat(TermUnblocker.unblock(
-            mockLogMetaDataBuffer, mockTermBuffer, termOffset, tailOffset, TERM_ID), is(UNBLOCKED_TO_END));
+        assertEquals(
+            UNBLOCKED_TO_END,
+            TermUnblocker.unblock(mockLogMetaDataBuffer, mockTermBuffer, termOffset, tailOffset, TERM_ID));
 
         final InOrder inOrder = inOrder(mockTermBuffer);
         inOrder.verify(mockTermBuffer).putShort(typeOffset(termOffset), (short)HDR_TYPE_PAD, LITTLE_ENDIAN);
@@ -113,8 +113,8 @@ public class TermUnblockerTest
 
         when(mockTermBuffer.getIntVolatile(messageLength)).thenReturn(messageLength);
 
-        assertThat(TermUnblocker.unblock(
-            mockLogMetaDataBuffer, mockTermBuffer, termOffset, tailOffset, TERM_ID), is(UNBLOCKED));
+        assertEquals(
+            UNBLOCKED, TermUnblocker.unblock(mockLogMetaDataBuffer, mockTermBuffer, termOffset, tailOffset, TERM_ID));
 
         final InOrder inOrder = inOrder(mockTermBuffer);
         inOrder.verify(mockTermBuffer).putShort(typeOffset(termOffset), (short)HDR_TYPE_PAD, LITTLE_ENDIAN);
@@ -131,8 +131,8 @@ public class TermUnblockerTest
 
         when(mockTermBuffer.getIntVolatile(messageLength)).thenReturn(-messageLength);
 
-        assertThat(TermUnblocker.unblock(
-            mockLogMetaDataBuffer, mockTermBuffer, termOffset, tailOffset, TERM_ID), is(UNBLOCKED));
+        assertEquals(
+            UNBLOCKED, TermUnblocker.unblock(mockLogMetaDataBuffer, mockTermBuffer, termOffset, tailOffset, TERM_ID));
 
         final InOrder inOrder = inOrder(mockTermBuffer);
         inOrder.verify(mockTermBuffer).putShort(typeOffset(termOffset), (short)HDR_TYPE_PAD, LITTLE_ENDIAN);
@@ -154,8 +154,8 @@ public class TermUnblockerTest
         when(mockTermBuffer.getIntVolatile(messageLength))
             .thenReturn(messageLength);
 
-        assertThat(TermUnblocker.unblock(
-            mockLogMetaDataBuffer, mockTermBuffer, termOffset, tailOffset, TERM_ID), is(NO_ACTION));
+        assertEquals(
+            NO_ACTION, TermUnblocker.unblock(mockLogMetaDataBuffer, mockTermBuffer, termOffset, tailOffset, TERM_ID));
     }
 
     @Test
@@ -172,8 +172,8 @@ public class TermUnblockerTest
         when(mockTermBuffer.getIntVolatile(messageLength))
             .thenReturn(messageLength);
 
-        assertThat(TermUnblocker.unblock(
-            mockLogMetaDataBuffer, mockTermBuffer, termOffset, tailOffset, TERM_ID), is(NO_ACTION));
+        assertEquals(
+            NO_ACTION, TermUnblocker.unblock(mockLogMetaDataBuffer, mockTermBuffer, termOffset, tailOffset, TERM_ID));
     }
 
     @Test
@@ -187,8 +187,8 @@ public class TermUnblockerTest
             .thenReturn(0)
             .thenReturn(messageLength);
 
-        assertThat(TermUnblocker.unblock(
-            mockLogMetaDataBuffer, mockTermBuffer, termOffset, tailOffset, TERM_ID), is(NO_ACTION));
+        assertEquals(
+            NO_ACTION, TermUnblocker.unblock(mockLogMetaDataBuffer, mockTermBuffer, termOffset, tailOffset, TERM_ID));
     }
 
     @Test
@@ -202,8 +202,8 @@ public class TermUnblockerTest
             .thenReturn(0)
             .thenReturn(-messageLength);
 
-        assertThat(TermUnblocker.unblock(
-            mockLogMetaDataBuffer, mockTermBuffer, termOffset, tailOffset, TERM_ID), is(NO_ACTION));
+        assertEquals(
+            NO_ACTION, TermUnblocker.unblock(mockLogMetaDataBuffer, mockTermBuffer, termOffset, tailOffset, TERM_ID));
     }
 
     @Test
@@ -220,8 +220,8 @@ public class TermUnblockerTest
         when(mockTermBuffer.getIntVolatile(messageLength * 2))
             .thenReturn(messageLength);
 
-        assertThat(TermUnblocker.unblock(
-            mockLogMetaDataBuffer, mockTermBuffer, termOffset, tailOffset, TERM_ID), is(NO_ACTION));
+        assertEquals(
+            NO_ACTION, TermUnblocker.unblock(mockLogMetaDataBuffer, mockTermBuffer, termOffset, tailOffset, TERM_ID));
     }
 
     @Test
@@ -238,7 +238,7 @@ public class TermUnblockerTest
         when(mockTermBuffer.getIntVolatile(messageLength + HEADER_LENGTH))
             .thenReturn(7);
 
-        assertThat(TermUnblocker.unblock(
-            mockLogMetaDataBuffer, mockTermBuffer, termOffset, tailOffset, TERM_ID), is(NO_ACTION));
+        assertEquals(
+            NO_ACTION, TermUnblocker.unblock(mockLogMetaDataBuffer, mockTermBuffer, termOffset, tailOffset, TERM_ID));
     }
 }

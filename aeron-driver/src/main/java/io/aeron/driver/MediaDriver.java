@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,23 +15,29 @@
  */
 package io.aeron.driver;
 
-import io.aeron.*;
+import io.aeron.CncFileDescriptor;
+import io.aeron.CommonContext;
+import io.aeron.driver.buffer.FileStoreLogFactory;
 import io.aeron.driver.buffer.LogFactory;
 import io.aeron.driver.exceptions.ActiveDriverException;
 import io.aeron.driver.media.*;
-import io.aeron.driver.buffer.FileStoreLogFactory;
 import io.aeron.driver.reports.LossReport;
 import io.aeron.driver.status.SystemCounters;
+import io.aeron.exceptions.ConcurrentConcludeException;
 import io.aeron.logbuffer.LogBufferDescriptor;
 import org.agrona.*;
 import org.agrona.concurrent.*;
 import org.agrona.concurrent.broadcast.BroadcastTransmitter;
 import org.agrona.concurrent.errors.DistinctErrorLog;
 import org.agrona.concurrent.errors.LoggingErrorHandler;
-import org.agrona.concurrent.ringbuffer.*;
+import org.agrona.concurrent.ringbuffer.ManyToOneRingBuffer;
+import org.agrona.concurrent.ringbuffer.RingBuffer;
 import org.agrona.concurrent.status.*;
 
-import java.io.*;
+import java.io.ByteArrayOutputStream;
+import java.io.FileOutputStream;
+import java.io.PrintStream;
+import java.nio.ByteOrder;
 import java.nio.MappedByteBuffer;
 import java.text.SimpleDateFormat;
 import java.util.Arrays;
@@ -43,9 +49,10 @@ import java.util.function.Consumer;
 import static io.aeron.CncFileDescriptor.*;
 import static io.aeron.driver.Configuration.*;
 import static io.aeron.driver.reports.LossReportUtil.mapLossReport;
-import static io.aeron.driver.status.SystemCounterDescriptor.*;
 import static io.aeron.driver.status.SystemCounterDescriptor.CONTROLLABLE_IDLE_STRATEGY;
+import static io.aeron.driver.status.SystemCounterDescriptor.*;
 import static java.nio.charset.StandardCharsets.US_ASCII;
+import static org.agrona.BitUtil.SIZE_OF_LONG;
 import static org.agrona.BitUtil.align;
 import static org.agrona.IoUtil.mapNewFile;
 import static org.agrona.SystemUtil.loadPropertiesFiles;
@@ -90,7 +97,6 @@ public final class MediaDriver implements AutoCloseable
         try (MediaDriver ignore = MediaDriver.launch(ctx))
         {
             barrier.await();
-
             System.out.println("Shutdown Driver...");
         }
     }
@@ -102,70 +108,86 @@ public final class MediaDriver implements AutoCloseable
      */
     private MediaDriver(final Context ctx)
     {
-        this.ctx = ctx;
-
         ctx.concludeAeronDirectory();
 
         ensureDirectoryIsRecreated(ctx);
         validateSocketBufferLengths(ctx);
 
-        ctx.conclude();
-
-        final DriverConductor conductor = new DriverConductor(ctx);
-        final Receiver receiver = new Receiver(ctx);
-        final Sender sender = new Sender(ctx);
-
-        ctx.receiverProxy().receiver(receiver);
-        ctx.senderProxy().sender(sender);
-        ctx.driverConductorProxy().driverConductor(conductor);
-
-        final AtomicCounter errorCounter = ctx.systemCounters().get(ERRORS);
-        final ErrorHandler errorHandler = ctx.errorHandler();
-
-        switch (ctx.threadingMode())
+        try
         {
-            case INVOKER:
-                sharedInvoker = new AgentInvoker(
-                    errorHandler, errorCounter, new CompositeAgent(sender, receiver, conductor));
-                sharedRunner = null;
-                sharedNetworkRunner = null;
-                conductorRunner = null;
-                receiverRunner = null;
-                senderRunner = null;
-                break;
+            ctx.conclude();
+            this.ctx = ctx;
 
-            case SHARED:
-                sharedRunner = new AgentRunner(
-                    ctx.sharedIdleStrategy(),
-                    errorHandler,
-                    errorCounter,
-                    new CompositeAgent(sender, receiver, conductor));
-                sharedNetworkRunner = null;
-                conductorRunner = null;
-                receiverRunner = null;
-                senderRunner = null;
-                sharedInvoker = null;
-                break;
+            final DriverConductor conductor = new DriverConductor(ctx);
+            final Receiver receiver = new Receiver(ctx);
+            final Sender sender = new Sender(ctx);
 
-            case SHARED_NETWORK:
-                sharedNetworkRunner = new AgentRunner(
-                    ctx.sharedNetworkIdleStrategy(), errorHandler, errorCounter, new CompositeAgent(sender, receiver));
-                conductorRunner = new AgentRunner(ctx.conductorIdleStrategy(), errorHandler, errorCounter, conductor);
-                sharedRunner = null;
-                receiverRunner = null;
-                senderRunner = null;
-                sharedInvoker = null;
-                break;
+            ctx.receiverProxy().receiver(receiver);
+            ctx.senderProxy().sender(sender);
+            ctx.driverConductorProxy().driverConductor(conductor);
 
-            default:
-            case DEDICATED:
-                senderRunner = new AgentRunner(ctx.senderIdleStrategy(), errorHandler, errorCounter, sender);
-                receiverRunner = new AgentRunner(ctx.receiverIdleStrategy(), errorHandler, errorCounter, receiver);
-                conductorRunner = new AgentRunner(ctx.conductorIdleStrategy(), errorHandler, errorCounter, conductor);
-                sharedNetworkRunner = null;
-                sharedRunner = null;
-                sharedInvoker = null;
-                break;
+            final AtomicCounter errorCounter = ctx.systemCounters().get(ERRORS);
+            final ErrorHandler errorHandler = ctx.errorHandler();
+
+            switch (ctx.threadingMode())
+            {
+                case INVOKER:
+                    sharedInvoker = new AgentInvoker(
+                        errorHandler, errorCounter, new CompositeAgent(sender, receiver, conductor));
+                    sharedRunner = null;
+                    sharedNetworkRunner = null;
+                    conductorRunner = null;
+                    receiverRunner = null;
+                    senderRunner = null;
+                    break;
+
+                case SHARED:
+                    sharedRunner = new AgentRunner(
+                        ctx.sharedIdleStrategy(),
+                        errorHandler,
+                        errorCounter,
+                        new CompositeAgent(sender, receiver, conductor));
+                    sharedNetworkRunner = null;
+                    conductorRunner = null;
+                    receiverRunner = null;
+                    senderRunner = null;
+                    sharedInvoker = null;
+                    break;
+
+                case SHARED_NETWORK:
+                    sharedNetworkRunner = new AgentRunner(
+                        ctx.sharedNetworkIdleStrategy(),
+                        errorHandler,
+                        errorCounter,
+                        new CompositeAgent(sender, receiver));
+                    conductorRunner = new AgentRunner(
+                        ctx.conductorIdleStrategy(), errorHandler, errorCounter, conductor);
+                    sharedRunner = null;
+                    receiverRunner = null;
+                    senderRunner = null;
+                    sharedInvoker = null;
+                    break;
+
+                default:
+                case DEDICATED:
+                    senderRunner = new AgentRunner(ctx.senderIdleStrategy(), errorHandler, errorCounter, sender);
+                    receiverRunner = new AgentRunner(ctx.receiverIdleStrategy(), errorHandler, errorCounter, receiver);
+                    conductorRunner = new AgentRunner(
+                        ctx.conductorIdleStrategy(), errorHandler, errorCounter, conductor);
+                    sharedNetworkRunner = null;
+                    sharedRunner = null;
+                    sharedInvoker = null;
+                    break;
+            }
+        }
+        catch (final ConcurrentConcludeException ex)
+        {
+            throw ex;
+        }
+        catch (final Throwable ex)
+        {
+            CloseHelper.quietClose(ctx::close);
+            throw ex;
         }
     }
 
@@ -250,20 +272,16 @@ public final class MediaDriver implements AutoCloseable
      */
     public void close()
     {
-        CloseHelper.close(sharedRunner);
-        CloseHelper.close(sharedNetworkRunner);
-        CloseHelper.close(receiverRunner);
-        CloseHelper.close(senderRunner);
-        CloseHelper.close(conductorRunner);
-        CloseHelper.close(sharedInvoker);
-
-        if (ctx.useWindowsHighResTimer() && SystemUtil.osName().startsWith("win"))
+        if (ctx.useWindowsHighResTimer() && SystemUtil.isWindows())
         {
             if (!wasHighResTimerEnabled)
             {
                 HighResolutionTimer.disable();
             }
         }
+
+        CloseHelper.closeAll(
+            sharedRunner, sharedNetworkRunner, receiverRunner, senderRunner, conductorRunner, sharedInvoker);
     }
 
     /**
@@ -279,7 +297,7 @@ public final class MediaDriver implements AutoCloseable
 
     private MediaDriver start()
     {
-        if (ctx.useWindowsHighResTimer() && SystemUtil.osName().startsWith("win"))
+        if (ctx.useWindowsHighResTimer() && SystemUtil.isWindows())
         {
             wasHighResTimerEnabled = HighResolutionTimer.isEnabled();
             if (!wasHighResTimerEnabled)
@@ -327,7 +345,7 @@ public final class MediaDriver implements AutoCloseable
         {
             if (ctx.warnIfDirectoryExists())
             {
-                System.err.println("WARNING: " + ctx.aeronDirectory() + " already exists.");
+                System.err.println("WARNING: " + ctx.aeronDirectory() + " exists");
             }
 
             if (!ctx.dirDeleteOnStart())
@@ -349,7 +367,7 @@ public final class MediaDriver implements AutoCloseable
                 }
             }
 
-            ctx.deleteAeronDirectory();
+            ctx.deleteDirectory();
         }
 
         IoUtil.ensureDirectoryExists(ctx.aeronDirectory(), "aeron");
@@ -360,7 +378,7 @@ public final class MediaDriver implements AutoCloseable
         try
         {
             final ByteArrayOutputStream baos = new ByteArrayOutputStream();
-            final int observations = ctx.saveErrorLog(new PrintStream(baos, false, "UTF-8"), cncByteBuffer);
+            final int observations = ctx.saveErrorLog(new PrintStream(baos, false, "US-ASCII"), cncByteBuffer);
             if (observations > 0)
             {
                 final StringBuilder builder = new StringBuilder(ctx.aeronDirectoryName());
@@ -421,6 +439,9 @@ public final class MediaDriver implements AutoCloseable
         private long retransmitUnicastLingerNs = Configuration.retransmitUnicastLingerNs();
         private long nakUnicastDelayNs = Configuration.nakUnicastDelayNs();
         private long nakMulticastMaxBackoffNs = Configuration.nakMulticastMaxBackoffNs();
+        private long flowControlReceiverTimeoutNs = Configuration.flowControlReceiverTimeoutNs();
+        private long reResolutionCheckIntervalNs = Configuration.reResolutionCheckIntervalNs();
+
         private int conductorBufferLength = Configuration.conductorBufferLength();
         private int toClientsBufferLength = Configuration.toClientsBufferLength();
         private int counterValuesBufferLength = Configuration.counterValuesBufferLength();
@@ -442,7 +463,13 @@ public final class MediaDriver implements AutoCloseable
         private int lossReportBufferLength = Configuration.lossReportBufferLength();
         private int sendToStatusMessagePollRatio = Configuration.sendToStatusMessagePollRatio();
 
+        private Long receiverGroupTag = Configuration.groupTag();
+        private long flowControlGroupTag = Configuration.flowControlGroupTag();
+        private int flowControlGroupMinSize = Configuration.flowControlGroupMinSize();
         private InferableBoolean receiverGroupConsideration = Configuration.receiverGroupConsideration();
+        private String resolverName = Configuration.resolverName();
+        private String resolverInterface = Configuration.resolverInterface();
+        private String resolverBootstrapNeighbor = Configuration.resolverBootstrapNeighbor();
 
         private EpochClock epochClock;
         private NanoClock nanoClock;
@@ -473,6 +500,7 @@ public final class MediaDriver implements AutoCloseable
         private FeedbackDelayGenerator retransmitUnicastLingerGenerator;
         private TerminationValidator terminationValidator;
         private Runnable terminationHook;
+        private NameResolver nameResolver;
 
         private DistinctErrorLog errorLog;
         private ErrorHandler errorHandler;
@@ -508,7 +536,8 @@ public final class MediaDriver implements AutoCloseable
         }
 
         /**
-         * Free up resources but don't delete files in case they are required for debugging.
+         * Free up resources but don't delete files in case they are required for debugging unless
+         * {@link #dirDeleteOnShutdown()} is set.
          */
         public void close()
         {
@@ -516,19 +545,25 @@ public final class MediaDriver implements AutoCloseable
             {
                 isClosed = true;
 
-                CloseHelper.close(logFactory);
+                CloseHelper.close(errorHandler, logFactory);
 
-                final MappedByteBuffer lossReportBuffer = this.lossReportBuffer;
-                this.lossReportBuffer = null;
-                IoUtil.unmap(lossReportBuffer);
-
-                final MappedByteBuffer cncByteBuffer = this.cncByteBuffer;
-                this.cncByteBuffer = null;
-                IoUtil.unmap(cncByteBuffer);
-
-                if (dirDeleteOnShutdown && null != aeronDirectory())
+                final AtomicCounter errorCounter = systemCounters.get(ERRORS);
+                errorCounter.disconnectCountersManager();
+                errorCounter.close();
+                if (errorHandler instanceof AutoCloseable)
                 {
-                    deleteAeronDirectory();
+                    CloseHelper.quietClose((AutoCloseable)errorHandler);
+                }
+
+                IoUtil.unmap(lossReportBuffer);
+                this.lossReportBuffer = null;
+
+                IoUtil.unmap(cncByteBuffer);
+                this.cncByteBuffer = null;
+
+                if (dirDeleteOnShutdown)
+                {
+                    this.deleteDirectory();
                 }
 
                 super.close();
@@ -556,11 +591,11 @@ public final class MediaDriver implements AutoCloseable
                 cncByteBuffer = mapNewFile(
                     cncFile(),
                     CncFileDescriptor.computeCncFileLength(
-                        conductorBufferLength +
-                            toClientsBufferLength +
-                            Configuration.countersMetadataBufferLength(counterValuesBufferLength) +
-                            counterValuesBufferLength +
-                            errorBufferLength,
+                    conductorBufferLength +
+                        toClientsBufferLength +
+                        Configuration.countersMetadataBufferLength(counterValuesBufferLength) +
+                        counterValuesBufferLength +
+                        errorBufferLength,
                         filePageSize));
 
                 cncMetaDataBuffer = CncFileDescriptor.createMetaDataBuffer(cncByteBuffer);
@@ -593,6 +628,18 @@ public final class MediaDriver implements AutoCloseable
             }
 
             return this;
+        }
+
+        /**
+         * Delete the directory used by the {@link MediaDriver} which delegates to
+         * {@link CommonContext#deleteAeronDirectory()}.
+         */
+        public void deleteDirectory()
+        {
+            if (null != aeronDirectory())
+            {
+                super.deleteAeronDirectory();
+            }
         }
 
         /**
@@ -1184,7 +1231,7 @@ public final class MediaDriver implements AutoCloseable
          */
         public Context nakMulticastMaxBackoffNs(final long nakMulticastMaxBackoffNs)
         {
-            this.nakMulticastMaxBackoffNs = nakUnicastDelayNs;
+            this.nakMulticastMaxBackoffNs = nakMulticastMaxBackoffNs;
             return this;
         }
 
@@ -1220,7 +1267,7 @@ public final class MediaDriver implements AutoCloseable
          */
         public long clientLivenessTimeoutNs()
         {
-            return clientLivenessTimeoutNs;
+            return CommonContext.checkDebugTimeout(clientLivenessTimeoutNs, TimeUnit.NANOSECONDS);
         }
 
         /**
@@ -1481,7 +1528,7 @@ public final class MediaDriver implements AutoCloseable
          */
         public Context rejoinStream(final boolean rejoinStream)
         {
-            this.reliableStream = rejoinStream;
+            this.rejoinStream = rejoinStream;
             return this;
         }
 
@@ -2261,12 +2308,39 @@ public final class MediaDriver implements AutoCloseable
         }
 
         /**
+         * Timeout for min multicast flow control strategy.
+         *
+         * @return timeout in ns.
+         * @see Configuration#FLOW_CONTROL_RECEIVER_TIMEOUT_PROP_NAME
+         */
+        public long flowControlReceiverTimeoutNs()
+        {
+            return flowControlReceiverTimeoutNs;
+        }
+
+        /**
+         * Timeout for min multicast flow control strategy.
+         *
+         * @param timeoutNs in ns.
+         * @return this for a fluent API.
+         * @see Configuration#FLOW_CONTROL_RECEIVER_TIMEOUT_PROP_NAME
+         */
+        public Context flowControlReceiverTimeoutNs(final long timeoutNs)
+        {
+            this.flowControlReceiverTimeoutNs = timeoutNs;
+            return this;
+        }
+
+        /**
          * Application specific feedback used to identify a receiver group when using a
-         * {@link PreferredMulticastFlowControl} strategy which is added to Status Messages (SMs)..
+         * {@link TaggedMulticastFlowControl} strategy which is added to Status Messages (SMs).
+         * <p>
+         * Replaced by {@link #receiverGroupTag()}.
          *
          * @return Application specific feedback used to identify receiver group for flow control.
          * @see Configuration#SM_APPLICATION_SPECIFIC_FEEDBACK_PROP_NAME
          */
+        @Deprecated
         public byte[] applicationSpecificFeedback()
         {
             return applicationSpecificFeedback;
@@ -2274,12 +2348,15 @@ public final class MediaDriver implements AutoCloseable
 
         /**
          * Application specific feedback used to identify a receiver group when using a
-         * {@link PreferredMulticastFlowControl} strategy which is added to Status Messages (SMs).
+         * {@link TaggedMulticastFlowControl} strategy which is added to Status Messages (SMs).
+         * <p>
+         * Replaced by {@link #receiverGroupTag(Long)}.
          *
          * @param asfBytes for identifying a receiver group.
          * @return this for a fluent API.
          * @see Configuration#SM_APPLICATION_SPECIFIC_FEEDBACK_PROP_NAME
          */
+        @Deprecated
         public Context applicationSpecificFeedback(final byte[] asfBytes)
         {
             this.applicationSpecificFeedback = asfBytes;
@@ -2436,23 +2513,9 @@ public final class MediaDriver implements AutoCloseable
          *
          * @return {@link LossReport} for identifying loss issues on specific connections.
          */
-        public LossReport lossReport()
+        LossReport lossReport()
         {
             return lossReport;
-        }
-
-        /**
-         * {@link LossReport}for identifying loss issues on specific connections.
-         * <p>
-         * The default should only be overridden for testing.
-         *
-         * @param lossReport for identifying loss issues on specific connections.
-         * @return this for a fluent API.
-         */
-        public Context lossReport(final LossReport lossReport)
-        {
-            this.lossReport = lossReport;
-            return this;
         }
 
         /**
@@ -2471,7 +2534,7 @@ public final class MediaDriver implements AutoCloseable
          * Low end of the publication reserved session id range which will not be automatically assigned.
          *
          * @param sessionId for low end of the publication reserved session id range which will not be automatically
-         *                 assigned.
+         *                  assigned.
          * @return this for fluent API.
          * @see #publicationReservedSessionIdHigh(int)
          * @see Configuration#PUBLICATION_RESERVED_SESSION_ID_LOW_PROP_NAME
@@ -2498,7 +2561,7 @@ public final class MediaDriver implements AutoCloseable
          * High end of the publication reserved session id range which will not be automatically assigned.
          *
          * @param sessionId for high end of the publication reserved session id range which will not be automatically
-         *                 assigned.
+         *                  assigned.
          * @return this for fluent API.
          * @see #publicationReservedSessionIdLow(int)
          * @see Configuration#PUBLICATION_RESERVED_SESSION_ID_HIGH_PROP_NAME
@@ -2571,7 +2634,7 @@ public final class MediaDriver implements AutoCloseable
         /**
          * Set the {@link FeedbackDelayGenerator} for controlling the delay of sending NAK feedback on unicast.
          *
-         * @param feedbackDelayGenerator  for controlling the delay of sending NAK feedback.
+         * @param feedbackDelayGenerator for controlling the delay of sending NAK feedback.
          * @return this for a fluent API
          * @see Configuration#NAK_UNICAST_DELAY_PROP_NAME
          */
@@ -2596,7 +2659,7 @@ public final class MediaDriver implements AutoCloseable
         /**
          * Set the {@link FeedbackDelayGenerator} for controlling the delay of sending NAK feedback on multicast.
          *
-         * @param feedbackDelayGenerator  for controlling the delay of sending NAK feedback.
+         * @param feedbackDelayGenerator for controlling the delay of sending NAK feedback.
          * @return this for a fluent API
          * @see Configuration#NAK_MULTICAST_MAX_BACKOFF_PROP_NAME
          * @see Configuration#NAK_MULTICAST_GROUP_SIZE_PROP_NAME
@@ -2672,6 +2735,216 @@ public final class MediaDriver implements AutoCloseable
         public Context sendToStatusMessagePollRatio(final int ratio)
         {
             this.sendToStatusMessagePollRatio = ratio;
+            return this;
+        }
+
+        /**
+         * Get the group tag (gtag) to be sent in Status Messages from the Receiver.
+         *
+         * @return group tag value or null if not set.
+         * @see Configuration#RECEIVER_GROUP_TAG_PROP_NAME
+         */
+        public Long receiverGroupTag()
+        {
+            return receiverGroupTag;
+        }
+
+        /**
+         * Set the group tag (gtag) to be sent in Status Messages from the Receiver.
+         *
+         * @param groupTag value to sent in Status Messages from the receiver or null if not set.
+         * @return this for fluent API.
+         * @see Configuration#RECEIVER_GROUP_TAG_PROP_NAME
+         */
+        public Context receiverGroupTag(final Long groupTag)
+        {
+            this.receiverGroupTag = groupTag;
+            return this;
+        }
+
+        /**
+         * Get the default group tag (gtag) to be used by the tagged flow control strategy.
+         *
+         * @return group group tag value or null if not set.
+         * @see Configuration#FLOW_CONTROL_GROUP_TAG_PROP_NAME
+         */
+        public long flowControlGroupTag()
+        {
+            return flowControlGroupTag;
+        }
+
+        /**
+         * Set the default group tag (gtag) to be used by the tagged flow control strategy.
+         *
+         * @param groupTag value to use by default by the tagged flow control strategy.
+         * @return this for fluent API.
+         * @see Configuration#FLOW_CONTROL_GROUP_TAG_PROP_NAME
+         */
+        public Context flowControlGroupTag(final long groupTag)
+        {
+            this.flowControlGroupTag = groupTag;
+            return this;
+        }
+
+        /**
+         * Get the default min group size used by flow control strategies to indicate connectivity.
+         *
+         * @return required group size.
+         * @see Configuration#FLOW_CONTROL_GROUP_MIN_SIZE_PROP_NAME
+         */
+        public int flowControlGroupMinSize()
+        {
+            return flowControlGroupMinSize;
+        }
+
+        /**
+         * Set the default min group size used by flow control strategies to indicate connectivity.
+         *
+         * @param groupSize minimum required group size used by the tagged flow control strategy.
+         * @return this for fluent API.
+         * @see Configuration#FLOW_CONTROL_GROUP_MIN_SIZE_PROP_NAME
+         */
+        public Context flowControlGroupMinSize(final int groupSize)
+        {
+            this.flowControlGroupMinSize = groupSize;
+            return this;
+        }
+
+        /**
+         * Get the {@link NameResolver} to use for resolving endpoints and control names.
+         *
+         * @return {@link NameResolver} to use for resolving endpoints and control names.
+         */
+        public NameResolver nameResolver()
+        {
+            return nameResolver;
+        }
+
+        /**
+         * Set the {@link NameResolver} to use for resolving endpoints and control names.
+         *
+         * @param nameResolver to use for resolving endpoints and control names.
+         * @return this for fluent API.
+         */
+        public Context nameResolver(final NameResolver nameResolver)
+        {
+            this.nameResolver = nameResolver;
+            return this;
+        }
+
+        /**
+         * Get the name of the {@link MediaDriver} for name resolver purposes.
+         *
+         * @return name of the {@link MediaDriver}.
+         * @see Configuration#RESOLVER_NAME_PROP_NAME
+         */
+        public String resolverName()
+        {
+            return resolverName;
+        }
+
+        /**
+         * Set the name of the {@link MediaDriver} for name resolver purposes.
+         *
+         * @param resolverName for the driver.
+         * @return this for a fluent API.
+         * @see Configuration#RESOLVER_NAME_PROP_NAME
+         */
+        public Context resolverName(final String resolverName)
+        {
+            this.resolverName = resolverName;
+            return this;
+        }
+
+        /**
+         * Get the interface of the {@link MediaDriver} for name resolver purposes.
+         *
+         * The format is hostname:port and follows the URI format for the interface parameter. If set to null,
+         * then the name resolver will not be used.
+         *
+         * @return interface of the {@link MediaDriver}.
+         * @see Configuration#RESOLVER_INTERFACE_PROP_NAME
+         * @see CommonContext#INTERFACE_PARAM_NAME
+         */
+        public String resolverInterface()
+        {
+            return resolverInterface;
+        }
+
+        /**
+         * Set the interface of the {@link MediaDriver} for name resolver purposes.
+         *
+         * The format is hostname:port and follows the URI format for the interface parameter. If set to null,
+         * then the name resolver will not be used.
+         *
+         * @param resolverInterface to use for the name resolver.
+         * @return this for fluent API.
+         * @see Configuration#RESOLVER_INTERFACE_PROP_NAME
+         * @see CommonContext#INTERFACE_PARAM_NAME
+         */
+        public Context resolverInterface(final String resolverInterface)
+        {
+            this.resolverInterface = resolverInterface;
+            return this;
+        }
+
+        /**
+         * Get the bootstrap neighbor of the {@link MediaDriver} for name resolver purposes.
+         *
+         * The format is hostname:port and follows the URI format for the endpoint parameter.
+         *
+         * @return bootstrap neighbor of the {@link MediaDriver}.
+         * @see Configuration#RESOLVER_BOOTSTRAP_NEIGHBOR_PROP_NAME
+         * @see CommonContext#ENDPOINT_PARAM_NAME
+         */
+        public String resolverBootstrapNeighbor()
+        {
+            return resolverBootstrapNeighbor;
+        }
+
+        /**
+         * Set the bootstrap neighbor of the {@link MediaDriver} for name resolver purposes.
+         *
+         * The format is hostname:port and follows the URI format for the endpoint parameter.
+         *
+         * @param resolverBootstrapNeighbor to use for the name resolver.
+         * @return this for fluent API.
+         * @see Configuration#RESOLVER_BOOTSTRAP_NEIGHBOR_PROP_NAME
+         * @see CommonContext#ENDPOINT_PARAM_NAME
+         */
+        public Context resolverBootstrapNeighbor(final String resolverBootstrapNeighbor)
+        {
+            this.resolverBootstrapNeighbor = resolverBootstrapNeighbor;
+            return this;
+        }
+
+        /**
+         * Get the interval for checking if a re-resolution for endpoints and controls should be done.
+         *
+         * A value of 0 turns off checks and re-resolutions.
+         *
+         * @return timeout in ns.
+         * @see Configuration#RE_RESOLUTION_CHECK_INTERVAL_PROP_NAME
+         * @see Configuration#RE_RESOLUTION_CHECK_INTERVAL_DEFAULT_NS
+         */
+        public long reResolutionCheckIntervalNs()
+        {
+            return reResolutionCheckIntervalNs;
+        }
+
+        /**
+         * Set the interval for checking if a re-resolution for endpoints and controls should be done.
+         *
+         * A value of 0 turns off checks and re-resolutions.
+         *
+         * @param reResolutionCheckIntervalNs to use for check
+         * @return this for fluent API.
+         * @see Configuration#RE_RESOLUTION_CHECK_INTERVAL_PROP_NAME
+         * @see Configuration#RE_RESOLUTION_CHECK_INTERVAL_DEFAULT_NS
+         */
+        public Context reResolutionCheckIntervalNs(final long reResolutionCheckIntervalNs)
+        {
+            this.reResolutionCheckIntervalNs = reResolutionCheckIntervalNs;
             return this;
         }
 
@@ -2806,12 +3079,12 @@ public final class MediaDriver implements AutoCloseable
 
             if (null == epochClock)
             {
-                epochClock = new SystemEpochClock();
+                epochClock = SystemEpochClock.INSTANCE;
             }
 
             if (null == nanoClock)
             {
-                nanoClock = new SystemNanoClock();
+                nanoClock = SystemNanoClock.INSTANCE;
             }
 
             if (null == cachedEpochClock)
@@ -2846,17 +3119,33 @@ public final class MediaDriver implements AutoCloseable
 
             if (null == dataTransportPoller)
             {
-                dataTransportPoller = new DataTransportPoller();
+                dataTransportPoller = new DataTransportPoller(errorHandler);
             }
 
             if (null == controlTransportPoller)
             {
-                controlTransportPoller = new ControlTransportPoller();
+                controlTransportPoller = new ControlTransportPoller(errorHandler);
             }
 
             if (null == applicationSpecificFeedback)
             {
                 applicationSpecificFeedback = Configuration.applicationSpecificFeedback();
+            }
+
+            if (null == receiverGroupTag)
+            {
+                if (applicationSpecificFeedback.length > 0)
+                {
+                    if (applicationSpecificFeedback.length != SIZE_OF_LONG)
+                    {
+                        throw new IllegalArgumentException(
+                            "applicationSpecificFeedback length must be equal to " + SIZE_OF_LONG +
+                                " bytes: length=" + applicationSpecificFeedback.length);
+                    }
+
+                    final UnsafeBuffer buffer = new UnsafeBuffer(applicationSpecificFeedback);
+                    receiverGroupTag = buffer.getLong(0, ByteOrder.LITTLE_ENDIAN);
+                }
             }
 
             if (null == receiveChannelEndpointThreadLocals)
@@ -2914,6 +3203,11 @@ public final class MediaDriver implements AutoCloseable
             {
                 terminationValidator = Configuration.terminationValidator();
             }
+
+            if (null == nameResolver)
+            {
+                nameResolver = DefaultNameResolver.INSTANCE;
+            }
         }
 
         private void concludeDependantProperties()
@@ -2925,7 +3219,8 @@ public final class MediaDriver implements AutoCloseable
 
             if (null == errorLog)
             {
-                errorLog = new DistinctErrorLog(createErrorLogBuffer(cncByteBuffer, cncMetaDataBuffer), epochClock);
+                errorLog = new DistinctErrorLog(
+                    createErrorLogBuffer(cncByteBuffer, cncMetaDataBuffer), epochClock, US_ASCII);
             }
 
             if (null == errorHandler)
@@ -2946,11 +3241,8 @@ public final class MediaDriver implements AutoCloseable
                     aeronDirectoryName(), filePageSize, performStorageChecks, lowStorageWarningThreshold, errorHandler);
             }
 
-            if (null == lossReport)
-            {
-                lossReportBuffer = mapLossReport(aeronDirectoryName(), align(lossReportBufferLength, filePageSize));
-                lossReport = new LossReport(new UnsafeBuffer(lossReportBuffer));
-            }
+            lossReportBuffer = mapLossReport(aeronDirectoryName(), align(lossReportBufferLength, filePageSize));
+            lossReport = new LossReport(new UnsafeBuffer(lossReportBuffer));
         }
 
         private void concludeCounters()
@@ -3085,6 +3377,7 @@ public final class MediaDriver implements AutoCloseable
                 "\n    spiesSimulateConnection=" + spiesSimulateConnection +
                 "\n    reliableStream=" + reliableStream +
                 "\n    tetherSubscriptions=" + tetherSubscriptions +
+                "\n    rejoinStream=" + rejoinStream +
                 "\n    receiverGroupConsideration=" + receiverGroupConsideration +
                 "\n    conductorBufferLength=" + conductorBufferLength +
                 "\n    toClientsBufferLength=" + toClientsBufferLength +
@@ -3142,9 +3435,19 @@ public final class MediaDriver implements AutoCloseable
                 "\n    unicastFlowControlSupplier=" + unicastFlowControlSupplier +
                 "\n    multicastFlowControlSupplier=" + multicastFlowControlSupplier +
                 "\n    applicationSpecificFeedback=" + Arrays.toString(applicationSpecificFeedback) +
+                "\n    receiverGroupTag=" + receiverGroupTag +
+                "\n    flowControlGroupTag=" + flowControlGroupTag +
+                "\n    flowControlGroupMinSize=" + flowControlGroupMinSize +
+                "\n    flowControlReceiverTimeoutNs=" + flowControlReceiverTimeoutNs +
+                "\n    reResolutionCheckIntervalNs=" + reResolutionCheckIntervalNs +
+                "\n    receiverGroupConsideration=" + receiverGroupConsideration +
                 "\n    congestionControlSupplier=" + congestionControlSupplier +
                 "\n    terminationValidator=" + terminationValidator +
                 "\n    terminationHook=" + terminationHook +
+                "\n    nameResolver=" + nameResolver +
+                "\n    resolverName=" + resolverName +
+                "\n    resolverInterface=" + resolverInterface +
+                "\n    resolverBootstrapNeighbor=" + resolverBootstrapNeighbor +
                 "\n    sendToStatusMessagePollRatio=" + sendToStatusMessagePollRatio +
                 "\n    unicastFeedbackDelayGenerator=" + unicastFeedbackDelayGenerator +
                 "\n    multicastFeedbackDelayGenerator=" + multicastFeedbackDelayGenerator +

@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,6 +33,7 @@ import org.agrona.concurrent.*;
 import org.agrona.concurrent.errors.DistinctErrorLog;
 import org.agrona.concurrent.errors.LoggingErrorHandler;
 import org.agrona.concurrent.status.AtomicCounter;
+import org.agrona.concurrent.status.CountersReader;
 
 import java.io.File;
 import java.util.Random;
@@ -44,10 +45,10 @@ import java.util.function.Supplier;
 import static io.aeron.cluster.ConsensusModule.Configuration.*;
 import static io.aeron.cluster.service.ClusteredServiceContainer.Configuration.SNAPSHOT_CHANNEL_PROP_NAME;
 import static io.aeron.cluster.service.ClusteredServiceContainer.Configuration.SNAPSHOT_STREAM_ID_PROP_NAME;
-import static io.aeron.driver.status.SystemCounterDescriptor.SYSTEM_COUNTER_TYPE_ID;
+import static java.nio.charset.StandardCharsets.US_ASCII;
 import static java.util.concurrent.atomic.AtomicIntegerFieldUpdater.newUpdater;
 import static org.agrona.SystemUtil.*;
-import static org.agrona.concurrent.status.CountersReader.METADATA_LENGTH;
+import static org.agrona.concurrent.status.CountersReader.*;
 
 /**
  * Component which resides on each node and is responsible for coordinating consensus within a cluster in concert
@@ -83,9 +84,9 @@ public class ConsensusModule implements AutoCloseable
         SNAPSHOT(3),
 
         /**
-         * Leaving cluster and shutting down as soon as services ack without taking a snapshot.
+         * Quitting the cluster and shutting down as soon as services ack without taking a snapshot.
          */
-        LEAVING(4),
+        QUITTING(4),
 
         /**
          * In the process of terminating the node.
@@ -159,6 +160,31 @@ public class ConsensusModule implements AutoCloseable
     }
 
     /**
+     * Get the current state of the {@link ConsensusModule}.
+     *
+     * @param counters to search for the control toggle.
+     * @return the state of the ConsensusModule or null if not found.
+     */
+    public static State findState(final CountersReader counters)
+    {
+        final AtomicBuffer buffer = counters.metaDataBuffer();
+
+        for (int i = 0, size = counters.maxCounterId(); i < size; i++)
+        {
+            final int recordOffset = CountersReader.metaDataOffset(i);
+
+            if (counters.getCounterState(i) == RECORD_ALLOCATED &&
+                buffer.getInt(recordOffset + TYPE_ID_OFFSET) == CONSENSUS_MODULE_STATE_TYPE_ID)
+            {
+                final AtomicCounter atomicCounter = new AtomicCounter(counters.valuesBuffer(), i, null);
+                return State.get(atomicCounter);
+            }
+        }
+
+        return null;
+    }
+
+    /**
      * Launch an {@link ConsensusModule} with that communicates with an out of process {@link io.aeron.archive.Archive}
      * and {@link io.aeron.driver.MediaDriver} then awaits shutdown signal.
      *
@@ -180,11 +206,17 @@ public class ConsensusModule implements AutoCloseable
 
     ConsensusModule(final Context ctx)
     {
-        this.ctx = ctx;
-
         try
         {
             ctx.conclude();
+            this.ctx = ctx;
+
+            final ConsensusModuleAgent conductor = new ConsensusModuleAgent(ctx);
+            conductorRunner = new AgentRunner(ctx.idleStrategy(), ctx.errorHandler(), ctx.errorCounter(), conductor);
+        }
+        catch (final ConcurrentConcludeException ex)
+        {
+            throw ex;
         }
         catch (final Throwable ex)
         {
@@ -193,12 +225,9 @@ public class ConsensusModule implements AutoCloseable
                 ctx.markFile.signalFailedStart();
             }
 
-            ctx.close();
+            CloseHelper.quietClose(ctx::close);
             throw ex;
         }
-
-        final ConsensusModuleAgent conductor = new ConsensusModuleAgent(ctx);
-        conductorRunner = new AgentRunner(ctx.idleStrategy(), ctx.errorHandler(), ctx.errorCounter(), conductor);
     }
 
     private ConsensusModule start()
@@ -248,6 +277,16 @@ public class ConsensusModule implements AutoCloseable
      */
     public static class Configuration
     {
+        /**
+         * Property name for the limit for fragments to be consumed on each poll of ingress.
+         */
+        public static final String CLUSTER_INGRESS_FRAGMENT_LIMIT_PROP_NAME = "aeron.cluster.ingress.fragment.limit";
+
+        /**
+         * Default for the limit for fragments to be consumed on each poll of ingress.
+         */
+        public static final int CLUSTER_INGRESS_FRAGMENT_LIMIT_DEFAULT = 50;
+
         /**
          * Type of snapshot for this component.
          */
@@ -328,9 +367,10 @@ public class ConsensusModule implements AutoCloseable
         public static final String LOG_CHANNEL_PROP_NAME = "aeron.cluster.log.channel";
 
         /**
-         * Channel for the clustered log.
+         * Channel for the clustered log. This channel can exist for a potentially log time given cluster operation
+         * so attention should be given to configuration such as term-length and mtu.
          */
-        public static final String LOG_CHANNEL_DEFAULT = "aeron:udp?endpoint=localhost:9030|group=true";
+        public static final String LOG_CHANNEL_DEFAULT = "aeron:udp?endpoint=localhost:9030|group=true|term-length=64m";
 
         /**
          * Property name for the comma separated list of member endpoints.
@@ -338,6 +378,7 @@ public class ConsensusModule implements AutoCloseable
          * <code>
          *     client-facing:port,member-facing:port,log:port,transfer:port,archive:port
          * </code>
+         *
          * @see #CLUSTER_MEMBERS_PROP_NAME
          */
         public static final String MEMBER_ENDPOINTS_PROP_NAME = "aeron.cluster.member.endpoints";
@@ -420,6 +461,21 @@ public class ConsensusModule implements AutoCloseable
         public static final int CONSENSUS_MODULE_STATE_TYPE_ID = 200;
 
         /**
+         * Counter type id for the consensus module error count.
+         */
+        public static final int CONSENSUS_MODULE_ERROR_COUNT_TYPE_ID = 212;
+
+        /**
+         * Counter type id for the number of cluster clients which have been timed out.
+         */
+        public static final int CLUSTER_CLIENT_TIMEOUT_COUNT_TYPE_ID = 213;
+
+        /**
+         * Counter type id for the number of invalid requests which the cluster has received.
+         */
+        public static final int CLUSTER_INVALID_REQUEST_COUNT_TYPE_ID = 214;
+
+        /**
          * Counter type id for the cluster node role.
          */
         public static final int CLUSTER_NODE_ROLE_TYPE_ID = ClusterNodeRole.CLUSTER_NODE_ROLE_TYPE_ID;
@@ -451,6 +507,8 @@ public class ConsensusModule implements AutoCloseable
 
         /**
          * The number of services in this cluster instance.
+         *
+         * @see io.aeron.cluster.service.ClusteredServiceContainer.Configuration#SERVICE_ID_PROP_NAME
          */
         public static final String SERVICE_COUNT_PROP_NAME = "aeron.cluster.service.count";
 
@@ -610,6 +668,18 @@ public class ConsensusModule implements AutoCloseable
          * Default file sync level of normal writes.
          */
         public static final int FILE_SYNC_LEVEL_DEFAULT = 0;
+
+        /**
+         * The value {@link #CLUSTER_INGRESS_FRAGMENT_LIMIT_DEFAULT} or system property
+         * {@link #CLUSTER_INGRESS_FRAGMENT_LIMIT_PROP_NAME} if set.
+         *
+         * @return {@link #CLUSTER_INGRESS_FRAGMENT_LIMIT_DEFAULT} or system property
+         * {@link #CLUSTER_INGRESS_FRAGMENT_LIMIT_PROP_NAME} if set.
+         */
+        public static int ingressFragmentLimit()
+        {
+            return Integer.getInteger(CLUSTER_INGRESS_FRAGMENT_LIMIT_PROP_NAME, CLUSTER_INGRESS_FRAGMENT_LIMIT_DEFAULT);
+        }
 
         /**
          * The value {@link #CLUSTER_MEMBER_ID_DEFAULT} or system property
@@ -976,6 +1046,7 @@ public class ConsensusModule implements AutoCloseable
         private boolean clusterMembersIgnoreSnapshot = Configuration.clusterMembersIgnoreSnapshot();
         private String ingressChannel = AeronCluster.Configuration.ingressChannel();
         private int ingressStreamId = AeronCluster.Configuration.ingressStreamId();
+        private int ingressFragmentLimit = Configuration.ingressFragmentLimit();
         private String logChannel = Configuration.logChannel();
         private int logStreamId = Configuration.logStreamId();
         private String memberEndpoints = Configuration.memberEndpoints();
@@ -1014,8 +1085,9 @@ public class ConsensusModule implements AutoCloseable
         private AtomicCounter errorCounter;
         private CountedErrorHandler countedErrorHandler;
 
-        private Counter moduleState;
-        private Counter clusterNodeRole;
+        private Counter electionStateCounter;
+        private Counter moduleStateCounter;
+        private Counter clusterNodeRoleCounter;
         private Counter commitPosition;
         private Counter controlToggle;
         private Counter snapshotCounter;
@@ -1059,7 +1131,7 @@ public class ConsensusModule implements AutoCloseable
                 clusterDir = new File(clusterDirectoryName);
             }
 
-            if (deleteDirOnStart && clusterDir.exists())
+            if (deleteDirOnStart)
             {
                 IoUtil.delete(clusterDir, false);
             }
@@ -1081,7 +1153,7 @@ public class ConsensusModule implements AutoCloseable
 
             if (null == epochClock)
             {
-                epochClock = new SystemEpochClock();
+                epochClock = SystemEpochClock.INSTANCE;
             }
 
             if (null == markFile)
@@ -1096,7 +1168,7 @@ public class ConsensusModule implements AutoCloseable
 
             if (null == errorLog)
             {
-                errorLog = new DistinctErrorLog(markFile.errorBuffer(), epochClock);
+                errorLog = new DistinctErrorLog(markFile.errorBuffer(), epochClock, US_ASCII);
             }
 
             if (null == errorHandler)
@@ -1124,7 +1196,7 @@ public class ConsensusModule implements AutoCloseable
 
                 if (null == errorCounter)
                 {
-                    errorCounter = aeron.addCounter(SYSTEM_COUNTER_TYPE_ID, "Cluster errors");
+                    errorCounter = aeron.addCounter(CONSENSUS_MODULE_ERROR_COUNT_TYPE_ID, "Cluster errors");
                 }
             }
 
@@ -1147,9 +1219,19 @@ public class ConsensusModule implements AutoCloseable
                 }
             }
 
-            if (null == moduleState)
+            if (null == electionStateCounter)
             {
-                moduleState = aeron.addCounter(CONSENSUS_MODULE_STATE_TYPE_ID, "Consensus module state");
+                electionStateCounter = aeron.addCounter(ELECTION_STATE_TYPE_ID, "Election State");
+            }
+
+            if (null == moduleStateCounter)
+            {
+                moduleStateCounter = aeron.addCounter(CONSENSUS_MODULE_STATE_TYPE_ID, "Consensus module state");
+            }
+
+            if (null == clusterNodeRoleCounter)
+            {
+                clusterNodeRoleCounter = aeron.addCounter(Configuration.CLUSTER_NODE_ROLE_TYPE_ID, "Cluster node role");
             }
 
             if (null == commitPosition)
@@ -1169,17 +1251,14 @@ public class ConsensusModule implements AutoCloseable
 
             if (null == invalidRequestCounter)
             {
-                invalidRequestCounter = aeron.addCounter(SYSTEM_COUNTER_TYPE_ID, "Invalid cluster request count");
+                invalidRequestCounter = aeron.addCounter(
+                    CLUSTER_INVALID_REQUEST_COUNT_TYPE_ID, "Invalid cluster request count");
             }
 
             if (null == timedOutClientCounter)
             {
-                timedOutClientCounter = aeron.addCounter(SYSTEM_COUNTER_TYPE_ID, "Timed out cluster client count");
-            }
-
-            if (null == clusterNodeRole)
-            {
-                clusterNodeRole = aeron.addCounter(Configuration.CLUSTER_NODE_ROLE_TYPE_ID, "Cluster node role");
+                timedOutClientCounter = aeron.addCounter(
+                    CLUSTER_CLIENT_TIMEOUT_COUNT_TYPE_ID, "Timed out cluster client count");
             }
 
             if (null == threadFactory)
@@ -1204,7 +1283,7 @@ public class ConsensusModule implements AutoCloseable
                 .aeron(aeron)
                 .errorHandler(countedErrorHandler)
                 .ownsAeronClient(false)
-                .lock(new NoOpLock());
+                .lock(NoOpLock.INSTANCE);
 
             if (null == shutdownSignalBarrier)
             {
@@ -1602,6 +1681,30 @@ public class ConsensusModule implements AutoCloseable
         }
 
         /**
+         * Set limit for fragments to be consumed on each poll of ingress.
+         *
+         * @param ingressFragmentLimit for the ingress channel.
+         * @return this for a fluent API
+         * @see Configuration#CLUSTER_INGRESS_FRAGMENT_LIMIT_PROP_NAME
+         */
+        public Context ingressFragmentLimit(final int ingressFragmentLimit)
+        {
+            this.ingressFragmentLimit = ingressFragmentLimit;
+            return this;
+        }
+
+        /**
+         * The limit for fragments to be consumed on each poll of ingress.
+         *
+         * @return the limit for fragments to be consumed on each poll of ingress.
+         * @see Configuration#CLUSTER_INGRESS_FRAGMENT_LIMIT_PROP_NAME
+         */
+        public int ingressFragmentLimit()
+        {
+            return ingressFragmentLimit;
+        }
+
+        /**
          * Set the channel parameter for the cluster log channel.
          *
          * @param channel parameter for the cluster log channel.
@@ -1945,6 +2048,7 @@ public class ConsensusModule implements AutoCloseable
          * @param serviceCount the number of clustered services in this cluster instance.
          * @return this for a fluent API
          * @see Configuration#SERVICE_COUNT_PROP_NAME
+         * @see io.aeron.cluster.service.ClusteredServiceContainer.Configuration#SERVICE_ID_PROP_NAME
          */
         public Context serviceCount(final int serviceCount)
         {
@@ -1957,6 +2061,7 @@ public class ConsensusModule implements AutoCloseable
          *
          * @return the number of clustered services in this cluster instance.
          * @see Configuration#SERVICE_COUNT_PROP_NAME
+         * @see io.aeron.cluster.service.ClusteredServiceContainer.Configuration#SERVICE_ID_PROP_NAME
          */
         public int serviceCount()
         {
@@ -2233,9 +2338,9 @@ public class ConsensusModule implements AutoCloseable
         }
 
         /**
-         * Set the {@link ClusterClock} to be used for timestamping messages.
+         * Set the {@link ClusterClock} to be used for timestamping messages and timers.
          *
-         * @param clock {@link ClusterClock} to be used for timestamping message
+         * @param clock {@link ClusterClock} to be used for timestamping messages and timers.
          * @return this for a fluent API.
          */
         public Context clusterClock(final ClusterClock clock)
@@ -2245,9 +2350,9 @@ public class ConsensusModule implements AutoCloseable
         }
 
         /**
-         * Get the {@link ClusterClock} to used for timestamping message
+         * Get the {@link ClusterClock} to used for timestamping messages and timers.
          *
-         * @return the {@link ClusterClock} to used for timestamping message
+         * @return the {@link ClusterClock} to used for timestamping messages and timers.
          */
         public ClusterClock clusterClock()
         {
@@ -2343,6 +2448,30 @@ public class ConsensusModule implements AutoCloseable
         }
 
         /**
+         * Get the counter for the current state of an election
+         *
+         * @return the counter for the current state of an election.
+         * @see Election.State
+         */
+        public Counter electionStateCounter()
+        {
+            return electionStateCounter;
+        }
+
+        /**
+         * Set the counter for the current state of an election.
+         *
+         * @param electionStateCounter for the current state of an election.
+         * @return this for a fluent API.
+         * @see Election.State
+         */
+        public Context electionStateCounter(final Counter electionStateCounter)
+        {
+            this.electionStateCounter = electionStateCounter;
+            return this;
+        }
+
+        /**
          * Get the counter for the current state of the consensus module.
          *
          * @return the counter for the current state of the consensus module.
@@ -2350,7 +2479,7 @@ public class ConsensusModule implements AutoCloseable
          */
         public Counter moduleStateCounter()
         {
-            return moduleState;
+            return moduleStateCounter;
         }
 
         /**
@@ -2362,7 +2491,7 @@ public class ConsensusModule implements AutoCloseable
          */
         public Context moduleStateCounter(final Counter moduleState)
         {
-            this.moduleState = moduleState;
+            this.moduleStateCounter = moduleState;
             return this;
         }
 
@@ -2398,23 +2527,23 @@ public class ConsensusModule implements AutoCloseable
          * cluster node.
          * @see io.aeron.cluster.service.Cluster.Role
          */
-        public Counter clusterNodeCounter()
+        public Counter clusterNodeRoleCounter()
         {
-            return clusterNodeRole;
+            return clusterNodeRoleCounter;
         }
 
         /**
          * Set the counter for representing the current {@link io.aeron.cluster.service.Cluster.Role} of the
          * cluster node.
          *
-         * @param moduleRole the counter for representing the current {@link io.aeron.cluster.service.Cluster.Role}
-         *                   of the cluster node.
+         * @param nodeRole the counter for representing the current {@link io.aeron.cluster.service.Cluster.Role}
+         *                 of the cluster node.
          * @return this for a fluent API.
          * @see io.aeron.cluster.service.Cluster.Role
          */
-        public Context clusterNodeCounter(final Counter moduleRole)
+        public Context clusterNodeRoleCounter(final Counter nodeRole)
         {
-            this.clusterNodeRole = moduleRole;
+            this.clusterNodeRoleCounter = nodeRole;
             return this;
         }
 
@@ -2701,6 +2830,7 @@ public class ConsensusModule implements AutoCloseable
          *
          * @param errorBufferLength in bytes to use.
          * @return this for a fluent API.
+         * @see Configuration#ERROR_BUFFER_LENGTH_PROP_NAME
          */
         public Context errorBufferLength(final int errorBufferLength)
         {
@@ -2712,6 +2842,7 @@ public class ConsensusModule implements AutoCloseable
          * The error buffer length in bytes.
          *
          * @return error buffer length in bytes.
+         * @see Configuration#ERROR_BUFFER_LENGTH_PROP_NAME
          */
         public int errorBufferLength()
         {
@@ -2780,8 +2911,12 @@ public class ConsensusModule implements AutoCloseable
          */
         public void close()
         {
-            CloseHelper.close(recordingLog);
-            CloseHelper.close(markFile);
+            CloseHelper.close(countedErrorHandler, recordingLog);
+            CloseHelper.close(countedErrorHandler, markFile);
+            if (errorHandler instanceof AutoCloseable)
+            {
+                CloseHelper.quietClose((AutoCloseable)errorHandler); // Ignore error to ensure the rest will be closed
+            }
 
             if (ownsAeronClient)
             {
@@ -2789,11 +2924,15 @@ public class ConsensusModule implements AutoCloseable
             }
             else if (!aeron.isClosed())
             {
-                CloseHelper.close(moduleState);
-                CloseHelper.close(commitPosition);
-                CloseHelper.close(clusterNodeRole);
-                CloseHelper.close(controlToggle);
-                CloseHelper.close(snapshotCounter);
+                CloseHelper.closeAll(
+                    moduleStateCounter,
+                    clusterNodeRoleCounter,
+                    electionStateCounter,
+                    commitPosition,
+                    controlToggle,
+                    snapshotCounter,
+                    invalidRequestCounter,
+                    timedOutClientCounter);
             }
         }
 

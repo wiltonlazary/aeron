@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,9 +27,9 @@ import org.agrona.CloseHelper;
 import org.agrona.IoUtil;
 import org.agrona.concurrent.EpochClock;
 import org.agrona.concurrent.UnsafeBuffer;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
 import java.io.File;
 import java.nio.channels.FileChannel;
@@ -38,7 +38,7 @@ import static io.aeron.Aeron.NULL_VALUE;
 import static io.aeron.archive.Archive.segmentFileName;
 import static io.aeron.archive.client.AeronArchive.NULL_POSITION;
 import static java.nio.file.StandardOpenOption.*;
-import static org.junit.Assert.*;
+import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 public class RecordingSessionTest
@@ -63,7 +63,7 @@ public class RecordingSessionTest
     private final RecordingEventsProxy recordingEventsProxy = mock(RecordingEventsProxy.class);
     private final Counter mockPosition = mock(Counter.class);
     private final Image image = mockImage(mockSubscription());
-    private final File archiveDir = TestUtil.makeTestDirectory();
+    private final File archiveDir = ArchiveTests.makeTestDirectory();
     private FileChannel mockLogBufferChannel;
     private UnsafeBuffer mockLogBufferMapped;
     private File termFile;
@@ -71,7 +71,7 @@ public class RecordingSessionTest
     private Archive.Context context;
     private long positionLong;
 
-    @Before
+    @BeforeEach
     public void before() throws Exception
     {
         when(mockPosition.getWeak()).then((invocation) -> positionLong);
@@ -105,7 +105,7 @@ public class RecordingSessionTest
             .epochClock(epochClock);
     }
 
-    @After
+    @AfterEach
     public void after()
     {
         IoUtil.unmap(mockLogBufferMapped.byteBuffer());
@@ -128,7 +128,9 @@ public class RecordingSessionTest
             mockPosition,
             ARCHIVE_CHANNEL,
             context,
-            CONTROL_SESSION);
+            CONTROL_SESSION,
+            null,
+            null);
 
         assertEquals(RECORDING_ID, session.sessionId());
 
@@ -153,7 +155,7 @@ public class RecordingSessionTest
                 return RECORDED_BLOCK_LENGTH;
             });
 
-        assertNotEquals("Expect some work", 0, session.doWork());
+        assertNotEquals(0, session.doWork(), "Expect some work");
 
         final File segmentFile = new File(archiveDir, segmentFileName(RECORDING_ID, 0));
         assertTrue(segmentFile.exists());
@@ -185,7 +187,7 @@ public class RecordingSessionTest
         }
 
         when(image.blockPoll(any(), anyInt())).thenReturn(0);
-        assertEquals("Expect no work", 0, session.doWork());
+        assertEquals(0, session.doWork(), "Expect no work");
 
         when(image.isClosed()).thenReturn(true);
         session.doWork();

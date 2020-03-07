@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,20 +15,47 @@
  */
 package io.aeron.archive;
 
+import io.aeron.Aeron;
+import io.aeron.ChannelUriStringBuilder;
+import io.aeron.CommonContext;
+import io.aeron.Publication;
+import io.aeron.archive.Archive.Context;
+import io.aeron.archive.checksum.Checksum;
 import io.aeron.archive.client.AeronArchive;
 import io.aeron.archive.client.RecordingSubscriptionDescriptorConsumer;
+import io.aeron.archive.status.RecordingPos;
 import io.aeron.driver.MediaDriver;
 import io.aeron.driver.ThreadingMode;
+import io.aeron.logbuffer.FrameDescriptor;
+import io.aeron.logbuffer.LogBufferDescriptor;
+import io.aeron.protocol.DataHeaderFlyweight;
+import org.agrona.DirectBuffer;
 import org.agrona.concurrent.ManyToOneConcurrentLinkedQueue;
-import org.junit.Test;
+import org.agrona.concurrent.SystemEpochClock;
+import org.agrona.concurrent.UnsafeBuffer;
+import org.agrona.concurrent.status.CountersReader;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 
+import java.io.File;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.concurrent.*;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.function.IntConsumer;
 
+import static io.aeron.archive.Archive.Configuration.MAX_BLOCK_LENGTH;
+import static io.aeron.archive.ArchiveThreadingMode.DEDICATED;
+import static io.aeron.archive.ArchiveThreadingMode.SHARED;
+import static io.aeron.archive.client.AeronArchive.segmentFileBasePosition;
 import static io.aeron.archive.codecs.SourceLocation.LOCAL;
-import static org.hamcrest.core.Is.is;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertThat;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.params.provider.EnumSource.Mode.EXCLUDE;
+import static org.mockito.Mockito.mock;
 
 public class ArchiveTest
 {
@@ -41,7 +68,48 @@ public class ArchiveTest
 
         final String actual = Archive.segmentFileName(recordingId, segmentPosition);
 
-        assertThat(actual, is(expected));
+        assertEquals(expected, actual);
+    }
+
+    @Test
+    public void shouldCalculateCorrectSegmentFilePosition()
+    {
+        final int termLength = LogBufferDescriptor.TERM_MIN_LENGTH;
+        final int segmentLength = termLength * 8;
+
+        long startPosition = 0;
+        long position = 0;
+        assertEquals(0L, segmentFileBasePosition(startPosition, position, termLength, segmentLength));
+
+        startPosition = 0;
+        position = termLength * 2;
+        assertEquals(0L, segmentFileBasePosition(startPosition, position, termLength, segmentLength));
+
+        startPosition = 0;
+        position = segmentLength;
+        assertEquals(segmentLength, segmentFileBasePosition(startPosition, position, termLength, segmentLength));
+
+        startPosition = termLength;
+        position = termLength;
+        assertEquals(startPosition, segmentFileBasePosition(startPosition, position, termLength, segmentLength));
+
+        startPosition = termLength * 4;
+        position = termLength * 4;
+        assertEquals(startPosition, segmentFileBasePosition(startPosition, position, termLength, segmentLength));
+
+        startPosition = termLength;
+        position = termLength + segmentLength;
+        assertEquals(
+            termLength + segmentLength, segmentFileBasePosition(startPosition, position, termLength, segmentLength));
+
+        startPosition = termLength;
+        position = termLength + segmentLength - FrameDescriptor.FRAME_ALIGNMENT;
+        assertEquals(termLength, segmentFileBasePosition(startPosition, position, termLength, segmentLength));
+
+        startPosition = termLength + FrameDescriptor.FRAME_ALIGNMENT;
+        position = termLength + segmentLength;
+        assertEquals(
+            termLength + segmentLength, segmentFileBasePosition(startPosition, position, termLength, segmentLength));
     }
 
     @Test
@@ -55,12 +123,11 @@ public class ArchiveTest
         final MediaDriver.Context driverCtx = new MediaDriver.Context()
             .errorHandler(Throwable::printStackTrace)
             .clientLivenessTimeoutNs(connectTimeoutNs)
-            .dirDeleteOnShutdown(true)
             .dirDeleteOnStart(true)
             .publicationUnblockTimeoutNs(connectTimeoutNs * 2)
             .threadingMode(ThreadingMode.SHARED);
-        final Archive.Context archiveCtx = new Archive.Context()
-            .threadingMode(ArchiveThreadingMode.SHARED)
+        final Context archiveCtx = new Context()
+            .threadingMode(SHARED)
             .connectTimeoutNs(connectTimeoutNs);
         executor.prestartAllCoreThreads();
 
@@ -86,16 +153,97 @@ public class ArchiveTest
                 archiveClient.close();
             }
 
-            assertThat(latch.getCount(), is(0L));
+            assertEquals(0L, latch.getCount());
         }
         finally
         {
             executor.shutdownNow();
-            archiveCtx.deleteArchiveDirectory();
+            archiveCtx.deleteDirectory();
+            driverCtx.deleteDirectory();
         }
     }
 
-    @Test(timeout = 10_000L)
+    @Test
+    public void shouldRecoverRecordingWithNonZeroStartPosition()
+    {
+        final MediaDriver.Context driverCtx = new MediaDriver.Context()
+            .dirDeleteOnStart(true)
+            .threadingMode(ThreadingMode.SHARED);
+        final Context archiveCtx = new Context().threadingMode(SHARED);
+
+        long resultingPosition;
+        final int initialPosition = DataHeaderFlyweight.HEADER_LENGTH * 9;
+        final long recordingId;
+
+        try (ArchivingMediaDriver ignore = ArchivingMediaDriver.launch(driverCtx.clone(), archiveCtx.clone());
+            AeronArchive archive = AeronArchive.connect())
+        {
+            final int termLength = 128 * 1024;
+            final int initialTermId = 29;
+
+            final String channel = new ChannelUriStringBuilder()
+                .media(CommonContext.IPC_MEDIA)
+                .initialPosition(initialPosition, initialTermId, termLength)
+                .build();
+
+            final Publication publication = archive.addRecordedExclusivePublication(channel, 1);
+            final DirectBuffer buffer = new UnsafeBuffer("Hello World".getBytes(StandardCharsets.US_ASCII));
+
+            while ((resultingPosition = publication.offer(buffer)) <= 0)
+            {
+                Thread.yield();
+            }
+
+            final Aeron aeron = archive.context().aeron();
+
+            int counterId;
+            final int sessionId = publication.sessionId();
+            final CountersReader countersReader = aeron.countersReader();
+            while (Aeron.NULL_VALUE == (counterId = RecordingPos.findCounterIdBySession(countersReader, sessionId)))
+            {
+                Thread.yield();
+            }
+
+            recordingId = RecordingPos.getRecordingId(countersReader, counterId);
+
+            while (countersReader.getCounterValue(counterId) < resultingPosition)
+            {
+                Thread.yield();
+            }
+        }
+
+        try (Catalog catalog = openCatalog(archiveCtx))
+        {
+            final Catalog.CatalogEntryProcessor catalogEntryProcessor =
+                (headerEncoder, headerDecoder, descriptorEncoder, descriptorDecoder) ->
+                descriptorEncoder.stopPosition(Aeron.NULL_VALUE);
+
+            assertTrue(catalog.forEntry(recordingId, catalogEntryProcessor));
+        }
+
+        final Context archiveCtxClone = archiveCtx.clone();
+        final MediaDriver.Context driverCtxClone = driverCtx.clone();
+        try (ArchivingMediaDriver ignore = ArchivingMediaDriver.launch(driverCtxClone, archiveCtxClone);
+            AeronArchive archive = AeronArchive.connect())
+        {
+            assertEquals(initialPosition, archive.getStartPosition(recordingId));
+            assertEquals(resultingPosition, archive.getStopPosition(recordingId));
+        }
+        finally
+        {
+            archiveCtxClone.deleteDirectory();
+            driverCtxClone.deleteDirectory();
+        }
+    }
+
+    private static Catalog openCatalog(final Context archiveCtx)
+    {
+        final IntConsumer intConsumer = (version) -> {};
+        return new Catalog(new File(archiveCtx.archiveDirectoryName()), new SystemEpochClock(), true, intConsumer);
+    }
+
+    @Test
+    @Timeout(10)
     public void shouldListRegisteredRecordingSubscriptions()
     {
         final int expectedStreamId = 7;
@@ -111,9 +259,8 @@ public class ArchiveTest
 
         final MediaDriver.Context driverCtx = new MediaDriver.Context()
             .dirDeleteOnStart(true)
-            .dirDeleteOnShutdown(true)
             .threadingMode(ThreadingMode.SHARED);
-        final Archive.Context archiveCtx = new Archive.Context().threadingMode(ArchiveThreadingMode.SHARED);
+        final Context archiveCtx = new Context().threadingMode(SHARED);
 
         try (ArchivingMediaDriver ignore = ArchivingMediaDriver.launch(driverCtx, archiveCtx);
             AeronArchive archive = AeronArchive.connect())
@@ -149,8 +296,109 @@ public class ArchiveTest
         }
         finally
         {
-            archiveCtx.deleteArchiveDirectory();
+            archiveCtx.deleteDirectory();
+            driverCtx.deleteDirectory();
         }
+    }
+
+    @Test
+    void dataBufferIsAllocatedOnDemand()
+    {
+        final Context context = new Context();
+
+        final UnsafeBuffer buffer = context.dataBuffer();
+
+        assertNotNull(buffer);
+        assertEquals(MAX_BLOCK_LENGTH, buffer.capacity());
+        assertSame(buffer, context.dataBuffer());
+    }
+
+    @Test
+    void dataBufferReturnsValueAssigned()
+    {
+        final UnsafeBuffer buffer = mock(UnsafeBuffer.class);
+        final Context context = new Context();
+        context.dataBuffer(buffer);
+
+        assertSame(buffer, context.dataBuffer());
+    }
+
+    @Test
+    void replayBufferIsAllocatedOnDemandIfThreadingModeIsDEDICATED()
+    {
+        final Context context = new Context().threadingMode(DEDICATED);
+
+        final UnsafeBuffer buffer = context.replayBuffer();
+
+        assertNotNull(buffer);
+        assertEquals(MAX_BLOCK_LENGTH, buffer.capacity());
+        assertSame(buffer, context.replayBuffer());
+        assertNotSame(context.dataBuffer(), buffer);
+    }
+
+    @Test
+    void replayBufferReturnsValueAssignedIfThreadingModeIsDEDICATED()
+    {
+        final UnsafeBuffer buffer = mock(UnsafeBuffer.class);
+        final Context context = new Context().threadingMode(DEDICATED);
+        context.replayBuffer(buffer);
+
+        assertSame(buffer, context.replayBuffer());
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = ArchiveThreadingMode.class, mode = EXCLUDE, names = "DEDICATED")
+    void replayBufferReturnsDataBufferIfThreadingModeIsNotDEDICATED(final ArchiveThreadingMode threadingMode)
+    {
+        final Context context = new Context().threadingMode(threadingMode);
+
+        final UnsafeBuffer buffer = context.replayBuffer();
+
+        assertSame(context.dataBuffer(), buffer);
+    }
+
+    @Test
+    void recordChecksumBufferReturnsNullIfRecordChecksumIsNull()
+    {
+        final Context context = new Context();
+        assertNull(context.recordChecksumBuffer());
+    }
+
+    @Test
+    void recordChecksumBufferIsAllocatedOnDemandIfThreadingModeIsDEDICATED()
+    {
+        final Checksum recordChecksum = mock(Checksum.class);
+        final Context context = new Context().recordChecksum(recordChecksum).threadingMode(DEDICATED);
+
+        final UnsafeBuffer buffer = context.recordChecksumBuffer();
+
+        assertNotNull(buffer);
+        assertEquals(MAX_BLOCK_LENGTH, buffer.capacity());
+        assertSame(buffer, context.recordChecksumBuffer());
+        assertNotSame(context.dataBuffer(), buffer);
+    }
+
+    @Test
+    void recordChecksumBufferReturnsValueAssignedIfThreadingModeIsDEDICATED()
+    {
+        final UnsafeBuffer buffer = mock(UnsafeBuffer.class);
+        final Checksum recordChecksum = mock(Checksum.class);
+        final Context context = new Context().recordChecksum(recordChecksum).threadingMode(DEDICATED);
+        context.recordChecksumBuffer(buffer);
+
+        assertSame(buffer, context.recordChecksumBuffer());
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = ArchiveThreadingMode.class, mode = EXCLUDE, names = "DEDICATED")
+    void recordChecksumBufferReturnsDataBufferIfThreadingModeIsNotDEDICATED(final ArchiveThreadingMode threadingMode)
+    {
+        final Checksum recordChecksum = mock(Checksum.class);
+        final Context context = new Context().recordChecksum(recordChecksum).threadingMode(threadingMode);
+
+        final UnsafeBuffer buffer = context.recordChecksumBuffer();
+
+        assertSame(context.dataBuffer(), buffer);
     }
 
     static final class SubscriptionDescriptor

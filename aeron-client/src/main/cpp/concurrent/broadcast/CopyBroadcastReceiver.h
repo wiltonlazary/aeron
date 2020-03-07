@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -35,7 +35,7 @@ typedef std::function<void(std::int32_t, concurrent::AtomicBuffer&, util::index_
 class CopyBroadcastReceiver
 {
 public:
-    CopyBroadcastReceiver(BroadcastReceiver& receiver) :
+    explicit CopyBroadcastReceiver(BroadcastReceiver& receiver) :
         m_receiver(receiver),
         m_scratchBuffer(m_scratch)
     {

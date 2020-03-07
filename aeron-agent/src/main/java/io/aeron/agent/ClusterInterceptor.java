@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,19 +20,20 @@ import io.aeron.cluster.Election;
 import io.aeron.cluster.service.Cluster;
 import net.bytebuddy.asm.Advice;
 
+import static io.aeron.agent.ClusterEventCode.*;
 import static io.aeron.agent.ClusterEventLogger.LOGGER;
 
 /**
  * Intercepts calls in the cluster which relate to state changes.
  */
-final class ClusterInterceptor
+class ClusterInterceptor
 {
     static class ElectionStateChange
     {
         @Advice.OnMethodEnter
         static void stateChange(final Election.State oldState, final Election.State newState, final int memberId)
         {
-            LOGGER.logElectionStateChange(oldState, newState, memberId);
+            LOGGER.logStateChange(ELECTION_STATE_CHANGE, oldState, newState, memberId);
         }
     }
 
@@ -45,7 +46,8 @@ final class ClusterInterceptor
             final long logPosition,
             final long timestamp,
             final int leaderMemberId,
-            final int logSessionId)
+            final int logSessionId,
+            final boolean isStartup)
         {
             LOGGER.logNewLeadershipTerm(
                 logLeadershipTermId,
@@ -53,7 +55,8 @@ final class ClusterInterceptor
                 logPosition,
                 timestamp,
                 leaderMemberId,
-                logSessionId);
+                logSessionId,
+                isStartup);
         }
     }
 
@@ -63,7 +66,7 @@ final class ClusterInterceptor
         static void stateChange(
             final ConsensusModule.State oldState, final ConsensusModule.State newState, final int memberId)
         {
-            LOGGER.logStateChange(oldState, newState, memberId);
+            LOGGER.logStateChange(STATE_CHANGE, oldState, newState, memberId);
         }
     }
 
@@ -72,7 +75,7 @@ final class ClusterInterceptor
         @Advice.OnMethodEnter
         static void roleChange(final Cluster.Role oldRole, final Cluster.Role newRole, final int memberId)
         {
-            LOGGER.logRoleChange(oldRole, newRole, memberId);
+            LOGGER.logStateChange(ROLE_CHANGE, oldRole, newRole, memberId);
         }
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,8 @@
 
 #include "ClientConductor.h"
 
+#include <cassert>
+
 namespace aeron {
 
 template<typename T, typename... U>
@@ -29,14 +31,6 @@ static size_t getAddress(const std::function<T(U...)>& f)
 
 ClientConductor::~ClientConductor()
 {
-    std::vector<std::shared_ptr<Subscription>> subscriptions;
-
-    for (auto& kv : m_subscriptionByRegistrationId)
-    {
-        subscriptions.push_back(kv.second.m_subscriptionCache);
-        kv.second.m_subscriptionCache.reset();
-    }
-
     std::for_each(m_lingeringImageLists.begin(), m_lingeringImageLists.end(),
         [](ImageListLingerDefn &entry)
         {
@@ -45,6 +39,29 @@ ClientConductor::~ClientConductor()
         });
 
     m_driverProxy.clientClose();
+}
+
+void ClientConductor::onStart()
+{
+}
+
+int ClientConductor::doWork()
+{
+    int workCount = 0;
+
+    workCount += m_driverListenerAdapter.receiveMessages();
+    workCount += onHeartbeatCheckTimeouts();
+
+    return workCount;
+}
+
+void ClientConductor::onClose()
+{
+    if (!m_isClosed)
+    {
+        std::lock_guard<std::recursive_mutex> lock(m_adminLock);
+        closeAllResources(m_epochClock());
+    }
 }
 
 std::int64_t ClientConductor::addPublication(const std::string &channel, std::int32_t streamId)
@@ -110,7 +127,14 @@ std::shared_ptr<Publication> ClientConductor::findPublication(std::int64_t regis
             }
 
             case RegistrationStatus::ERRORED_MEDIA_DRIVER:
-                throw RegistrationException(state.m_errorCode, state.m_errorMessage, SOURCEINFO);
+            {
+                const std::int32_t errorCode = state.m_errorCode;
+                const std::string errorMessage = state.m_errorMessage;
+
+                m_publicationByRegistrationId.erase(it);
+
+                throw RegistrationException(errorCode, errorMessage, SOURCEINFO);
+            }
         }
     }
 
@@ -181,7 +205,6 @@ std::shared_ptr<ExclusivePublication> ClientConductor::findExclusivePublication(
                     *this,
                     state.m_channel,
                     state.m_registrationId,
-                    state.m_originalRegistrationId,
                     state.m_streamId,
                     state.m_sessionId,
                     publicationLimit,
@@ -193,7 +216,14 @@ std::shared_ptr<ExclusivePublication> ClientConductor::findExclusivePublication(
             }
 
             case RegistrationStatus::ERRORED_MEDIA_DRIVER:
-                throw RegistrationException(state.m_errorCode, state.m_errorMessage, SOURCEINFO);
+            {
+                const std::int32_t errorCode = state.m_errorCode;
+                const std::string errorMessage = state.m_errorMessage;
+
+                m_exclusivePublicationByRegistrationId.erase(it);
+
+                throw RegistrationException(errorCode, errorMessage, SOURCEINFO);
+            }
         }
     }
 
@@ -264,7 +294,12 @@ std::shared_ptr<Subscription> ClientConductor::findSubscription(std::int64_t reg
     }
     else if (!sub && RegistrationStatus::ERRORED_MEDIA_DRIVER == state.m_status)
     {
-        throw RegistrationException(state.m_errorCode, state.m_errorMessage, SOURCEINFO);
+        const std::int32_t errorCode = state.m_errorCode;
+        const std::string errorMessage = state.m_errorMessage;
+
+        m_subscriptionByRegistrationId.erase(it);
+
+        throw RegistrationException(errorCode, errorMessage, SOURCEINFO);
     }
 
     return sub;
@@ -354,7 +389,12 @@ std::shared_ptr<Counter> ClientConductor::findCounter(std::int64_t registrationI
     }
     else if (!counter && RegistrationStatus::ERRORED_MEDIA_DRIVER == state.m_status)
     {
-        throw RegistrationException(state.m_errorCode, state.m_errorMessage, SOURCEINFO);
+        const std::int32_t errorCode = state.m_errorCode;
+        const std::string errorMessage = state.m_errorMessage;
+
+        m_counterByRegistrationId.erase(it);
+
+        throw RegistrationException(errorCode, errorMessage, SOURCEINFO);
     }
 
     return counter;
@@ -476,8 +516,14 @@ bool ClientConductor::findDestinationResponse(std::int64_t correlationId)
         }
 
         case RegistrationStatus::ERRORED_MEDIA_DRIVER:
+        {
+            const std::int32_t errorCode = state.m_errorCode;
+            const std::string errorMessage = state.m_errorMessage;
+
             m_destinationStateByCorrelationId.erase(it);
-            throw RegistrationException(state.m_errorCode, state.m_errorMessage, SOURCEINFO);
+
+            throw RegistrationException(errorCode, errorMessage, SOURCEINFO);
+        }
     }
 
     return result;
@@ -595,6 +641,8 @@ void ClientConductor::onNewExclusivePublication(
     std::int32_t channelStatusIndicatorId,
     const std::string &logFileName)
 {
+    assert(registrationId == originalRegistrationId);
+
     std::lock_guard<std::recursive_mutex> lock(m_adminLock);
 
     auto it = m_exclusivePublicationByRegistrationId.find(registrationId);
@@ -607,7 +655,6 @@ void ClientConductor::onNewExclusivePublication(
         state.m_publicationLimitCounterId = publicationLimitCounterId;
         state.m_channelStatusId = channelStatusIndicatorId;
         state.m_buffers = getLogBuffers(originalRegistrationId, logFileName, state.m_channel);
-        state.m_originalRegistrationId = originalRegistrationId;
 
         CallbackGuard callbackGuard(m_isInCallback);
         m_onNewExclusivePublicationHandler(state.m_channel, streamId, sessionId, registrationId);
@@ -671,7 +718,8 @@ void ClientConductor::onOperationSuccess(std::int64_t correlationId)
     std::lock_guard<std::recursive_mutex> lock(m_adminLock);
 
     auto it = m_destinationStateByCorrelationId.find(correlationId);
-    if (it != m_destinationStateByCorrelationId.end() && it->second.m_status == RegistrationStatus::AWAITING_MEDIA_DRIVER)
+    if (it != m_destinationStateByCorrelationId.end() &&
+        it->second.m_status == RegistrationStatus::AWAITING_MEDIA_DRIVER)
     {
         DestinationStateDefn &state = it->second;
 
@@ -679,8 +727,7 @@ void ClientConductor::onOperationSuccess(std::int64_t correlationId)
     }
 }
 
-void ClientConductor::onChannelEndpointErrorResponse(
-        std::int64_t offendingCommandCorrelationId, const std::string &errorMessage)
+void ClientConductor::onChannelEndpointErrorResponse(std::int32_t channelStatusId, const std::string &errorMessage)
 {
     std::lock_guard<std::recursive_mutex> lock(m_adminLock);
 
@@ -688,9 +735,9 @@ void ClientConductor::onChannelEndpointErrorResponse(
     {
         std::shared_ptr<Subscription> subscription = it->second.m_subscription.lock();
 
-        if (subscription && subscription->channelStatusId() == offendingCommandCorrelationId)
+        if (subscription && subscription->channelStatusId() == channelStatusId)
         {
-            ChannelEndpointException exception(offendingCommandCorrelationId, errorMessage, SOURCEINFO);
+            ChannelEndpointException exception(channelStatusId, errorMessage, SOURCEINFO);
             m_errorHandler(exception);
 
             std::pair<Image::array_t, std::size_t> imageArrayPair = subscription->closeAndRemoveImages();
@@ -720,9 +767,9 @@ void ClientConductor::onChannelEndpointErrorResponse(
     {
         std::shared_ptr<Publication> publication = it->second.m_publication.lock();
 
-        if (publication && publication->channelStatusId() == offendingCommandCorrelationId)
+        if (publication && publication->channelStatusId() == channelStatusId)
         {
-            ChannelEndpointException exception(offendingCommandCorrelationId, errorMessage, SOURCEINFO);
+            ChannelEndpointException exception(channelStatusId, errorMessage, SOURCEINFO);
             m_errorHandler(exception);
 
             publication->close();
@@ -739,9 +786,9 @@ void ClientConductor::onChannelEndpointErrorResponse(
     {
         std::shared_ptr<ExclusivePublication> publication = it->second.m_publication.lock();
 
-        if (publication && publication->channelStatusId() == offendingCommandCorrelationId)
+        if (publication && publication->channelStatusId() == channelStatusId)
         {
-            ChannelEndpointException exception(offendingCommandCorrelationId, errorMessage, SOURCEINFO);
+            ChannelEndpointException exception(channelStatusId, errorMessage, SOURCEINFO);
             m_errorHandler(exception);
 
             publication->close();
@@ -861,9 +908,9 @@ void ClientConductor::onUnavailableImage(std::int64_t correlationId, std::int64_
 
         if (nullptr != subscription)
         {
-            std::pair<Image::array_t, int> result = subscription->removeImage(correlationId);
+            std::pair<Image::array_t, std::size_t> result = subscription->removeImage(correlationId);
             Image::array_t oldImageArray = result.first;
-            const int index = result.second;
+            const std::size_t index = result.second;
 
             if (nullptr != oldImageArray)
             {
@@ -915,6 +962,8 @@ void ClientConductor::closeAllResources(long long nowMs)
     }
     m_exclusivePublicationByRegistrationId.clear();
 
+    std::vector<std::shared_ptr<Subscription>> subscriptionsToHoldUntilCleared;
+
     for (auto& kv : m_subscriptionByRegistrationId)
     {
         std::shared_ptr<Subscription> sub = kv.second.m_subscription.lock();
@@ -935,9 +984,17 @@ void ClientConductor::closeAllResources(long long nowMs)
                 CallbackGuard callbackGuard(m_isInCallback);
                 kv.second.m_onUnavailableImageHandler(image);
             }
+
+            if (kv.second.m_subscriptionCache)
+            {
+                subscriptionsToHoldUntilCleared.push_back(kv.second.m_subscriptionCache);
+                kv.second.m_subscriptionCache.reset();
+            }
         }
     }
     m_subscriptionByRegistrationId.clear();
+
+    std::vector<std::shared_ptr<Counter>> countersToHoldUntilCleared;
 
     for (auto& kv : m_counterByRegistrationId)
     {
@@ -953,6 +1010,12 @@ void ClientConductor::closeAllResources(long long nowMs)
             {
                 CallbackGuard callbackGuard(m_isInCallback);
                 handler(m_countersReader, registrationId, counterId);
+            }
+
+            if (kv.second.m_counterCache)
+            {
+                countersToHoldUntilCleared.push_back(kv.second.m_counterCache);
+                kv.second.m_counterCache.reset();
             }
         }
     }

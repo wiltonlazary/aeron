@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,11 +17,15 @@ package io.aeron;
 
 import io.aeron.logbuffer.BufferClaim;
 import io.aeron.logbuffer.ExclusiveTermAppender;
+import io.aeron.logbuffer.LogBufferDescriptor;
 import org.agrona.DirectBuffer;
+import org.agrona.MutableDirectBuffer;
 import org.agrona.concurrent.UnsafeBuffer;
 import org.agrona.concurrent.status.ReadablePosition;
 
-import static io.aeron.logbuffer.LogBufferDescriptor.*;
+import static io.aeron.logbuffer.LogBufferDescriptor.PARTITION_COUNT;
+import static io.aeron.protocol.DataHeaderFlyweight.*;
+import static java.nio.ByteOrder.LITTLE_ENDIAN;
 
 /**
  * Aeron publisher API for sending messages to subscribers of a given channel and streamId pair. ExclusivePublications
@@ -79,14 +83,14 @@ public class ExclusivePublication extends Publication
             termAppenders[i] = new ExclusiveTermAppender(buffers[i], logMetaDataBuffer, i);
         }
 
-        final int termCount = activeTermCount(logMetaDataBuffer);
-        final int index = indexByTermCount(termCount);
+        final int termCount = LogBufferDescriptor.activeTermCount(logMetaDataBuffer);
+        final int index = LogBufferDescriptor.indexByTermCount(termCount);
         activePartitionIndex = index;
 
-        final long rawTail = rawTail(logMetaDataBuffer, index);
-        termId = termId(rawTail);
-        termOffset = termOffset(rawTail);
-        termBeginPosition = computeTermBeginPosition(termId, positionBitsToShift, initialTermId);
+        final long rawTail = LogBufferDescriptor.rawTail(logMetaDataBuffer, index);
+        termId = LogBufferDescriptor.termId(rawTail);
+        termOffset = LogBufferDescriptor.termOffset(rawTail);
+        termBeginPosition = LogBufferDescriptor.computeTermBeginPosition(termId, positionBitsToShift, initialTermId);
     }
 
     public long position()
@@ -107,6 +111,26 @@ public class ExclusivePublication extends Publication
         }
 
         return positionLimit.getVolatile() - (termBeginPosition + termOffset);
+    }
+
+    /**
+     * The current term-id of the publication.
+     *
+     * @return the current term-id of the publication.
+     */
+    public int termId()
+    {
+        return termId;
+    }
+
+    /**
+     * The current term-offset of the publication.
+     *
+     * @return the current term-offset of the publication.
+     */
+    public int termOffset()
+    {
+        return termOffset;
     }
 
     /**
@@ -379,6 +403,86 @@ public class ExclusivePublication extends Publication
         return newPosition;
     }
 
+    /**
+     * Offer a block of pre-formatted message fragments directly into the current term.
+     *
+     * @param buffer containing the pre-formatted block of message fragments.
+     * @param offset offset in the buffer at which the first fragment begins.
+     * @param length in bytes of the encoded block.
+     * @return The new stream position, otherwise a negative error value of {@link #NOT_CONNECTED},
+     * {@link #BACK_PRESSURED}, {@link #ADMIN_ACTION}, {@link #CLOSED}, or {@link #MAX_POSITION_EXCEEDED}.
+     * @throws IllegalArgumentException if the length is greater than remaining size of the current term.
+     * @throws IllegalArgumentException if the first frame within the block is not properly formatted, i.e. if the
+     *                                  {@code streamId} is not equal to the value returned by the {@link #streamId()}
+     *                                  method or if the {@code sessionId} is not equal to the value returned by the
+     *                                  {@link #sessionId()} method or if the frame type is not equal to the
+     *                                  {@link io.aeron.protocol.HeaderFlyweight#HDR_TYPE_DATA}.
+     */
+    public long offerBlock(final MutableDirectBuffer buffer, final int offset, final int length)
+    {
+        if (isClosed)
+        {
+            return CLOSED;
+        }
+
+        if (termOffset >= termBufferLength)
+        {
+            rotateTerm();
+        }
+
+        final long limit = positionLimit.getVolatile();
+        final long position = termBeginPosition + termOffset;
+
+        if (position < limit)
+        {
+            checkBlockLength(length);
+            checkFirstFrame(buffer, offset);
+
+            final ExclusiveTermAppender termAppender = termAppenders[activePartitionIndex];
+            final int result = termAppender.appendBlock(termId, termOffset, buffer, offset, length);
+
+            return newPosition(result);
+        }
+        else
+        {
+            return backPressureStatus(position, length);
+        }
+    }
+
+    private void checkBlockLength(final int length)
+    {
+        final int remaining = termBufferLength - termOffset;
+        if (length > remaining)
+        {
+            throw new IllegalArgumentException(
+                "invalid block length " + length + ", remaining space in term " + remaining);
+        }
+    }
+
+    private void checkFirstFrame(final MutableDirectBuffer buffer, final int offset)
+    {
+        final int frameType = HDR_TYPE_DATA;
+        final int blockTermOffset = buffer.getInt(offset + TERM_OFFSET_FIELD_OFFSET, LITTLE_ENDIAN);
+        final int blockSessionId = buffer.getInt(offset + SESSION_ID_FIELD_OFFSET, LITTLE_ENDIAN);
+        final int blockStreamId = buffer.getInt(offset + STREAM_ID_FIELD_OFFSET, LITTLE_ENDIAN);
+        final int blockTermId = buffer.getInt(offset + TERM_ID_FIELD_OFFSET, LITTLE_ENDIAN);
+        final int blockFrameType = buffer.getShort(offset + TYPE_FIELD_OFFSET, LITTLE_ENDIAN) & 0xFFFF;
+
+        if (blockTermOffset != termOffset ||
+            blockSessionId != sessionId ||
+            blockStreamId != streamId ||
+            blockTermId != termId ||
+            frameType != blockFrameType)
+        {
+            throw new IllegalArgumentException("improperly formatted block:" +
+                " termOffset=" + blockTermOffset + " (expected=" + termOffset + ")," +
+                " sessionId=" + blockSessionId + " (expected=" + sessionId + ")," +
+                " streamId=" + blockStreamId + " (expected=" + streamId + ")," +
+                " termId=" + blockTermId + " (expected=" + termId + ")," +
+                " frameType=" + blockFrameType + " (expected=" + frameType + ")");
+        }
+    }
+
     private long newPosition(final int resultingOffset)
     {
         if (resultingOffset > 0)
@@ -392,7 +496,14 @@ public class ExclusivePublication extends Publication
             return MAX_POSITION_EXCEEDED;
         }
 
-        final int nextIndex = nextPartitionIndex(activePartitionIndex);
+        rotateTerm();
+
+        return ADMIN_ACTION;
+    }
+
+    private void rotateTerm()
+    {
+        final int nextIndex = LogBufferDescriptor.nextPartitionIndex(activePartitionIndex);
         final int nextTermId = termId + 1;
 
         activePartitionIndex = nextIndex;
@@ -402,9 +513,7 @@ public class ExclusivePublication extends Publication
 
         final int termCount = nextTermId - initialTermId;
 
-        initialiseTailWithTermId(logMetaDataBuffer, nextIndex, nextTermId);
-        activeTermCountOrdered(logMetaDataBuffer, termCount);
-
-        return ADMIN_ACTION;
+        LogBufferDescriptor.initialiseTailWithTermId(logMetaDataBuffer, nextIndex, nextTermId);
+        LogBufferDescriptor.activeTermCountOrdered(logMetaDataBuffer, termCount);
     }
 }

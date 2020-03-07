@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,9 +21,9 @@ import io.aeron.exceptions.AeronException;
 import io.aeron.protocol.HeaderFlyweight;
 import io.aeron.status.ChannelEndpointStatus;
 import org.agrona.CloseHelper;
+import org.agrona.ErrorHandler;
 import org.agrona.LangUtil;
 import org.agrona.concurrent.UnsafeBuffer;
-import org.agrona.concurrent.errors.DistinctErrorLog;
 import org.agrona.concurrent.status.AtomicCounter;
 
 import java.io.IOException;
@@ -46,12 +46,12 @@ public abstract class UdpChannelTransport implements AutoCloseable
     protected final MediaDriver.Context context;
     protected final UdpChannel udpChannel;
     protected final AtomicCounter invalidPackets;
-    protected final DistinctErrorLog errorLog;
+    protected final ErrorHandler errorHandler;
     protected UdpTransportPoller transportPoller;
     protected SelectionKey selectionKey;
     protected final InetSocketAddress bindAddress;
     protected final InetSocketAddress endPointAddress;
-    protected final InetSocketAddress connectAddress;
+    protected InetSocketAddress connectAddress;
     protected DatagramChannel sendDatagramChannel;
     protected DatagramChannel receiveDatagramChannel;
     protected int multicastTtl = 0;
@@ -66,7 +66,7 @@ public abstract class UdpChannelTransport implements AutoCloseable
     {
         this.context = context;
         this.udpChannel = udpChannel;
-        this.errorLog = context.errorLog();
+        this.errorHandler = context.errorHandler();
         this.endPointAddress = endPointAddress;
         this.bindAddress = bindAddress;
         this.connectAddress = connectAddress;
@@ -82,7 +82,8 @@ public abstract class UdpChannelTransport implements AutoCloseable
      */
     public static void sendError(final int bytesToSend, final IOException ex, final InetSocketAddress destination)
     {
-        throw new AeronException("failed to send packet of " + bytesToSend + " bytes to " + destination, ex);
+        throw new AeronException(
+            "failed to send " + bytesToSend + " byte packet to " + destination, ex, AeronException.Category.WARN);
     }
 
     /**
@@ -161,8 +162,8 @@ public abstract class UdpChannelTransport implements AutoCloseable
 
             throw new AeronException(
                 "channel error - " + ex.getMessage() +
-                " (at " + ex.getStackTrace()[0].toString() + "): " +
-                udpChannel.originalUriString(), ex);
+                    " (at " + ex.getStackTrace()[0].toString() + "): " +
+                    udpChannel.originalUriString(), ex);
         }
     }
 
@@ -208,6 +209,31 @@ public abstract class UdpChannelTransport implements AutoCloseable
     }
 
     /**
+     * Get the bind address and port in endpoint-style format (ip:port).
+     * <p>
+     * Must be called after the channel is opened.
+     *
+     * @return the bind address and port in endpoint-style format (ip:port).
+     */
+    public String bindAddressAndPort()
+    {
+        try
+        {
+            final InetSocketAddress localAddress = (InetSocketAddress)receiveDatagramChannel.getLocalAddress();
+            if (null == localAddress)
+            {
+                return "";
+            }
+
+            return localAddress.getAddress().getHostAddress() + ":" + localAddress.getPort();
+        }
+        catch (final IOException ex)
+        {
+            return "";
+        }
+    }
+
+    /**
      * Close transport, canceling any pending read operations and closing channel.
      */
     public void close()
@@ -215,37 +241,31 @@ public abstract class UdpChannelTransport implements AutoCloseable
         if (!isClosed)
         {
             isClosed = true;
-            try
+            if (null != selectionKey)
             {
-                if (null != selectionKey)
-                {
-                    selectionKey.cancel();
-                }
-
-                if (null != transportPoller)
-                {
-                    transportPoller.cancelRead(this);
-                    transportPoller.selectNowWithoutProcessing();
-                }
-
-                if (null != sendDatagramChannel)
-                {
-                    sendDatagramChannel.close();
-                }
-
-                if (receiveDatagramChannel != sendDatagramChannel && null != receiveDatagramChannel)
-                {
-                    receiveDatagramChannel.close();
-                }
-
-                if (null != transportPoller)
-                {
-                    transportPoller.selectNowWithoutProcessing();
-                }
+                CloseHelper.close(errorHandler, selectionKey::cancel);
             }
-            catch (final IOException ex)
+
+            if (null != transportPoller)
             {
-                errorLog.record(ex);
+                CloseHelper.close(errorHandler,
+                    () ->
+                    {
+                        transportPoller.cancelRead(this);
+                        transportPoller.selectNowWithoutProcessing();
+                    });
+            }
+
+            CloseHelper.close(errorHandler, sendDatagramChannel);
+
+            if (receiveDatagramChannel != sendDatagramChannel && null != receiveDatagramChannel)
+            {
+                CloseHelper.close(errorHandler, receiveDatagramChannel);
+            }
+
+            if (null != transportPoller)
+            {
+                CloseHelper.close(errorHandler, transportPoller::selectNowWithoutProcessing);
             }
         }
     }
@@ -323,5 +343,41 @@ public abstract class UdpChannelTransport implements AutoCloseable
         }
 
         return address;
+    }
+
+    /**
+     * Endpoint has moved to a new address. Handle this.
+     *
+     * @param newAddress      to send data to.
+     * @param statusIndicator for the channel
+     */
+    public void updateEndpoint(final InetSocketAddress newAddress, final AtomicCounter statusIndicator)
+    {
+        try
+        {
+            if (null != sendDatagramChannel)
+            {
+                sendDatagramChannel.disconnect();
+                sendDatagramChannel.connect(newAddress);
+                connectAddress = newAddress;
+
+                if (null != statusIndicator)
+                {
+                    statusIndicator.setOrdered(ChannelEndpointStatus.ACTIVE);
+                }
+            }
+        }
+        catch (final Exception ex)
+        {
+            if (null != statusIndicator)
+            {
+                statusIndicator.setOrdered(ChannelEndpointStatus.ERRORED);
+            }
+
+            throw new AeronException(
+                "re-resolve endpoint channel error - " + ex.getMessage() +
+                    " (at " + ex.getStackTrace()[0].toString() + "): " +
+                    udpChannel.originalUriString(), ex);
+        }
     }
 }

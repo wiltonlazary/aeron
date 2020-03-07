@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,6 +15,7 @@
  */
 package io.aeron.driver;
 
+import io.aeron.ChannelUri;
 import io.aeron.driver.media.ControlTransportPoller;
 import io.aeron.driver.media.SendChannelEndpoint;
 import org.agrona.collections.ArrayUtil;
@@ -26,16 +27,18 @@ import org.agrona.concurrent.OneToOneConcurrentArrayQueue;
 import java.net.InetSocketAddress;
 
 import static io.aeron.driver.status.SystemCounterDescriptor.BYTES_SENT;
+import static io.aeron.driver.status.SystemCounterDescriptor.RESOLUTION_CHANGES;
 
 class SenderLhsPadding
 {
     @SuppressWarnings("unused")
-    protected long p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15;
+    protected long p1, p2, p3, p4, p5, p6, p7;
 }
 
 class SenderHotFields extends SenderLhsPadding
 {
     protected long controlPollDeadlineNs;
+    protected long reResolutionDeadlineNs;
     protected int dutyCycleCounter;
     protected int roundRobinIndex = 0;
 }
@@ -43,7 +46,7 @@ class SenderHotFields extends SenderLhsPadding
 class SenderRhsPadding extends SenderHotFields
 {
     @SuppressWarnings("unused")
-    protected long p16, p17, p18, p19, p20, p21, p22, p23, p24, p25, p26, p27, p28, p29, p30;
+    protected long p1, p2, p3, p4, p5, p6, p7;
 }
 
 /**
@@ -54,10 +57,12 @@ public class Sender extends SenderRhsPadding implements Agent
     private static final NetworkPublication[] EMPTY_PUBLICATIONS = new NetworkPublication[0];
 
     private final long statusMessageReadTimeoutNs;
+    private final long reResolutionCheckIntervalNs;
     private final int dutyCycleRatio;
     private final ControlTransportPoller controlTransportPoller;
     private final OneToOneConcurrentArrayQueue<Runnable> commandQueue;
     private final AtomicCounter totalBytesSent;
+    private final AtomicCounter resolutionChanges;
     private final NanoClock nanoClock;
     private final DriverConductorProxy conductorProxy;
 
@@ -68,10 +73,13 @@ public class Sender extends SenderRhsPadding implements Agent
         this.controlTransportPoller = ctx.controlTransportPoller();
         this.commandQueue = ctx.senderCommandQueue();
         this.totalBytesSent = ctx.systemCounters().get(BYTES_SENT);
+        this.resolutionChanges = ctx.systemCounters().get(RESOLUTION_CHANGES);
         this.nanoClock = ctx.cachedNanoClock();
         this.statusMessageReadTimeoutNs = ctx.statusMessageTimeoutNs() >> 1;
+        this.reResolutionCheckIntervalNs = ctx.reResolutionCheckIntervalNs();
         this.dutyCycleRatio = ctx.sendToStatusMessagePollRatio();
         this.conductorProxy = ctx.driverConductorProxy();
+        this.reResolutionDeadlineNs = nanoClock.nanoTime() + reResolutionCheckIntervalNs;
     }
 
     public void onClose()
@@ -86,12 +94,19 @@ public class Sender extends SenderRhsPadding implements Agent
         final int bytesSent = doSend(nowNs);
 
         int bytesReceived = 0;
-        if (0 == bytesSent || ++dutyCycleCounter == dutyCycleRatio || (controlPollDeadlineNs - nowNs < 0))
+        if (0 == bytesSent || ++dutyCycleCounter >= dutyCycleRatio || (controlPollDeadlineNs - nowNs < 0))
         {
             bytesReceived = controlTransportPoller.pollTransports();
 
             dutyCycleCounter = 0;
             controlPollDeadlineNs = nowNs + statusMessageReadTimeoutNs;
+        }
+
+        if (reResolutionCheckIntervalNs > 0 && (reResolutionDeadlineNs - nowNs) < 0)
+        {
+            controlTransportPoller.checkForReResolutions(nowNs, conductorProxy);
+
+            reResolutionDeadlineNs = nowNs + reResolutionCheckIntervalNs;
         }
 
         return workCount + bytesSent + bytesReceived;
@@ -127,14 +142,23 @@ public class Sender extends SenderRhsPadding implements Agent
         publication.senderRelease();
     }
 
-    public void onAddDestination(final SendChannelEndpoint channelEndpoint, final InetSocketAddress address)
+    public void onAddDestination(
+        final SendChannelEndpoint channelEndpoint, final ChannelUri channelUri, final InetSocketAddress address)
     {
-        channelEndpoint.addDestination(address);
+        channelEndpoint.addDestination(channelUri, address);
     }
 
-    public void onRemoveDestination(final SendChannelEndpoint channelEndpoint, final InetSocketAddress address)
+    public void onRemoveDestination(
+        final SendChannelEndpoint channelEndpoint, final ChannelUri channelUri, final InetSocketAddress address)
     {
-        channelEndpoint.removeDestination(address);
+        channelEndpoint.removeDestination(channelUri, address);
+    }
+
+    public void onResolutionChange(
+        final SendChannelEndpoint channelEndpoint, final String endpoint, final InetSocketAddress newAddress)
+    {
+        channelEndpoint.resolutionChange(endpoint, newAddress);
+        resolutionChanges.getAndAddOrdered(1);
     }
 
     private int doSend(final long nowNs)

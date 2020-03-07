@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -45,11 +45,9 @@ void aeron_idle_strategy_sleeping_idle(void *state, int work_count)
 
 int aeron_idle_strategy_sleeping_init_args(void **state, const char *env_var, const char *init_args)
 {
-    if (aeron_alloc((void **)state, sizeof(uint64_t)) < 0)
+    if (aeron_alloc(state, sizeof(uint64_t)) < 0)
     {
-        int err_code = errno;
-
-        aeron_set_err(err_code, "%s:%d: %s", __FILE__, __LINE__, strerror(err_code));
+        aeron_set_err_from_last_err_code("%s:%d", __FILE__, __LINE__);
         return -1;
     }
 
@@ -97,7 +95,7 @@ void aeron_idle_strategy_noop_idle(void *state, int work_count)
 
 typedef struct aeron_idle_strategy_backoff_state_stct
 {
-    uint8_t pre_pad[AERON_CACHE_LINE_LENGTH * 2];
+    uint8_t pre_pad[AERON_CACHE_LINE_LENGTH];
     uint64_t max_spins;
     uint64_t max_yields;
     uint64_t min_park_period_ns;
@@ -106,7 +104,7 @@ typedef struct aeron_idle_strategy_backoff_state_stct
     uint64_t yields;
     uint64_t park_period_ns;
     uint8_t state;
-    uint8_t post_pad[AERON_CACHE_LINE_LENGTH * 2];
+    uint8_t post_pad[AERON_CACHE_LINE_LENGTH];
 }
 aeron_idle_strategy_backoff_state_t;
 
@@ -166,11 +164,9 @@ void aeron_idle_strategy_backoff_idle(void *state, int work_count)
 int aeron_idle_strategy_backoff_state_init(
     void **state, uint64_t max_spins, uint64_t max_yields, uint64_t min_park_period_ns, uint64_t max_park_period_ns)
 {
-    if (aeron_alloc((void **)state, sizeof(aeron_idle_strategy_backoff_state_t)) < 0)
+    if (aeron_alloc(state, sizeof(aeron_idle_strategy_backoff_state_t)) < 0)
     {
-        int err_code = errno;
-
-        aeron_set_err(err_code, "%s:%d: %s", __FILE__, __LINE__, strerror(err_code));
+        aeron_set_err_from_last_err_code("%s:%d", __FILE__, __LINE__);
         return -1;
     }
 
@@ -357,14 +353,18 @@ aeron_idle_strategy_func_t aeron_idle_strategy_load(
 aeron_agent_on_start_func_t aeron_agent_on_start_load(const char *name)
 {
     aeron_agent_on_start_func_t func = NULL;
+#if defined(AERON_COMPILER_GCC)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wpedantic"
+#endif
     if ((func = (aeron_agent_on_start_func_t)aeron_dlsym(RTLD_DEFAULT, name)) == NULL)
     {
         aeron_set_err(EINVAL, "could not find agent on_start func %s: dlsym - %s", name, aeron_dlerror());
         return NULL;
     }
+#if defined(AERON_COMPILER_GCC)
 #pragma GCC diagnostic pop
+#endif
 
     return func;
 }
@@ -395,9 +395,7 @@ int aeron_agent_init(
     runner->on_close = on_close;
     if (aeron_alloc((void **)&runner->role_name, role_name_length + 1) < 0)
     {
-        int err_code = errno;
-
-        aeron_set_err(err_code, "%s:%d: %s", __FILE__, __LINE__, strerror(err_code));
+        aeron_set_err_from_last_err_code("%s:%d", __FILE__, __LINE__);
         return -1;
     }
     memcpy((char *)runner->role_name, role_name, role_name_length);
@@ -414,11 +412,7 @@ static void *agent_main(void *arg)
 {
     aeron_agent_runner_t *runner = (aeron_agent_runner_t *)arg;
 
-#if defined(Darwin)
     aeron_thread_set_name(runner->role_name);
-#else
-    aeron_thread_set_name(aeron_thread_self(), runner->role_name);
-#endif
 
     if (NULL != runner->on_start)
     {
@@ -460,10 +454,6 @@ int aeron_agent_start(aeron_agent_runner_t *runner)
 
     return 0;
 }
-
-extern int aeron_agent_do_work(aeron_agent_runner_t *runner);
-extern bool aeron_agent_is_running(aeron_agent_runner_t *runner);
-extern void aeron_agent_idle(aeron_agent_runner_t *runner, int work_count);
 
 int aeron_agent_stop(aeron_agent_runner_t *runner)
 {
@@ -515,3 +505,6 @@ int aeron_agent_close(aeron_agent_runner_t *runner)
     return 0;
 }
 
+extern int aeron_agent_do_work(aeron_agent_runner_t *runner);
+extern bool aeron_agent_is_running(aeron_agent_runner_t *runner);
+extern void aeron_agent_idle(aeron_agent_runner_t *runner, int work_count);

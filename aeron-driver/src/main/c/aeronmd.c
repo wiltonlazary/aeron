@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,7 +21,6 @@
 
 #include <stdlib.h>
 #include <signal.h>
-#include <time.h>
 #include <stdbool.h>
 #include <stdio.h>
 
@@ -61,11 +60,12 @@ int set_property(void *clientd, const char *name, const char *value)
 int main(int argc, char **argv)
 {
     int status = EXIT_FAILURE;
-    int opt;
     aeron_driver_context_t *context = NULL;
     aeron_driver_t *driver = NULL;
 
 #ifndef _MSC_VER
+    int opt;
+
     while ((opt = getopt(argc, argv, "D:v")) != -1)
     {
         switch (opt)
@@ -87,7 +87,6 @@ int main(int argc, char **argv)
                 printf("%s <%s> major %d minor %d patch %d\n",
                     argv[0], aeron_version_full(), aeron_version_major(), aeron_version_minor(), aeron_version_patch());
                 exit(EXIT_SUCCESS);
-                break;
             }
 
             default:

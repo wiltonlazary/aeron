@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -73,8 +73,8 @@ public final class CncFileReader implements AutoCloseable
     /**
      * Map an existing CnC file.
      *
-     * @throws AeronException if the cnc version major version is not compatible.
      * @return the {@link CncFileReader} wrapper for reading useful data from the cnc file.
+     * @throws AeronException if the cnc version major version is not compatible.
      */
     public static CncFileReader map()
     {

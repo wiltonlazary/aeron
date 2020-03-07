@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,9 +16,13 @@
 package io.aeron.driver.media;
 
 import io.aeron.driver.Configuration;
+import io.aeron.driver.DriverConductorProxy;
 import io.aeron.protocol.NakFlyweight;
 import io.aeron.protocol.RttMeasurementFlyweight;
 import io.aeron.protocol.StatusMessageFlyweight;
+import org.agrona.BufferUtil;
+import org.agrona.CloseHelper;
+import org.agrona.ErrorHandler;
 import org.agrona.LangUtil;
 import org.agrona.collections.ArrayUtil;
 import org.agrona.concurrent.UnsafeBuffer;
@@ -30,39 +34,30 @@ import java.nio.channels.ClosedChannelException;
 import java.nio.channels.SelectionKey;
 
 import static io.aeron.logbuffer.FrameDescriptor.frameType;
-import static io.aeron.protocol.HeaderFlyweight.HDR_TYPE_NAK;
-import static io.aeron.protocol.HeaderFlyweight.HDR_TYPE_RTTM;
-import static io.aeron.protocol.HeaderFlyweight.HDR_TYPE_SM;
+import static io.aeron.protocol.HeaderFlyweight.*;
 import static org.agrona.BitUtil.CACHE_LINE_LENGTH;
 
 /**
- * Encapsulates the polling of a number of {@link UdpChannelTransport}s using whatever means provides the lowest latency.
+ * Encapsulates the polling of control {@link UdpChannelTransport}s using whatever means provides the lowest latency.
  */
 public class ControlTransportPoller extends UdpTransportPoller
 {
-    private final ByteBuffer byteBuffer;
-    private final UnsafeBuffer unsafeBuffer;
-    private final NakFlyweight nakMessage;
-    private final StatusMessageFlyweight statusMessage;
-    private final RttMeasurementFlyweight rttMeasurement;
+    private final ByteBuffer byteBuffer = BufferUtil.allocateDirectAligned(
+        Configuration.MAX_UDP_PAYLOAD_LENGTH, CACHE_LINE_LENGTH);
+    private final UnsafeBuffer unsafeBuffer = new UnsafeBuffer(byteBuffer);
+    private final NakFlyweight nakMessage = new NakFlyweight(unsafeBuffer);
+    private final StatusMessageFlyweight statusMessage = new StatusMessageFlyweight(unsafeBuffer);
+    private final RttMeasurementFlyweight rttMeasurement = new RttMeasurementFlyweight(unsafeBuffer);
     private SendChannelEndpoint[] transports = new SendChannelEndpoint[0];
 
-    public ControlTransportPoller()
+    public ControlTransportPoller(final ErrorHandler errorHandler)
     {
-        byteBuffer = NetworkUtil.allocateDirectAlignedAndPadded(
-            Configuration.MAX_UDP_PAYLOAD_LENGTH, CACHE_LINE_LENGTH * 2);
-        unsafeBuffer = new UnsafeBuffer(byteBuffer);
-        nakMessage = new NakFlyweight(unsafeBuffer);
-        statusMessage = new StatusMessageFlyweight(unsafeBuffer);
-        rttMeasurement = new RttMeasurementFlyweight(unsafeBuffer);
+        super(errorHandler);
     }
 
     public void close()
     {
-        for (final SendChannelEndpoint channelEndpoint : transports)
-        {
-            channelEndpoint.close();
-        }
+        CloseHelper.closeAll(errorHandler, transports);
 
         super.close();
     }
@@ -131,34 +126,42 @@ public class ControlTransportPoller extends UdpTransportPoller
         transports = ArrayUtil.remove(transports, transport);
     }
 
+    public void checkForReResolutions(final long nowNs, final DriverConductorProxy conductorProxy)
+    {
+        for (final SendChannelEndpoint transport : transports)
+        {
+            transport.checkForReResolution(nowNs, conductorProxy);
+        }
+    }
+
     private int poll(final SendChannelEndpoint channelEndpoint)
     {
-        int byteReceived = 0;
+        int bytesReceived = 0;
         final InetSocketAddress srcAddress = channelEndpoint.receive(byteBuffer);
 
         if (null != srcAddress)
         {
-            byteReceived = byteBuffer.position();
-            if (channelEndpoint.isValidFrame(unsafeBuffer, byteReceived))
+            bytesReceived = byteBuffer.position();
+            if (channelEndpoint.isValidFrame(unsafeBuffer, bytesReceived))
             {
-                channelEndpoint.receiveHook(unsafeBuffer, byteReceived, srcAddress);
+                channelEndpoint.receiveHook(unsafeBuffer, bytesReceived, srcAddress);
 
                 final int frameType = frameType(unsafeBuffer, 0);
                 if (HDR_TYPE_NAK == frameType)
                 {
-                    channelEndpoint.onNakMessage(nakMessage, unsafeBuffer, byteReceived, srcAddress);
+                    channelEndpoint.onNakMessage(nakMessage, unsafeBuffer, bytesReceived, srcAddress);
                 }
                 else if (HDR_TYPE_SM == frameType)
                 {
-                    channelEndpoint.onStatusMessage(statusMessage, unsafeBuffer, byteReceived, srcAddress);
+                    channelEndpoint.onStatusMessage(statusMessage, unsafeBuffer, bytesReceived, srcAddress);
                 }
                 else if (HDR_TYPE_RTTM == frameType)
                 {
-                    channelEndpoint.onRttMeasurement(rttMeasurement, unsafeBuffer, byteReceived, srcAddress);
+                    channelEndpoint.onRttMeasurement(rttMeasurement, unsafeBuffer, bytesReceived, srcAddress);
                 }
             }
         }
 
-        return byteReceived;
+        return bytesReceived;
     }
 }

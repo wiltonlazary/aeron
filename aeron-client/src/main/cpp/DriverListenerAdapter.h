@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -131,7 +131,7 @@ public:
                         if (ERROR_CODE_CHANNEL_ENDPOINT_ERROR == errorCode)
                         {
                             m_driverListener.onChannelEndpointErrorResponse(
-                                errorResponse.offendingCommandCorrelationId(),
+                                static_cast<std::int32_t>(errorResponse.offendingCommandCorrelationId()),
                                 errorResponse.errorMessage());
                         }
                         else

@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,16 +16,18 @@
 package io.aeron;
 
 import io.aeron.exceptions.ConcurrentConcludeException;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 public class CommonContextTest
 {
-    @Test(expected = ConcurrentConcludeException.class)
+    @Test
     public void shouldNotAllowConcludeMoreThanOnce()
     {
         final CommonContext ctx = new CommonContext();
+        ctx.conclude();
 
-        ctx.conclude();
-        ctx.conclude();
+        assertThrows(ConcurrentConcludeException.class, ctx::conclude);
     }
 }

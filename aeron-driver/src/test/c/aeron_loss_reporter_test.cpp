@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -111,8 +111,10 @@ TEST_F(LossReporterTest, shouldCreateEntry)
     EXPECT_EQ(*(int32_t *)(channel_ptr), (int32_t)strlen(channel));
     EXPECT_EQ(std::string(channel_ptr + sizeof(int32_t), strlen(channel)), std::string(channel));
 
-    const char *source_ptr =
-        (const char *)(m_ptr + sizeof(aeron_loss_reporter_entry_t) + sizeof(int32_t) + strlen(channel));
+    const char *source_ptr = (const char *)(
+        m_ptr +
+        sizeof(aeron_loss_reporter_entry_t) +
+        AERON_ALIGN((sizeof(int32_t) + strlen(channel)), sizeof(int32_t)));
     EXPECT_EQ(*(int32_t *)(source_ptr), (int32_t)strlen(source));
     EXPECT_EQ(std::string(source_ptr + sizeof(int32_t), strlen(source)), std::string(source));
 }

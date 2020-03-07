@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,9 +20,8 @@ import io.aeron.archive.client.AeronArchive;
 import io.aeron.driver.MediaDriver;
 import org.agrona.CloseHelper;
 import org.agrona.concurrent.EpochClock;
-import org.agrona.concurrent.status.CountersReader;
 
-public class TestBackupNode
+public class TestBackupNode implements AutoCloseable
 {
     private final ClusterBackupMediaDriver clusterBackupMediaDriver;
     private boolean isClosed = false;
@@ -44,7 +43,7 @@ public class TestBackupNode
         }
     }
 
-    void cleanUp()
+    void closeAndDelete()
     {
         if (!isClosed)
         {
@@ -54,7 +53,8 @@ public class TestBackupNode
         if (null != clusterBackupMediaDriver)
         {
             clusterBackupMediaDriver.clusterBackup().context().deleteDirectory();
-            clusterBackupMediaDriver.archive().context().deleteArchiveDirectory();
+            clusterBackupMediaDriver.archive().context().deleteDirectory();
+            clusterBackupMediaDriver.mediaDriver().context().deleteDirectory();
         }
     }
 
@@ -71,11 +71,6 @@ public class TestBackupNode
     long liveLogPosition()
     {
         return clusterBackupMediaDriver.clusterBackup().context().liveLogPositionCounter().get();
-    }
-
-    CountersReader countersReader()
-    {
-        return clusterBackupMediaDriver.clusterBackup().context().aeron().countersReader();
     }
 
     EpochClock epochClock()

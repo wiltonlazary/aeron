@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,14 +21,15 @@ import io.aeron.driver.DataPacketDispatcher;
 import io.aeron.driver.DriverConductorProxy;
 import io.aeron.driver.MediaDriver;
 import io.aeron.driver.PublicationImage;
-import io.aeron.exceptions.ControlProtocolException;
 import io.aeron.exceptions.AeronException;
+import io.aeron.exceptions.ControlProtocolException;
 import io.aeron.protocol.*;
 import io.aeron.status.ChannelEndpointStatus;
+import org.agrona.AsciiEncoding;
 import org.agrona.collections.Hashing;
 import org.agrona.collections.Int2IntCounterMap;
 import org.agrona.collections.Long2LongCounterMap;
-import org.agrona.concurrent.UnsafeBuffer;
+import org.agrona.concurrent.*;
 import org.agrona.concurrent.status.AtomicCounter;
 
 import java.io.IOException;
@@ -36,7 +37,8 @@ import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 import java.util.concurrent.TimeUnit;
 
-import static io.aeron.driver.status.SystemCounterDescriptor.*;
+import static io.aeron.driver.status.SystemCounterDescriptor.POSSIBLE_TTL_ASYMMETRY;
+import static io.aeron.driver.status.SystemCounterDescriptor.SHORT_SENDS;
 import static io.aeron.protocol.StatusMessageFlyweight.SEND_SETUP_FLAG;
 import static io.aeron.status.ChannelEndpointStatus.status;
 
@@ -61,8 +63,12 @@ public class ReceiveChannelEndpoint extends UdpChannelTransport
     private final Int2IntCounterMap refCountByStreamIdMap = new Int2IntCounterMap(0);
     private final Long2LongCounterMap refCountByStreamIdAndSessionIdMap = new Long2LongCounterMap(0);
     private final MultiRcvDestination multiRcvDestination;
+    private final CachedNanoClock cachedNanoClock;
+    private final Long groupTag;
 
     private final long receiverId;
+    private InetSocketAddress currentControlAddress;
+    private long timeOfLastActivityNs;
 
     public ReceiveChannelEndpoint(
         final UdpChannel udpChannel,
@@ -85,17 +91,18 @@ public class ReceiveChannelEndpoint extends UdpChannelTransport
         nakFlyweight = threadLocals.nakFlyweight();
         rttMeasurementBuffer = threadLocals.rttMeasurementBuffer();
         rttMeasurementFlyweight = threadLocals.rttMeasurementFlyweight();
+        cachedNanoClock = context.cachedNanoClock();
+        timeOfLastActivityNs = cachedNanoClock.nanoTime();
         receiverId = threadLocals.receiverId();
 
-        final String mode = udpChannel.channelUri().get(CommonContext.MDC_CONTROL_MODE_PARAM_NAME);
-        if (CommonContext.MDC_CONTROL_MODE_MANUAL.equals(mode))
-        {
-            this.multiRcvDestination = new MultiRcvDestination(context.nanoClock(), DESTINATION_ADDRESS_TIMEOUT);
-        }
-        else
-        {
-            this.multiRcvDestination = null;
-        }
+        final String groupTagValue = udpChannel.channelUri().get(CommonContext.GROUP_TAG_PARAM_NAME);
+        groupTag = null == groupTagValue ?
+            context.receiverGroupTag() :
+            Long.valueOf(AsciiEncoding.parseLongAscii(groupTagValue, 0, groupTagValue.length()));
+
+        multiRcvDestination = udpChannel.isManualControlMode() ?
+            new MultiRcvDestination(context.nanoClock(), DESTINATION_ADDRESS_TIMEOUT, errorHandler) : null;
+        currentControlAddress = udpChannel.localControl();
     }
 
     /**
@@ -113,9 +120,9 @@ public class ReceiveChannelEndpoint extends UdpChannelTransport
         {
             if (null != sendDatagramChannel)
             {
-                sendHook(buffer, remoteAddress);
                 if (sendDatagramChannel.isOpen())
                 {
+                    sendHook(buffer, remoteAddress);
                     bytesSent = sendDatagramChannel.send(buffer, remoteAddress);
                 }
             }
@@ -150,6 +157,11 @@ public class ReceiveChannelEndpoint extends UdpChannelTransport
         {
             throw new AeronException(
                 "channel cannot be registered unless INITIALISING: status=" + status(currentStatus));
+        }
+
+        if (null == multiRcvDestination)
+        {
+            statusIndicator.appendToLabel(bindAddressAndPort());
         }
 
         statusIndicator.setOrdered(ChannelEndpointStatus.ACTIVE);
@@ -257,7 +269,7 @@ public class ReceiveChannelEndpoint extends UdpChannelTransport
 
     public InetSocketAddress explicitControlAddress()
     {
-        return udpChannel.hasExplicitControl() ? udpChannel.localControl() : null;
+        return udpChannel.hasExplicitControl() ? currentControlAddress : null;
     }
 
     public boolean hasDestinationControl()
@@ -315,6 +327,21 @@ public class ReceiveChannelEndpoint extends UdpChannelTransport
         }
     }
 
+    public boolean hasTag()
+    {
+        return super.udpChannel.hasTag();
+    }
+
+    public long tag()
+    {
+        return super.udpChannel.tag();
+    }
+
+    public boolean matchesTag(final UdpChannel udpChannel)
+    {
+        return super.udpChannel.matchesTag(udpChannel);
+    }
+
     public int multicastTtl()
     {
         return multicastTtl(0);
@@ -336,7 +363,7 @@ public class ReceiveChannelEndpoint extends UdpChannelTransport
         }
     }
 
-    public int addDestination(final ReceiveDestinationUdpTransport transport)
+    public int addDestination(final ReceiveDestinationTransport transport)
     {
         return multiRcvDestination.addDestination(transport);
     }
@@ -351,7 +378,7 @@ public class ReceiveChannelEndpoint extends UdpChannelTransport
         return multiRcvDestination.transport(udpChannel);
     }
 
-    public ReceiveDestinationUdpTransport destination(final int transportIndex)
+    public ReceiveDestinationTransport destination(final int transportIndex)
     {
         return multiRcvDestination.transport(transportIndex);
     }
@@ -368,6 +395,7 @@ public class ReceiveChannelEndpoint extends UdpChannelTransport
         final InetSocketAddress srcAddress,
         final int transportIndex)
     {
+        updateTimeOfLastActivityNs(cachedNanoClock.nanoTime(), transportIndex);
         return dispatcher.onDataPacket(this, header, buffer, length, srcAddress, transportIndex);
     }
 
@@ -378,6 +406,7 @@ public class ReceiveChannelEndpoint extends UdpChannelTransport
         final InetSocketAddress srcAddress,
         final int transportIndex)
     {
+        updateTimeOfLastActivityNs(cachedNanoClock.nanoTime(), transportIndex);
         dispatcher.onSetupMessage(this, header, srcAddress, transportIndex);
     }
 
@@ -391,6 +420,7 @@ public class ReceiveChannelEndpoint extends UdpChannelTransport
         final long requestedReceiverId = header.receiverId();
         if (requestedReceiverId == receiverId || requestedReceiverId == 0)
         {
+            updateTimeOfLastActivityNs(cachedNanoClock.nanoTime(), transportIndex);
             dispatcher.onRttMeasurement(this, header, srcAddress, transportIndex);
         }
     }
@@ -407,9 +437,12 @@ public class ReceiveChannelEndpoint extends UdpChannelTransport
                 .consumptionTermId(0)
                 .consumptionTermOffset(0)
                 .receiverWindowLength(0)
+                .receiverId(receiverId)
+                .groupTag(groupTag)
                 .flags(SEND_SETUP_FLAG);
+            smBuffer.limit(statusMessageFlyweight.frameLength());
 
-            send(smBuffer, StatusMessageFlyweight.HEADER_LENGTH, transportIndex, controlAddress);
+            send(smBuffer, statusMessageFlyweight.frameLength(), transportIndex, controlAddress);
         }
     }
 
@@ -424,6 +457,7 @@ public class ReceiveChannelEndpoint extends UdpChannelTransport
     {
         if (!isClosed)
         {
+            rttMeasurementBuffer.clear();
             rttMeasurementFlyweight
                 .sessionId(sessionId)
                 .streamId(streamId)
@@ -454,9 +488,12 @@ public class ReceiveChannelEndpoint extends UdpChannelTransport
                 .consumptionTermId(termId)
                 .consumptionTermOffset(termOffset)
                 .receiverWindowLength(windowLength)
+                .receiverId(receiverId)
+                .groupTag(groupTag)
                 .flags(flags);
+            smBuffer.limit(statusMessageFlyweight.frameLength());
 
-            send(smBuffer, StatusMessageFlyweight.HEADER_LENGTH, controlAddresses);
+            send(smBuffer, statusMessageFlyweight.frameLength(), controlAddresses);
         }
     }
 
@@ -492,6 +529,7 @@ public class ReceiveChannelEndpoint extends UdpChannelTransport
     {
         if (!isClosed)
         {
+            rttMeasurementBuffer.clear();
             rttMeasurementFlyweight
                 .sessionId(sessionId)
                 .streamId(streamId)
@@ -549,6 +587,35 @@ public class ReceiveChannelEndpoint extends UdpChannelTransport
         return dispatcher.shouldElicitSetupMessage();
     }
 
+    public void checkForReResolution(final long nowNs, final DriverConductorProxy conductorProxy)
+    {
+        if (null != multiRcvDestination)
+        {
+            multiRcvDestination.checkForReResolution(this, nowNs, conductorProxy);
+        }
+        else if (udpChannel.hasExplicitControl() && nowNs > (timeOfLastActivityNs + DESTINATION_ADDRESS_TIMEOUT))
+        {
+            conductorProxy.reResolveControl(
+                udpChannel.channelUri().get(CommonContext.MDC_CONTROL_PARAM_NAME),
+                udpChannel,
+                this,
+                currentControlAddress);
+            timeOfLastActivityNs = nowNs;
+        }
+    }
+
+    public void updateControlAddress(final int transportIndex, final InetSocketAddress newAddress)
+    {
+        if (null != multiRcvDestination)
+        {
+            multiRcvDestination.updateControlAddress(transportIndex, newAddress);
+        }
+        else if (udpChannel.hasExplicitControl())
+        {
+            currentControlAddress = newAddress;
+        }
+    }
+
     protected void send(final ByteBuffer buffer, final int bytesToSend, final ImageConnection[] imageConnections)
     {
         final int bytesSent;
@@ -589,6 +656,18 @@ public class ReceiveChannelEndpoint extends UdpChannelTransport
         if (bytesToSend != bytesSent)
         {
             shortSends.increment();
+        }
+    }
+
+    protected void updateTimeOfLastActivityNs(final long nowNs, final int transportIndex)
+    {
+        if (null == multiRcvDestination)
+        {
+            timeOfLastActivityNs = nowNs;
+        }
+        else
+        {
+            multiRcvDestination.transport(transportIndex).timeOfLastActivityNs(nowNs);
         }
     }
 }

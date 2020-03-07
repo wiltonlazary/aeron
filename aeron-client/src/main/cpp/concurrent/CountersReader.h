@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -64,7 +64,7 @@ namespace aeron { namespace concurrent {
  *  +-+-------------------------------------------------------------+
  *  |R|                      Label Length                           |
  *  +-+-------------------------------------------------------------+
- *  |                  380 bytes of Label in UTF-8                 ...
+ *  |                  380 bytes of Label in ASCII                 ...
  * ...                                                              |
  *  +---------------------------------------------------------------+
  *  |                   Repeats to end of buffer                   ...
@@ -105,7 +105,7 @@ public:
             }
             else if (RECORD_ALLOCATED == recordStatus)
             {
-                const struct CounterMetaDataDefn& record = m_metadataBuffer.overlayStruct<CounterMetaDataDefn>(i);
+                const auto& record = m_metadataBuffer.overlayStruct<CounterMetaDataDefn>(i);
 
                 const std::string label = m_metadataBuffer.getString(i + LABEL_LENGTH_OFFSET);
                 const AtomicBuffer keyBuffer(m_metadataBuffer.buffer() + i + KEY_OFFSET, sizeof(CounterMetaDataDefn::key));

@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -34,7 +34,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * This application only handles non-fragmented data. A DataHandler method is called
  * for every received message or message fragment.
  * For an example that implements reassembly of large, fragmented messages, see
- * {link@ MultipleSubscribersWithFragmentAssembly}.
+ * {@link MultipleSubscribersWithFragmentAssembly}.
  */
 public class BasicSubscriber
 {

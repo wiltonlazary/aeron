@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,6 +32,7 @@
 #include "aeron_windows.h"
 #if defined(AERON_COMPILER_MSVC) && defined(AERON_CPU_X64)
 
+    #define _CRT_RAND_S
     #include <io.h>
     #include <direct.h>
     #include <process.h>
@@ -39,17 +40,20 @@
     #include <Windows.h>
 
     #define S_IRWXU 0
-    int mkdir(const char *path, int permission)
+    static int aeron_mkdir(const char *path, int permission)
     {
         return _mkdir(path);
     }
 
 #else
-#include <unistd.h>
+
+    #include <unistd.h>
+
+    #define aeron_mkdir mkdir
+
 #endif
 
 #include <inttypes.h>
-#include <stdlib.h>
 #include "util/aeron_error.h"
 #include "aeronmd.h"
 #include "aeron_alloc.h"
@@ -58,6 +62,7 @@
 #include "aeron_driver.h"
 #include "aeron_socket.h"
 #include "util/aeron_dlopen.h"
+#include "aeron_driver_context.h"
 
 const char aeron_version_full_str[] = "aeron version " AERON_VERSION_TXT " built " __DATE__ " " __TIME__;
 int aeron_major_version = AERON_VERSION_MAJOR;
@@ -113,56 +118,12 @@ void aeron_log_func_none(const char *str)
 {
 }
 
-int64_t aeron_nano_clock()
-{
-    struct timespec ts;
-#if defined(__CYGWIN__) || defined(__linux__)
-    if (clock_gettime(CLOCK_MONOTONIC, &ts) < 0)
-    {
-        return -1;
-    }
-#elif defined(AERON_COMPILER_MSVC)
-    if (aeron_clock_gettime_monotonic(&ts) < 0)
-    {
-        return -1;
-    }
-#else
-    if (clock_gettime(CLOCK_MONOTONIC_RAW, &ts) < 0)
-    {
-        return -1;
-    }
-#endif
-
-    return (ts.tv_sec * 1000000000) + ts.tv_nsec;
-}
-
-int64_t aeron_epoch_clock()
-{
-    struct timespec ts;
-#if defined(AERON_COMPILER_MSVC)
-    if (aeron_clock_gettime_realtime(&ts) < 0)
-    {
-        return -1;
-    }
-#else
-#if defined(CLOCK_REALTIME_COARSE)
-    if (clock_gettime(CLOCK_REALTIME_COARSE, &ts) < 0)
-#else
-    if (clock_gettime(CLOCK_REALTIME, &ts) < 0)
-#endif
-    {
-        return -1;
-    }
-#endif
-
-    return (ts.tv_sec * 1000) + (ts.tv_nsec / 1000000);
-}
-
 extern int aeron_number_of_trailing_zeroes(int32_t value);
-extern int aeron_number_of_leading_zeroes(int32_t value);
+extern int aeron_number_of_trailing_zeroes_u64(uint64_t value);
 extern int32_t aeron_find_next_power_of_two(int32_t value);
 
 #ifndef HAVE_ARC4RANDOM
+#include <stdlib.h>
 static int aeron_dev_random_fd = -1;
 #endif
 
@@ -189,9 +150,18 @@ int32_t aeron_randomised_int32()
         fprintf(stderr, "Failed to read from aeron_dev_random (%d): %s\n", errno, strerror(errno));
         exit(EXIT_FAILURE);
     }
-
+#elif defined(AERON_COMPILER_MSVC)
+    uint32_t value;
+    if (0 == rand_s(&value))
+    {
+        memcpy(&result, &value, sizeof(int32_t));
+    }
+    else
+    {
+        result = (int32_t)(rand() / (double)RAND_MAX * INT_MAX);
+    }
 #else
-    result = rand() * INT_MAX;
+    result = (int32_t)(rand() / (double)RAND_MAX * INT_MAX);
 #endif
     return result;
 }
@@ -252,9 +222,7 @@ int aeron_report_existing_errors(aeron_mapped_file_t *cnc_map, const char *aeron
         }
         else
         {
-            int errcode = errno;
-
-            aeron_set_err(errcode, "%s:%d: %s", __FILE__, __LINE__, strerror(errcode));
+            aeron_set_err_from_last_err_code("%s:%d", __FILE__, __LINE__);
             result = -1;
         }
     }
@@ -273,7 +241,7 @@ int aeron_driver_ensure_dir_is_recreated(aeron_driver_t *driver)
         if (driver->context->warn_if_dirs_exist)
         {
             log_func = aeron_log_func_stderr;
-            snprintf(buffer, sizeof(buffer) - 1, "WARNING: %s already exists", dirname);
+            snprintf(buffer, sizeof(buffer) - 1, "WARNING: %s exists", dirname);
             log_func(buffer);
         }
 
@@ -314,26 +282,23 @@ int aeron_driver_ensure_dir_is_recreated(aeron_driver_t *driver)
         }
     }
 
-    if (mkdir(driver->context->aeron_dir, S_IRWXU) != 0)
+    if (aeron_mkdir(driver->context->aeron_dir, S_IRWXU) != 0)
     {
-        int errcode = errno;
-        aeron_set_err(errcode, "mkdir %s: %s", driver->context->aeron_dir, strerror(errcode));
+        aeron_set_err_from_last_err_code("mkdir %s", driver->context->aeron_dir);
         return -1;
     }
 
     snprintf(buffer, sizeof(buffer) - 1, "%s/%s", dirname, AERON_PUBLICATIONS_DIR);
-    if (mkdir(buffer, S_IRWXU) != 0)
+    if (aeron_mkdir(buffer, S_IRWXU) != 0)
     {
-        int errcode = errno;
-        aeron_set_err(errcode, "mkdir %s: %s", buffer, strerror(errcode));
+        aeron_set_err_from_last_err_code("mkdir %s", buffer);
         return -1;
     }
 
     snprintf(buffer, sizeof(buffer) - 1, "%s/%s", dirname, AERON_IMAGES_DIR);
-    if (mkdir(buffer, S_IRWXU) != 0)
+    if (aeron_mkdir(buffer, S_IRWXU) != 0)
     {
-        int errcode = errno;
-        aeron_set_err(errcode, "mkdir %s: %s", buffer, strerror(errcode));
+        aeron_set_err_from_last_err_code("mkdir %s", buffer);
         return -1;
     }
 
@@ -402,33 +367,28 @@ int aeron_driver_create_loss_report_file(aeron_driver_t *driver)
 
 int aeron_driver_validate_sufficient_socket_buffer_lengths(aeron_driver_t *driver)
 {
-    int result = -1, probe_fd;
+    int result = -1;
+    aeron_socket_t probe_fd;
 
     if ((probe_fd = aeron_socket(AF_INET, SOCK_DGRAM, 0)) < 0)
     {
-        int errcode = errno;
-
-        aeron_set_err(errcode, "socket %s:%d: %s", __FILE__, __LINE__, strerror(errcode));
+        aeron_set_err_from_last_err_code("socket %s:%d", __FILE__, __LINE__);
         goto cleanup;
     }
 
     size_t default_sndbuf = 0;
     socklen_t len = sizeof(default_sndbuf);
-    if (getsockopt(probe_fd, SOL_SOCKET, SO_SNDBUF, &default_sndbuf, &len) < 0)
+    if (aeron_getsockopt(probe_fd, SOL_SOCKET, SO_SNDBUF, &default_sndbuf, &len) < 0)
     {
-        int errcode = errno;
-
-        aeron_set_err(errcode, "getsockopt(SO_SNDBUF) %s:%d: %s", __FILE__, __LINE__, strerror(errcode));
+        aeron_set_err_from_last_err_code("getsockopt(SO_SNDBUF) %s:%d", __FILE__, __LINE__);
         goto cleanup;
     }
 
     size_t default_rcvbuf = 0;
     len = sizeof(default_rcvbuf);
-    if (getsockopt(probe_fd, SOL_SOCKET, SO_SNDBUF, &default_sndbuf, &len) < 0)
+    if (aeron_getsockopt(probe_fd, SOL_SOCKET, SO_SNDBUF, &default_sndbuf, &len) < 0)
     {
-        int errcode = errno;
-
-        aeron_set_err(errcode, "getsockopt(SO_RCVBUF) %s:%d: %s", __FILE__, __LINE__, strerror(errcode));
+        aeron_set_err_from_last_err_code("getsockopt(SO_RCVBUF) %s:%d", __FILE__, __LINE__);
         goto cleanup;
     }
 
@@ -439,20 +399,16 @@ int aeron_driver_validate_sufficient_socket_buffer_lengths(aeron_driver_t *drive
     {
         size_t socket_sndbuf = driver->context->socket_sndbuf;
 
-        if (setsockopt(probe_fd, SOL_SOCKET, SO_SNDBUF, &socket_sndbuf, sizeof(socket_sndbuf)) < 0)
+        if (aeron_setsockopt(probe_fd, SOL_SOCKET, SO_SNDBUF, &socket_sndbuf, sizeof(socket_sndbuf)) < 0)
         {
-            int errcode = errno;
-
-            aeron_set_err(errcode, "setsockopt(SO_SNDBUF) %s:%d: %s", __FILE__, __LINE__, strerror(errcode));
+            aeron_set_err_from_last_err_code("setsockopt(SO_SNDBUF) %s:%d", __FILE__, __LINE__);
             goto cleanup;
         }
 
         len = sizeof(socket_sndbuf);
-        if (getsockopt(probe_fd, SOL_SOCKET, SO_SNDBUF, &socket_sndbuf, &len) < 0)
+        if (aeron_getsockopt(probe_fd, SOL_SOCKET, SO_SNDBUF, &socket_sndbuf, &len) < 0)
         {
-            int errcode = errno;
-
-            aeron_set_err(errcode, "getsockopt(SO_SNDBUF) %s:%d: %s", __FILE__, __LINE__, strerror(errcode));
+            aeron_set_err_from_last_err_code("getsockopt(SO_SNDBUF) %s:%d", __FILE__, __LINE__);
             goto cleanup;
         }
 
@@ -473,20 +429,16 @@ int aeron_driver_validate_sufficient_socket_buffer_lengths(aeron_driver_t *drive
     {
         size_t socket_rcvbuf = driver->context->socket_rcvbuf;
 
-        if (setsockopt(probe_fd, SOL_SOCKET, SO_RCVBUF, &socket_rcvbuf, sizeof(socket_rcvbuf)) < 0)
+        if (aeron_setsockopt(probe_fd, SOL_SOCKET, SO_RCVBUF, &socket_rcvbuf, sizeof(socket_rcvbuf)) < 0)
         {
-            int errcode = errno;
-
-            aeron_set_err(errcode, "setsockopt(SO_RCVBUF) %s:%d: %s", __FILE__, __LINE__, strerror(errcode));
+            aeron_set_err_from_last_err_code("setsockopt(SO_RCVBUF) %s:%d", __FILE__, __LINE__);
             goto cleanup;
         }
 
         len = sizeof(socket_rcvbuf);
-        if (getsockopt(probe_fd, SOL_SOCKET, SO_RCVBUF, &socket_rcvbuf, &len) < 0)
+        if (aeron_getsockopt(probe_fd, SOL_SOCKET, SO_RCVBUF, &socket_rcvbuf, &len) < 0)
         {
-            int errcode = errno;
-
-            aeron_set_err(errcode, "getsockopt(SO_RCVBUF) %s:%d: %s", __FILE__, __LINE__, strerror(errcode));
+            aeron_set_err_from_last_err_code("getsockopt(SO_RCVBUF) %s:%d", __FILE__, __LINE__);
             goto cleanup;
         }
 
@@ -586,6 +538,7 @@ void aeron_driver_context_print_configuration(aeron_driver_context_t *context)
     fprintf(fpout, "\n    spies_simulate_connection=%d", context->spies_simulate_connection);
     fprintf(fpout, "\n    reliable_stream=%d", context->reliable_stream);
     fprintf(fpout, "\n    tether_subscriptions=%d", context->tether_subscriptions);
+    fprintf(fpout, "\n    rejoin_stream=%d", context->rejoin_stream);
     fprintf(fpout, "\n    receiver_group_consideration=%d", context->receiver_group_consideration);
     fprintf(fpout, "\n    to_driver_buffer_length=%" PRIu64, (uint64_t)context->to_driver_buffer_length);
     fprintf(fpout, "\n    to_clients_buffer_length=%" PRIu64, (uint64_t)context->to_clients_buffer_length);
@@ -617,13 +570,15 @@ void aeron_driver_context_print_configuration(aeron_driver_context_t *context)
     fprintf(fpout, "\n    mtu_length=%" PRIu64, (uint64_t)context->mtu_length);
     fprintf(fpout, "\n    ipc_mtu_length=%" PRIu64, (uint64_t)context->ipc_mtu_length);
     fprintf(fpout, "\n    file_page_size=%" PRIu64, (uint64_t)context->file_page_size);
-    /* publicationReservedSessionIdLow */
-    /* publicationReservedSessionIdHigh */
+    fprintf(fpout, "\n    publication_reserved_session_id_low=%" PRId32, context->publication_reserved_session_id_low);
+    fprintf(fpout, "\n    publication_reserved_session_id_high=%" PRId32, context->publication_reserved_session_id_high);
     fprintf(fpout, "\n    loss_report_length=%" PRIu64, (uint64_t)context->loss_report_length);
     fprintf(fpout, "\n    send_to_sm_poll_ratio=%" PRIu64, (uint64_t)context->send_to_sm_poll_ratio);
 
+#if defined(AERON_COMPILER_GCC)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wpedantic"
+#endif
 
     fprintf(fpout, "\n    epoch_clock=%p%s",
         (void *)context->epoch_clock,
@@ -674,7 +629,12 @@ void aeron_driver_context_print_configuration(aeron_driver_context_t *context)
     fprintf(fpout, "\n    multicast_flow_control_supplier_func=%p%s",
         (void *)context->multicast_flow_control_supplier_func,
         aeron_dlinfo((const void *)context->multicast_flow_control_supplier_func, buffer, sizeof(buffer)));
-    /* applicationSpecificFeedback */
+    fprintf(fpout, "\n    receiver_group_tag.is_present=%d",
+        context->receiver_group_tag.is_present);
+    fprintf(fpout, "\n    receiver_group_tag.value=%" PRId64, context->receiver_group_tag.value);
+    fprintf(fpout, "\n    flow_control.group_tag=%" PRId64, context->flow_control.group_tag);
+    fprintf(fpout, "\n    flow_control.group_min_size=%" PRId32, context->flow_control.group_min_size);
+    fprintf(fpout, "\n    flow_control_receiver_timeout_ns=%" PRIu64, context->flow_control.receiver_timeout_ns);
     fprintf(fpout, "\n    congestion_control_supplier_func=%p%s",
         (void *)context->congestion_control_supplier_func,
         aeron_dlinfo((const void *)context->congestion_control_supplier_func, buffer, sizeof(buffer)));
@@ -690,7 +650,48 @@ void aeron_driver_context_print_configuration(aeron_driver_context_t *context)
         aeron_dlinfo((const void *)context->termination_hook_func, buffer, sizeof(buffer)));
     fprintf(fpout, "\n    termination_hook_state=%p", context->termination_hook_state);
 
+    const aeron_udp_channel_transport_bindings_t *bindings = context->udp_channel_transport_bindings;
+    while (NULL != bindings)
+    {
+        fprintf(
+            fpout, "\n    udp_channel_transport_bindings.%s=%s,%p%s",
+            bindings->meta_info.type, bindings->meta_info.name,
+            bindings->meta_info.source_symbol, aeron_dlinfo(bindings->meta_info.source_symbol, buffer, sizeof(buffer)));
+
+        bindings = bindings->meta_info.next_binding;
+    }
+
+    const aeron_udp_channel_interceptor_bindings_t *interceptor_bindings;
+
+    interceptor_bindings = context->udp_channel_outgoing_interceptor_bindings;
+    while (NULL != interceptor_bindings)
+    {
+        fprintf(
+            fpout, "\n    udp_channel_outgoing_interceptor_bindings.%s=%s,%p%s",
+            interceptor_bindings->meta_info.type,
+            interceptor_bindings->meta_info.name,
+            interceptor_bindings->meta_info.source_symbol,
+            aeron_dlinfo(interceptor_bindings->meta_info.source_symbol, buffer, sizeof(buffer)));
+
+        interceptor_bindings = interceptor_bindings->meta_info.next_interceptor_bindings;
+    }
+
+    interceptor_bindings = context->udp_channel_incoming_interceptor_bindings;
+    while (NULL != interceptor_bindings)
+    {
+        fprintf(
+            fpout, "\n    udp_channel_incoming_interceptor_bindings.%s=%s,%p%s",
+            interceptor_bindings->meta_info.type,
+            interceptor_bindings->meta_info.name,
+            interceptor_bindings->meta_info.source_symbol,
+            aeron_dlinfo(interceptor_bindings->meta_info.source_symbol, buffer, sizeof(buffer)));
+
+        interceptor_bindings = interceptor_bindings->meta_info.next_interceptor_bindings;
+    }
+
+#if defined(AERON_COMPILER_GCC)
 #pragma GCC diagnostic pop
+#endif
 
     fprintf(fpout, "\n}\n");
 }
@@ -748,9 +749,7 @@ int aeron_driver_init(aeron_driver_t **driver, aeron_driver_context_t *context)
 
     if (aeron_alloc((void **)&_driver, sizeof(aeron_driver_t)) < 0)
     {
-        int errcode = errno;
-
-        aeron_set_err(errcode, "%s:%d: %s", __FILE__, __LINE__, strerror(errcode));
+        aeron_set_err_from_last_err_code("%s:%d", __FILE__, __LINE__);
         goto error;
     }
 
@@ -807,6 +806,8 @@ int aeron_driver_init(aeron_driver_t **driver, aeron_driver_context_t *context)
         goto error;
     }
 
+    context->counters_manager = &_driver->conductor.counters_manager;
+    context->error_log = &_driver->conductor.error_log;
     _driver->context->conductor_proxy = &_driver->conductor.conductor_proxy;
 
     if (aeron_driver_sender_init(

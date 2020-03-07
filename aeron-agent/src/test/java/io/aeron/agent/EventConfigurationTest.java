@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,24 +15,25 @@
  */
 package io.aeron.agent;
 
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.util.EnumSet;
 import java.util.Set;
 
-import static io.aeron.agent.EventConfiguration.*;
-import static org.hamcrest.Matchers.is;
+import static io.aeron.agent.EventConfiguration.getEnabledClusterEventCodes;
+import static io.aeron.agent.EventConfiguration.getEnabledDriverEventCodes;
+import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.startsWith;
-import static org.junit.Assert.assertThat;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 public class EventConfigurationTest
 {
     @Test
     public void nullPropertyShouldDefaultToProductionEventCodes()
     {
-        assertThat(getEnabledDriverEventCodes(null), is(EnumSet.noneOf(DriverEventCode.class)));
+        assertEquals(getEnabledDriverEventCodes(null), EnumSet.noneOf(DriverEventCode.class));
     }
 
     @Test
@@ -44,7 +45,7 @@ public class EventConfigurationTest
         try
         {
             final Set<DriverEventCode> enabledEventCodes = getEnabledDriverEventCodes("list of invalid options");
-            assertThat(enabledEventCodes.size(), is(0));
+            assertEquals(0, enabledEventCodes.size());
             assertThat(stderr.toString(), startsWith("unknown event code: list of invalid options"));
         }
         finally
@@ -56,27 +57,19 @@ public class EventConfigurationTest
     @Test
     public void allPropertyShouldReturnAllEventCodes()
     {
-        assertThat(getEnabledDriverEventCodes("all"), is(ALL_LOGGER_EVENT_CODES));
+        assertEquals(EnumSet.allOf(DriverEventCode.class), getEnabledDriverEventCodes("all"));
     }
 
     @Test
     public void eventCodesPropertyShouldBeParsedAsListOfEventCodes()
     {
         final Set<DriverEventCode> expectedCodes = EnumSet.of(DriverEventCode.FRAME_OUT, DriverEventCode.FRAME_IN);
-        assertThat(getEnabledDriverEventCodes("FRAME_OUT,FRAME_IN"), is(expectedCodes));
+        assertEquals(expectedCodes, getEnabledDriverEventCodes("FRAME_OUT,FRAME_IN"));
     }
 
     @Test
     public void allClusterEventsShouldBeEnabled()
     {
-        assertThat(getEnabledClusterEventCodes("all"), is(EnumSet.allOf(ClusterEventCode.class)));
-    }
-
-    @Test
-    public void makeTagBitSet()
-    {
-        final Set<DriverEventCode> eventCodes = EnumSet.of(DriverEventCode.FRAME_OUT, DriverEventCode.FRAME_IN);
-        final long bitSet = EventConfiguration.makeTagBitSet(eventCodes);
-        assertThat(bitSet, is(DriverEventCode.FRAME_OUT.tagBit() | DriverEventCode.FRAME_IN.tagBit()));
+        assertEquals(EnumSet.allOf(ClusterEventCode.class), getEnabledClusterEventCodes("all"));
     }
 }

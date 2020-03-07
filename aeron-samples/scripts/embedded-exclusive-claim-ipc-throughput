@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 ##
-## Copyright 2014-2019 Real Logic Ltd.
+## Copyright 2014-2020 Real Logic Limited.
 ##
 ## Licensed under the Apache License, Version 2.0 (the "License");
 ## you may not use this file except in compliance with the License.
@@ -15,12 +15,15 @@
 ## limitations under the License.
 ##
 
+VERSION=`cat ../../version.txt`
+
 ${JAVA_HOME}/bin/java \
-    -cp ../build/libs/samples.jar \
+    -cp ../../aeron-all/build/libs/aeron-all-${VERSION}.jar  \
     -XX:+UnlockExperimentalVMOptions \
     -XX:+TrustFinalNonStaticFields \
     -XX:BiasedLockingStartupDelay=0 \
     -XX:+UseParallelOldGC \
     -Dagrona.disable.bounds.checks=true \
     -Daeron.sample.messageLength=32 \
+    -Daeron.ipc.mtu.length=16K \
     ${JVM_OPTS} io.aeron.samples.EmbeddedExclusiveBufferClaimIpcThroughput "$@"

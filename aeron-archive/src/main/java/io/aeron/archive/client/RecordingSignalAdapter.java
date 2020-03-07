@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2018 Real Logic Ltd.
+ * Copyright 2014-2018 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -79,6 +79,16 @@ public class RecordingSignalAdapter
         return subscription.controlledPoll(assembler, fragmentLimit);
     }
 
+    /**
+     * Indicate that poll was successful and a signal or control response was received.
+     *
+     * @return true if a signal or control response was received.
+     */
+    public boolean isDone()
+    {
+        return isDone;
+    }
+
     private ControlledFragmentHandler.Action onFragment(
         final DirectBuffer buffer, final int offset, final int length, final Header header)
     {
@@ -113,6 +123,9 @@ public class RecordingSignalAdapter
                         controlResponseDecoder.relevantId(),
                         controlResponseDecoder.code(),
                         controlResponseDecoder.errorMessage());
+
+                    isDone = true;
+                    return BREAK;
                 }
                 break;
 

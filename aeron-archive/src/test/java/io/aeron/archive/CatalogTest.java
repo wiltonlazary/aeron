@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,6 +15,7 @@
  */
 package io.aeron.archive;
 
+import io.aeron.archive.client.ArchiveException;
 import io.aeron.archive.codecs.RecordingDescriptorDecoder;
 import io.aeron.archive.codecs.RecordingDescriptorHeaderDecoder;
 import io.aeron.protocol.DataHeaderFlyweight;
@@ -22,30 +23,34 @@ import org.agrona.IoUtil;
 import org.agrona.collections.ArrayUtil;
 import org.agrona.concurrent.EpochClock;
 import org.agrona.concurrent.UnsafeBuffer;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import java.io.File;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
+import java.util.stream.Stream;
 
 import static io.aeron.archive.Archive.segmentFileName;
 import static io.aeron.archive.Catalog.PAGE_SIZE;
+import static io.aeron.archive.Catalog.fragmentStraddlesPageBoundary;
 import static io.aeron.archive.client.AeronArchive.NULL_POSITION;
 import static io.aeron.archive.client.AeronArchive.NULL_TIMESTAMP;
 import static io.aeron.protocol.DataHeaderFlyweight.HEADER_LENGTH;
 import static java.nio.file.StandardOpenOption.*;
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
-import static org.junit.Assert.*;
-import static org.junit.Assume.assumeThat;
+import static org.junit.jupiter.api.Assertions.*;
 
-public class CatalogTest
+class CatalogTest
 {
     private static final long MAX_ENTRIES = 1024;
     private static final int TERM_LENGTH = 2 * Catalog.PAGE_SIZE;
@@ -54,7 +59,7 @@ public class CatalogTest
 
     private final UnsafeBuffer unsafeBuffer = new UnsafeBuffer();
     private final RecordingDescriptorDecoder recordingDescriptorDecoder = new RecordingDescriptorDecoder();
-    private final File archiveDir = TestUtil.makeTestDirectory();
+    private final File archiveDir = ArchiveTests.makeTestDirectory();
 
     private long currentTimeMs = 1;
     private final EpochClock clock = () -> currentTimeMs;
@@ -63,8 +68,8 @@ public class CatalogTest
     private long recordingTwoId;
     private long recordingThreeId;
 
-    @Before
-    public void before()
+    @BeforeEach
+    void before()
     {
         try (Catalog catalog = new Catalog(archiveDir, null, 0, MAX_ENTRIES, clock))
         {
@@ -77,14 +82,14 @@ public class CatalogTest
         }
     }
 
-    @After
-    public void after()
+    @AfterEach
+    void after()
     {
         IoUtil.delete(archiveDir, false);
     }
 
     @Test
-    public void shouldReloadExistingIndex()
+    void shouldReloadExistingIndex()
     {
         try (Catalog catalog = new Catalog(archiveDir, clock))
         {
@@ -119,7 +124,7 @@ public class CatalogTest
     }
 
     @Test
-    public void shouldAppendToExistingIndex()
+    void shouldAppendToExistingIndex()
     {
         final long newRecordingId;
         try (Catalog catalog = new Catalog(archiveDir, null, 0, MAX_ENTRIES, () -> 3L))
@@ -136,7 +141,7 @@ public class CatalogTest
     }
 
     @Test
-    public void shouldAllowMultipleInstancesForSameStream()
+    void shouldAllowMultipleInstancesForSameStream()
     {
         try (Catalog ignore = new Catalog(archiveDir, clock))
         {
@@ -146,7 +151,7 @@ public class CatalogTest
     }
 
     @Test
-    public void shouldIncreaseMaxEntries()
+    void shouldIncreaseMaxEntries()
     {
         final long newMaxEntries = MAX_ENTRIES * 2;
 
@@ -157,7 +162,7 @@ public class CatalogTest
     }
 
     @Test
-    public void shouldNotDecreaseMaxEntries()
+    void shouldNotDecreaseMaxEntries()
     {
         final long newMaxEntries = 1;
 
@@ -168,36 +173,34 @@ public class CatalogTest
     }
 
     @Test
-    public void shouldFixTimestampForEmptyRecordingAfterFailure()
+    void shouldFixTimestampForEmptyRecordingAfterFailure()
     {
         final long newRecordingId = newRecording();
 
         try (Catalog catalog = new Catalog(archiveDir, clock))
         {
-            catalog.forEntry(
-                newRecordingId,
+            final Catalog.CatalogEntryProcessor entryProcessor =
                 (headerEncoder, headerDecoder, descriptorEncoder, descriptorDecoder) ->
-                {
-                    assertThat(descriptorDecoder.stopTimestamp(), is(NULL_TIMESTAMP));
-                });
+                assertEquals(NULL_TIMESTAMP, descriptorDecoder.stopTimestamp());
+
+            assertTrue(catalog.forEntry(newRecordingId, entryProcessor));
         }
 
         currentTimeMs = 42L;
 
         try (Catalog catalog = new Catalog(archiveDir, null, 0, MAX_ENTRIES, clock))
         {
-            catalog.forEntry(
-                newRecordingId,
+            final Catalog.CatalogEntryProcessor entryProcessor =
                 (headerEncoder, headerDecoder, descriptorEncoder, descriptorDecoder) ->
-                {
-                    assertThat(descriptorDecoder.stopTimestamp(), is(42L));
-                });
+                assertEquals(42L, descriptorDecoder.stopTimestamp());
+
+            assertTrue(catalog.forEntry(newRecordingId, entryProcessor));
         }
     }
 
     @SuppressWarnings("ResultOfMethodCallIgnored")
     @Test
-    public void shouldFixTimestampAndPositionAfterFailureSamePage() throws Exception
+    void shouldFixTimestampAndPositionAfterFailureSamePage() throws Exception
     {
         final long newRecordingId = newRecording();
 
@@ -222,48 +225,13 @@ public class CatalogTest
 
         try (Catalog catalog = new Catalog(archiveDir, clock))
         {
-            catalog.forEntry(
+            assertTrue(catalog.forEntry(
                 newRecordingId,
                 (headerEncoder, headerDecoder, descriptorEncoder, descriptorDecoder) ->
                 {
-                    assertThat(descriptorDecoder.stopTimestamp(), is(NULL_TIMESTAMP));
-                    assertThat(descriptorDecoder.stopPosition(), is(NULL_POSITION));
-                }
-            );
-        }
-
-        currentTimeMs = 42L;
-
-        try (Catalog catalog = new Catalog(archiveDir, null, 0, MAX_ENTRIES, clock))
-        {
-            catalog.forEntry(
-                newRecordingId,
-                (headerEncoder, headerDecoder, descriptorEncoder, descriptorDecoder) ->
-                {
-                    assertThat(descriptorDecoder.stopTimestamp(), is(42L));
-                    assertThat(descriptorDecoder.stopPosition(), is(SEGMENT_LENGTH * 3 + 1024L + 128L));
-                }
-            );
-        }
-    }
-
-    @Test
-    public void shouldFixTimestampAndPositionAfterFailurePageStraddle() throws Exception
-    {
-        final long newRecordingId = newRecording();
-
-        createSegmentFile(newRecordingId);
-
-        try (Catalog catalog = new Catalog(archiveDir, clock))
-        {
-            catalog.forEntry(
-                newRecordingId,
-                (headerEncoder, headerDecoder, descriptorEncoder, descriptorDecoder) ->
-                {
-                    assertThat(descriptorDecoder.stopTimestamp(), is(NULL_TIMESTAMP));
-                    assertThat(descriptorDecoder.stopPosition(), is(NULL_POSITION));
-                }
-            );
+                    assertEquals(NULL_TIMESTAMP, descriptorDecoder.stopTimestamp());
+                    assertEquals(NULL_POSITION, descriptorDecoder.stopPosition());
+                }));
         }
 
         currentTimeMs = 42L;
@@ -274,11 +242,36 @@ public class CatalogTest
                 newRecordingId,
                 (headerEncoder, headerDecoder, descriptorEncoder, descriptorDecoder) ->
                 {
-                    assertThat(descriptorDecoder.stopTimestamp(), is(42L));
-                    assertThat(descriptorDecoder.stopPosition(), is((long)PAGE_SIZE - HEADER_LENGTH));
-                }
-            ));
+                    assertEquals(42L, descriptorDecoder.stopTimestamp());
+                    assertEquals(SEGMENT_LENGTH * 3 + 1024L + 128L, descriptorDecoder.stopPosition());
+                }));
         }
+    }
+
+    @Test
+    void shouldThrowExceptionAfterFailureOnPageStraddle() throws Exception
+    {
+        final long newRecordingId = newRecording();
+        final File segmentFile = new File(archiveDir, segmentFileName(newRecordingId, 0));
+        try (FileChannel log = FileChannel.open(segmentFile.toPath(), READ, WRITE, CREATE))
+        {
+            final ByteBuffer bb = ByteBuffer.allocateDirect(HEADER_LENGTH);
+            final DataHeaderFlyweight flyweight = new DataHeaderFlyweight(bb);
+            flyweight.frameLength(PAGE_SIZE - 128);
+            log.write(bb);
+            bb.clear();
+            flyweight.frameLength(256);
+            log.write(bb, PAGE_SIZE - 128);
+        }
+
+        final ArchiveException exception = Assertions.assertThrows(
+            ArchiveException.class,
+            () ->
+            {
+                final Catalog catalog = new Catalog(archiveDir, null, 0, MAX_ENTRIES, clock);
+                catalog.close();
+            });
+        assertThat(exception.getMessage(), containsString(segmentFile.getAbsolutePath()));
     }
 
     private long newRecording()
@@ -304,69 +297,53 @@ public class CatalogTest
     }
 
     @Test
-    public void shouldFixTimestampAndPositionAfterFailureFullSegment() throws Exception
+    void shouldFixTimestampAndPositionAfterFailureFullSegment() throws Exception
     {
         final long newRecordingId = newRecording();
-        final long expectedLastFrame = SEGMENT_LENGTH - 128;
 
         final File segmentFile = new File(archiveDir, segmentFileName(newRecordingId, 0));
         try (FileChannel log = FileChannel.open(segmentFile.toPath(), READ, WRITE, CREATE))
         {
             final ByteBuffer bb = ByteBuffer.allocateDirect(HEADER_LENGTH);
             final DataHeaderFlyweight flyweight = new DataHeaderFlyweight(bb);
-            flyweight.frameLength((int)expectedLastFrame);
+            flyweight.frameLength(SEGMENT_LENGTH - 128);
             log.write(bb);
             bb.clear();
             flyweight.frameLength(128);
-            log.write(bb, expectedLastFrame);
-            bb.clear();
-            flyweight.frameLength(0);
-            log.write(bb, expectedLastFrame + 128);
+            log.write(bb, SEGMENT_LENGTH - 128);
             log.truncate(SEGMENT_LENGTH);
         }
 
         try (Catalog catalog = new Catalog(archiveDir, clock))
         {
-            catalog.forEntry(
+            assertTrue(catalog.forEntry(
                 newRecordingId,
                 (headerEncoder, headerDecoder, descriptorEncoder, descriptorDecoder) ->
                 {
                     assertThat(descriptorDecoder.stopTimestamp(), is(NULL_TIMESTAMP));
-                }
-            );
-        }
-
-        try (Catalog catalog = new Catalog(archiveDir, null, 0, MAX_ENTRIES, clock))
-        {
-            catalog.forEntry(
-                newRecordingId,
-                (headerEncoder, headerDecoder, descriptorEncoder, descriptorDecoder) ->
-                {
-                    descriptorEncoder.stopPosition(NULL_POSITION);
-                }
-            );
+                    assertThat(descriptorDecoder.stopPosition(), is(NULL_POSITION));
+                }));
         }
 
         currentTimeMs = 42L;
 
         try (Catalog catalog = new Catalog(archiveDir, null, 0, MAX_ENTRIES, clock))
         {
-            catalog.forEntry(
+            assertTrue(catalog.forEntry(
                 newRecordingId,
                 (headerEncoder, headerDecoder, descriptorEncoder, descriptorDecoder) ->
                 {
                     assertThat(descriptorDecoder.stopTimestamp(), is(42L));
-                    assertThat(descriptorDecoder.stopPosition(), is(expectedLastFrame));
-                }
-            );
+                    assertThat(descriptorDecoder.stopPosition(), is((long)SEGMENT_LENGTH));
+                }));
         }
     }
 
     @Test
-    public void shouldBeAbleToCreateMaxEntries()
+    void shouldBeAbleToCreateMaxEntries()
     {
         after();
-        final File archiveDir = TestUtil.makeTestDirectory();
+        final File archiveDir = ArchiveTests.makeTestDirectory();
         final long maxEntries = 2;
 
         try (Catalog catalog = new Catalog(archiveDir, null, 0, maxEntries, clock))
@@ -395,20 +372,23 @@ public class CatalogTest
     }
 
     @Test
-    public void shouldNotThrowWhenOldRecordingLogsAreDeleted() throws IOException
+    void shouldNotThrowWhenOldRecordingLogsAreDeleted() throws IOException
     {
-        createSegmentFile(recordingThreeId);
-
-        final Path segmentFilePath = Paths.get(segmentFileName(recordingThreeId, 0));
-        final boolean segmentFileExists = Files.exists(archiveDir.toPath().resolve(segmentFilePath));
-        assumeThat(segmentFileExists, is(true));
+        final File segmentFile = new File(archiveDir, segmentFileName(recordingThreeId, SEGMENT_LENGTH * 2));
+        try (FileChannel log = FileChannel.open(segmentFile.toPath(), READ, WRITE, CREATE))
+        {
+            final ByteBuffer bb = ByteBuffer.allocateDirect(HEADER_LENGTH);
+            final DataHeaderFlyweight flyweight = new DataHeaderFlyweight(bb);
+            flyweight.frameLength(256);
+            log.write(bb);
+        }
 
         final Catalog catalog = new Catalog(archiveDir, null, 0, MAX_ENTRIES, clock);
         catalog.close();
     }
 
     @Test
-    public void shouldContainChannelFragment()
+    void shouldContainChannelFragment()
     {
         try (Catalog catalog = new Catalog(archiveDir, null, 0, MAX_ENTRIES, clock))
         {
@@ -451,21 +431,25 @@ public class CatalogTest
         }
     }
 
-    private void createSegmentFile(final long newRecordingId) throws IOException
+    private static Stream<Arguments> pageBoundaryTestData()
     {
-        final File segmentFile = new File(archiveDir, segmentFileName(newRecordingId, 0));
-        try (FileChannel log = FileChannel.open(segmentFile.toPath(), READ, WRITE, CREATE))
-        {
-            final ByteBuffer bb = ByteBuffer.allocateDirect(HEADER_LENGTH);
-            final DataHeaderFlyweight flyweight = new DataHeaderFlyweight(bb);
-            flyweight.frameLength(PAGE_SIZE - HEADER_LENGTH);
-            log.write(bb);
-            bb.clear();
-            flyweight.frameLength(128);
-            log.write(bb, PAGE_SIZE - HEADER_LENGTH);
-            bb.clear();
-            flyweight.frameLength(0);
-            log.write(bb, PAGE_SIZE - HEADER_LENGTH + 128);
-        }
+        return Stream.of(
+            Arguments.of(0, 64, false),
+            Arguments.of(100, 300, false),
+            Arguments.of(0, PAGE_SIZE, false),
+            Arguments.of(1, PAGE_SIZE - 1, false),
+            Arguments.of(PAGE_SIZE - 1, 1, false),
+            Arguments.of(PAGE_SIZE * 7 + 32, 256, false),
+            Arguments.of(PAGE_SIZE * 3 + 111, PAGE_SIZE - 111, false),
+            Arguments.of(0, PAGE_SIZE + 1, true),
+            Arguments.of(PAGE_SIZE - 1, 2, true),
+            Arguments.of(PAGE_SIZE * 4 + 11, PAGE_SIZE - 10, true));
+    }
+
+    @ParameterizedTest(name = "fragmentCrossesPageBoundary({0}, {1}, {2})")
+    @MethodSource("pageBoundaryTestData")
+    void detectPageBoundaryStraddle(final long fragmentOffset, final long fragmentLength, final boolean expected)
+    {
+        assertEquals(expected, fragmentStraddlesPageBoundary(fragmentOffset, fragmentLength));
     }
 }

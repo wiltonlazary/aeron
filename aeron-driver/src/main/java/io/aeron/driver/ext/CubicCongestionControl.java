@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@ import io.aeron.driver.MediaDriver;
 import io.aeron.driver.media.UdpChannel;
 import io.aeron.driver.status.PerImageIndicator;
 import org.agrona.CloseHelper;
+import org.agrona.ErrorHandler;
 import org.agrona.concurrent.NanoClock;
 import org.agrona.concurrent.status.AtomicCounter;
 import org.agrona.concurrent.status.CountersManager;
@@ -33,7 +34,7 @@ import static io.aeron.driver.CongestionControl.packOutcome;
  * CUBIC congestion control manipulation of the receiver window length.
  * <p>
  * <a target="_blank" href="https://research.csc.ncsu.edu/netsrv/?q=content/bic-and-cubic">
- *     https://research.csc.ncsu.edu/netsrv/?q=content/bic-and-cubic</a>
+ * https://research.csc.ncsu.edu/netsrv/?q=content/bic-and-cubic</a>
  * <p>
  * {@code W_cubic = C(T - K)^3 + w_max}
  * <p>
@@ -48,6 +49,11 @@ import static io.aeron.driver.CongestionControl.packOutcome;
  */
 public class CubicCongestionControl implements CongestionControl
 {
+    /**
+     * URI param value to identify this {@link CongestionControl} strategy.
+     */
+    public static final String CC_PARAM_VALUE = "cubic";
+
     private static final boolean RTT_MEASUREMENT = CubicCongestionControlConfiguration.MEASURE_RTT;
     private static final boolean TCP_MODE = CubicCongestionControlConfiguration.TCP_MODE;
 
@@ -62,6 +68,7 @@ public class CubicCongestionControl implements CongestionControl
     private final int minWindow;
     private final int mtu;
     private final int maxCwnd;
+    private final ErrorHandler errorHandler;
 
     private long lastLossTimestampNs;
     private long lastUpdateTimestampNs;
@@ -126,6 +133,8 @@ public class CubicCongestionControl implements CongestionControl
 
         lastLossTimestampNs = clock.nanoTime();
         lastUpdateTimestampNs = lastLossTimestampNs;
+
+        errorHandler = context.errorHandler();
     }
 
     public boolean shouldMeasureRtt(final long nowNs)
@@ -206,7 +215,7 @@ public class CubicCongestionControl implements CongestionControl
 
     public void close()
     {
-        CloseHelper.close(rttIndicator);
-        CloseHelper.close(windowIndicator);
+        CloseHelper.close(errorHandler, rttIndicator);
+        CloseHelper.close(errorHandler, windowIndicator);
     }
 }

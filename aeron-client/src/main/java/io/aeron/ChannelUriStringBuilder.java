@@ -1,5 +1,5 @@
 /*
- *  Copyright 2014-2019 Real Logic Ltd.
+ *  Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -45,6 +45,7 @@ public class ChannelUriStringBuilder
     private String tags;
     private String alias;
     private String cc;
+    private String fc;
     private Boolean reliable;
     private Integer ttl;
     private Integer mtu;
@@ -53,6 +54,7 @@ public class ChannelUriStringBuilder
     private Integer termId;
     private Integer termOffset;
     private Integer sessionId;
+    private Long groupTag;
     private Long linger;
     private Boolean sparse;
     private Boolean eos;
@@ -77,6 +79,7 @@ public class ChannelUriStringBuilder
         tags = null;
         alias = null;
         cc = null;
+        fc = null;
         reliable = null;
         ttl = null;
         mtu = null;
@@ -85,6 +88,7 @@ public class ChannelUriStringBuilder
         termId = null;
         termOffset = null;
         sessionId = null;
+        groupTag = null;
         linger = null;
         sparse = null;
         eos = null;
@@ -405,15 +409,15 @@ public class ChannelUriStringBuilder
      */
     public ChannelUriStringBuilder reliable(final ChannelUri channelUri)
     {
-        final String reliableStr = channelUri.get(RELIABLE_STREAM_PARAM_NAME);
-        if (null == reliableStr)
+        final String reliableValue = channelUri.get(RELIABLE_STREAM_PARAM_NAME);
+        if (null == reliableValue)
         {
             reliable = null;
             return this;
         }
         else
         {
-            return reliable(Boolean.valueOf(reliableStr));
+            return reliable(Boolean.valueOf(reliableValue));
         }
     }
 
@@ -456,15 +460,15 @@ public class ChannelUriStringBuilder
      */
     public ChannelUriStringBuilder ttl(final ChannelUri channelUri)
     {
-        final String ttlStr = channelUri.get(TTL_PARAM_NAME);
-        if (null == ttlStr)
+        final String ttlValue = channelUri.get(TTL_PARAM_NAME);
+        if (null == ttlValue)
         {
             ttl = null;
             return this;
         }
         else
         {
-            return ttl(Integer.valueOf(ttlStr));
+            return ttl(Integer.valueOf(ttlValue));
         }
     }
 
@@ -515,15 +519,15 @@ public class ChannelUriStringBuilder
      */
     public ChannelUriStringBuilder mtu(final ChannelUri channelUri)
     {
-        final String mtuStr = channelUri.get(MTU_LENGTH_PARAM_NAME);
-        if (null == mtuStr)
+        final String mtuValue = channelUri.get(MTU_LENGTH_PARAM_NAME);
+        if (null == mtuValue)
         {
             mtu = null;
             return this;
         }
         else
         {
-            final long value = parseSize(MTU_LENGTH_PARAM_NAME, mtuStr);
+            final long value = parseSize(MTU_LENGTH_PARAM_NAME, mtuValue);
             if (value > Integer.MAX_VALUE)
             {
                 throw new IllegalStateException(MTU_LENGTH_PARAM_NAME + " " + value + " > " + Integer.MAX_VALUE);
@@ -572,15 +576,15 @@ public class ChannelUriStringBuilder
      */
     public ChannelUriStringBuilder termLength(final ChannelUri channelUri)
     {
-        final String termLengthStr = channelUri.get(TERM_LENGTH_PARAM_NAME);
-        if (null == termLengthStr)
+        final String termLengthValue = channelUri.get(TERM_LENGTH_PARAM_NAME);
+        if (null == termLengthValue)
         {
             termLength = null;
             return this;
         }
         else
         {
-            final long value = parseSize(TERM_LENGTH_PARAM_NAME, termLengthStr);
+            final long value = parseSize(TERM_LENGTH_PARAM_NAME, termLengthValue);
             if (value > Integer.MAX_VALUE)
             {
                 throw new IllegalStateException(
@@ -624,15 +628,15 @@ public class ChannelUriStringBuilder
      */
     public ChannelUriStringBuilder initialTermId(final ChannelUri channelUri)
     {
-        final String termLengthStr = channelUri.get(INITIAL_TERM_ID_PARAM_NAME);
-        if (null == termLengthStr)
+        final String initialTermIdValue = channelUri.get(INITIAL_TERM_ID_PARAM_NAME);
+        if (null == initialTermIdValue)
         {
             initialTermId = null;
             return this;
         }
         else
         {
-            return initialTermId(Integer.valueOf(termLengthStr));
+            return initialTermId(Integer.valueOf(initialTermIdValue));
         }
     }
 
@@ -670,15 +674,15 @@ public class ChannelUriStringBuilder
      */
     public ChannelUriStringBuilder termId(final ChannelUri channelUri)
     {
-        final String termIdStr = channelUri.get(TERM_ID_PARAM_NAME);
-        if (null == termIdStr)
+        final String termIdValue = channelUri.get(TERM_ID_PARAM_NAME);
+        if (null == termIdValue)
         {
             termId = null;
             return this;
         }
         else
         {
-            return termId(Integer.valueOf(termIdStr));
+            return termId(Integer.valueOf(termIdValue));
         }
     }
 
@@ -729,15 +733,15 @@ public class ChannelUriStringBuilder
      */
     public ChannelUriStringBuilder termOffset(final ChannelUri channelUri)
     {
-        final String termOffsetStr = channelUri.get(TERM_OFFSET_PARAM_NAME);
-        if (null == termOffsetStr)
+        final String termOffsetValue = channelUri.get(TERM_OFFSET_PARAM_NAME);
+        if (null == termOffsetValue)
         {
             termOffset = null;
             return this;
         }
         else
         {
-            return termOffset(Integer.valueOf(termOffsetStr));
+            return termOffset(Integer.valueOf(termOffsetValue));
         }
     }
 
@@ -774,15 +778,15 @@ public class ChannelUriStringBuilder
      */
     public ChannelUriStringBuilder sessionId(final ChannelUri channelUri)
     {
-        final String sessionIdStr = channelUri.get(SESSION_ID_PARAM_NAME);
-        if (null == sessionIdStr)
+        final String sessionIdValue = channelUri.get(SESSION_ID_PARAM_NAME);
+        if (null == sessionIdValue)
         {
             sessionId = null;
             return this;
         }
         else
         {
-            return sessionId(Integer.valueOf(sessionIdStr));
+            return sessionId(Integer.valueOf(sessionIdValue));
         }
     }
 
@@ -825,15 +829,15 @@ public class ChannelUriStringBuilder
      */
     public ChannelUriStringBuilder linger(final ChannelUri channelUri)
     {
-        final String lingerStr = channelUri.get(LINGER_PARAM_NAME);
-        if (null == lingerStr)
+        final String lingerValue = channelUri.get(LINGER_PARAM_NAME);
+        if (null == lingerValue)
         {
             linger = null;
             return this;
         }
         else
         {
-            return linger(parseDuration(LINGER_PARAM_NAME, lingerStr));
+            return linger(parseDuration(LINGER_PARAM_NAME, lingerValue));
         }
     }
 
@@ -872,15 +876,15 @@ public class ChannelUriStringBuilder
      */
     public ChannelUriStringBuilder sparse(final ChannelUri channelUri)
     {
-        final String sparseStr = channelUri.get(SPARSE_PARAM_NAME);
-        if (null == sparseStr)
+        final String sparseValue = channelUri.get(SPARSE_PARAM_NAME);
+        if (null == sparseValue)
         {
             sparse = null;
             return this;
         }
         else
         {
-            return sparse(Boolean.valueOf(sparseStr));
+            return sparse(Boolean.valueOf(sparseValue));
         }
     }
 
@@ -917,15 +921,15 @@ public class ChannelUriStringBuilder
      */
     public ChannelUriStringBuilder eos(final ChannelUri channelUri)
     {
-        final String eosStr = channelUri.get(EOS_PARAM_NAME);
-        if (null == eosStr)
+        final String eosValue = channelUri.get(EOS_PARAM_NAME);
+        if (null == eosValue)
         {
             eos = null;
             return this;
         }
         else
         {
-            return eos(Boolean.valueOf(eosStr));
+            return eos(Boolean.valueOf(eosValue));
         }
     }
 
@@ -962,15 +966,15 @@ public class ChannelUriStringBuilder
      */
     public ChannelUriStringBuilder tether(final ChannelUri channelUri)
     {
-        final String tetherStr = channelUri.get(TETHER_PARAM_NAME);
-        if (null == tetherStr)
+        final String tetherValue = channelUri.get(TETHER_PARAM_NAME);
+        if (null == tetherValue)
         {
             tether = null;
             return this;
         }
         else
         {
-            return tether(Boolean.valueOf(tetherStr));
+            return tether(Boolean.valueOf(tetherValue));
         }
     }
 
@@ -1009,15 +1013,15 @@ public class ChannelUriStringBuilder
      */
     public ChannelUriStringBuilder group(final ChannelUri channelUri)
     {
-        final String groupStr = channelUri.get(GROUP_PARAM_NAME);
-        if (null == groupStr)
+        final String groupValue = channelUri.get(GROUP_PARAM_NAME);
+        if (null == groupValue)
         {
             group = null;
             return this;
         }
         else
         {
-            return group(Boolean.valueOf(groupStr));
+            return group(Boolean.valueOf(groupValue));
         }
     }
 
@@ -1154,7 +1158,7 @@ public class ChannelUriStringBuilder
      *
      * @param channelUri to read the value from.
      * @return this for a fluent API.
-     * @see CommonContext#TAGS_PARAM_NAME
+     * @see CommonContext#CONGESTION_CONTROL_PARAM_NAME
      */
     public ChannelUriStringBuilder congestionControl(final ChannelUri channelUri)
     {
@@ -1164,12 +1168,160 @@ public class ChannelUriStringBuilder
     /**
      * Get the congestion control algorithm to be used on a channel.
      *
-     * @return alias for the URI.
+     * @return congestion control strategy for the channel.
      * @see CommonContext#CONGESTION_CONTROL_PARAM_NAME
      */
     public String congestionControl()
     {
         return cc;
+    }
+
+    /**
+     * Set the flow control strategy to be used on a channel.
+     *
+     * @param flowControl for the URI.
+     * @return this for a fluent API.
+     * @see CommonContext#FLOW_CONTROL_PARAM_NAME
+     */
+    public ChannelUriStringBuilder flowControl(final String flowControl)
+    {
+        this.fc = flowControl;
+        return this;
+    }
+
+    /**
+     * Set tagged flow control settings to be used on channel.  All specified values may be null and the default
+     * specified in the MediaDriver.Context will be used instead.
+     *
+     * @param groupTag  receiver tag for this channel.
+     * @param minGroupSize group size required to allow publications for this channel to be move to connected status.
+     * @param timeout      timeout receivers, default is ns, but allows suffixing of time units (e.g. 5s).
+     * @return this for fluent API.
+     */
+    public ChannelUriStringBuilder taggedFlowControl(
+        final Long groupTag, final Integer minGroupSize, final String timeout)
+    {
+        String flowControlValue = "tagged";
+
+        if (null != groupTag || null != minGroupSize)
+        {
+            flowControlValue += ",g:";
+        }
+
+        if (null != groupTag)
+        {
+            flowControlValue += groupTag;
+        }
+
+        if (null != minGroupSize)
+        {
+            flowControlValue += "/";
+            flowControlValue += minGroupSize;
+        }
+
+        if (null != timeout)
+        {
+            flowControlValue += ",t:";
+            flowControlValue += timeout;
+        }
+
+        return flowControl(flowControlValue);
+    }
+
+
+    /**
+     * Set min flow control settings to be used on channel.  All specified values may be null and the default
+     * specified in the MediaDriver.Context will be used instead.
+     *
+     * @param minGroupSize group size required to allow publications for this channel to be move to connected status.
+     * @param timeout      timeout receivers, default is ns, but allows suffixing of time units (e.g. 5s).
+     * @return this for fluent API.
+     */
+    public ChannelUriStringBuilder minFlowControl(final Integer minGroupSize, final String timeout)
+    {
+        String flowControlValue = "min";
+
+        if (null != minGroupSize)
+        {
+            flowControlValue += ",g:/";
+            flowControlValue += minGroupSize;
+        }
+
+        if (null != timeout)
+        {
+            flowControlValue += ",t:";
+            flowControlValue += timeout;
+        }
+
+        return flowControl(flowControlValue);
+    }
+
+    /**
+     * Set the flow control to be value which is in the {@link ChannelUri} which may be null.
+     *
+     * @param channelUri to read the value from.
+     * @return this for a fluent API.
+     * @see CommonContext#FLOW_CONTROL_PARAM_NAME
+     */
+    public ChannelUriStringBuilder flowControl(final ChannelUri channelUri)
+    {
+        return flowControl(channelUri.get(FLOW_CONTROL_PARAM_NAME));
+    }
+
+    /**
+     * Get the flow control strategy to be used on a channel.
+     *
+     * @return flow control strategy for the channel.
+     * @see CommonContext#FLOW_CONTROL_PARAM_NAME
+     */
+    public String flowControl()
+    {
+        return fc;
+    }
+
+    /**
+     * Set the group tag (gtag) to be sent in SMs.
+     *
+     * @param groupTag to be sent in SMs
+     * @return this for fluent API.
+     * @see CommonContext#GROUP_TAG_PARAM_NAME
+     */
+    public ChannelUriStringBuilder groupTag(final Long groupTag)
+    {
+        this.groupTag = groupTag;
+        return this;
+    }
+
+    /**
+     * Set the receiver tag to be value which is in the {@link ChannelUri} which may be null.
+     *
+     * @param channelUri to read the value from.
+     * @return this for a fluent API.
+     * @see CommonContext#GROUP_TAG_PARAM_NAME
+     */
+    public ChannelUriStringBuilder groupTag(final ChannelUri channelUri)
+    {
+        final String groupTagValue = channelUri.get(GROUP_TAG_PARAM_NAME);
+        if (null == groupTagValue)
+        {
+            groupTag = null;
+            return this;
+        }
+        else
+        {
+            return groupTag(Long.valueOf(groupTagValue));
+        }
+    }
+
+    /**
+     * Get the group tag (gtag) to be sent in SMs.
+     *
+     * @return receiver tag to be sent in SMs.
+     * @see CommonContext#GROUP_TAG_PARAM_NAME
+     */
+    public Long groupTag()
+    {
+        return groupTag;
     }
 
     /**
@@ -1194,15 +1346,15 @@ public class ChannelUriStringBuilder
      */
     public ChannelUriStringBuilder rejoin(final ChannelUri channelUri)
     {
-        final String rejoinStr = channelUri.get(REJOIN_PARAM_NAME);
-        if (null == rejoinStr)
+        final String rejoinValue = channelUri.get(REJOIN_PARAM_NAME);
+        if (null == rejoinValue)
         {
             rejoin = null;
             return this;
         }
         else
         {
-            return rejoin(Boolean.valueOf(rejoinStr));
+            return rejoin(Boolean.valueOf(rejoinValue));
         }
     }
 
@@ -1337,6 +1489,16 @@ public class ChannelUriStringBuilder
         if (null != cc)
         {
             sb.append(CONGESTION_CONTROL_PARAM_NAME).append('=').append(cc).append('|');
+        }
+
+        if (null != fc)
+        {
+            sb.append(FLOW_CONTROL_PARAM_NAME).append('=').append(fc).append('|');
+        }
+
+        if (null != groupTag)
+        {
+            sb.append(GROUP_TAG_PARAM_NAME).append('=').append(groupTag).append('|');
         }
 
         if (null != sparse)

@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include <cinttypes>
 #include "aeron_driver_conductor_test.h"
 
 class DriverConductorNetworkTest : public DriverConductorTest
@@ -295,6 +296,311 @@ TEST_F(DriverConductorNetworkTest, shouldBeAbleToAddMultipleExclusiveNetworkPubl
     EXPECT_EQ(readAllBroadcastsFromConductor(null_handler), 4u);
 }
 
+TEST_F(DriverConductorNetworkTest, shouldBeAbleToAddSingleNetworkPublicationWithSpecifiedSessionId)
+{
+    int64_t client_id = nextCorrelationId();
+    int64_t pub_id = nextCorrelationId();
+
+    ASSERT_EQ(addNetworkPublication(client_id, pub_id, CHANNEL_1_WITH_SESSION_ID_1, STREAM_ID_1, false), 0);
+
+    doWork();
+
+    aeron_send_channel_endpoint_t *endpoint = aeron_driver_conductor_find_send_channel_endpoint(
+        &m_conductor.m_conductor, CHANNEL_1_WITH_SESSION_ID_1);
+
+    ASSERT_NE(endpoint, (aeron_send_channel_endpoint_t *)NULL);
+
+    aeron_network_publication_t *publication = aeron_driver_conductor_find_network_publication(
+        &m_conductor.m_conductor, pub_id);
+
+    ASSERT_NE(publication, (aeron_network_publication_t *)NULL);
+
+    auto handler = [&](std::int32_t msgTypeId, AtomicBuffer& buffer, util::index_t offset, util::index_t length)
+    {
+        ASSERT_EQ(msgTypeId, AERON_RESPONSE_ON_PUBLICATION_READY);
+
+        const command::PublicationBuffersReadyFlyweight response(buffer, offset);
+
+        EXPECT_EQ(response.streamId(), STREAM_ID_1);
+        EXPECT_EQ(response.sessionId(), SESSION_ID_1);
+        EXPECT_EQ(response.correlationId(), pub_id);
+        EXPECT_GT(response.logFileName().length(), 0u);
+    };
+
+    EXPECT_EQ(readAllBroadcastsFromConductor(handler), 1u);
+}
+
+TEST_F(DriverConductorNetworkTest, shouldAddSecondNetworkPublicationWithSpecifiedSessionIdAndSameMtu)
+{
+    int64_t client_id1 = nextCorrelationId();
+    int64_t pub_id1 = nextCorrelationId();
+    int64_t client_id2 = nextCorrelationId();
+    int64_t pub_id2 = nextCorrelationId();
+
+    ASSERT_EQ(addNetworkPublication(client_id1, pub_id1, CHANNEL_1_WITH_SESSION_ID_1_MTU_1, STREAM_ID_1, false), 0);
+    doWork();
+
+    EXPECT_EQ(readAllBroadcastsFromConductor(null_handler), 1u);
+
+    ASSERT_EQ(addNetworkPublication(client_id2, pub_id2, CHANNEL_1_WITH_SESSION_ID_1_MTU_1, STREAM_ID_1, false), 0);
+
+    doWork();
+
+    auto handler = [&](std::int32_t msgTypeId, AtomicBuffer& buffer, util::index_t offset, util::index_t length)
+    {
+        ASSERT_EQ(msgTypeId, AERON_RESPONSE_ON_PUBLICATION_READY);
+    };
+
+    EXPECT_EQ(readAllBroadcastsFromConductor(handler), 1u);
+}
+
+
+TEST_F(DriverConductorNetworkTest, shouldFailToAddSecondNetworkPublicationWithSpecifiedSessionIdAndDifferentMtu)
+{
+    int64_t client_id1 = nextCorrelationId();
+    int64_t pub_id1 = nextCorrelationId();
+    int64_t client_id2 = nextCorrelationId();
+    int64_t pub_id2 = nextCorrelationId();
+
+    ASSERT_EQ(addNetworkPublication(client_id1, pub_id1, CHANNEL_1_WITH_SESSION_ID_1_MTU_1, STREAM_ID_1, false), 0);
+    doWork();
+
+    EXPECT_EQ(readAllBroadcastsFromConductor(null_handler), 1u);
+
+    ASSERT_EQ(addNetworkPublication(client_id2, pub_id2, CHANNEL_1_WITH_SESSION_ID_1_MTU_2, STREAM_ID_1, false), 0);
+
+    doWork();
+
+    auto handler = [&](std::int32_t msgTypeId, AtomicBuffer& buffer, util::index_t offset, util::index_t length)
+    {
+        ASSERT_EQ(msgTypeId, AERON_RESPONSE_ON_ERROR);
+
+        const command::ErrorResponseFlyweight response(buffer, offset);
+
+        EXPECT_EQ(response.offendingCommandCorrelationId(), pub_id2);
+    };
+
+    EXPECT_EQ(readAllBroadcastsFromConductor(handler), 1u);
+}
+
+TEST_F(DriverConductorNetworkTest, shouldAddSecondNetworkPublicationWithSpecifiedSessionIdAndSameTermLength)
+{
+    int64_t client_id1 = nextCorrelationId();
+    int64_t pub_id1 = nextCorrelationId();
+    int64_t client_id2 = nextCorrelationId();
+    int64_t pub_id2 = nextCorrelationId();
+
+    const char *channelUri = CHANNEL_1_WITH_SESSION_ID_1_TERM_LENGTH_1;
+    
+    ASSERT_EQ(addNetworkPublication(client_id1, pub_id1, channelUri, STREAM_ID_1, false), 0);
+    doWork();
+
+    EXPECT_EQ(readAllBroadcastsFromConductor(null_handler), 1u);
+
+    ASSERT_EQ(addNetworkPublication(client_id2, pub_id2, channelUri, STREAM_ID_1, false), 0);
+
+    doWork();
+
+    auto handler = [&](std::int32_t msgTypeId, AtomicBuffer& buffer, util::index_t offset, util::index_t length)
+    {
+        ASSERT_EQ(msgTypeId, AERON_RESPONSE_ON_PUBLICATION_READY);
+    };
+
+    EXPECT_EQ(readAllBroadcastsFromConductor(handler), 1u);
+}
+
+TEST_F(DriverConductorNetworkTest, shouldFailToAddSecondNetworkPublicationWithSpecifiedSessionIdAndDifferentTermLength)
+{
+    int64_t client_id1 = nextCorrelationId();
+    int64_t pub_id1 = nextCorrelationId();
+    int64_t client_id2 = nextCorrelationId();
+    int64_t pub_id2 = nextCorrelationId();
+
+    const char *channelUri1 = CHANNEL_1_WITH_SESSION_ID_1_TERM_LENGTH_1;
+    ASSERT_EQ(addNetworkPublication(client_id1, pub_id1, channelUri1, STREAM_ID_1, false), 0);
+    doWork();
+
+    EXPECT_EQ(readAllBroadcastsFromConductor(null_handler), 1u);
+
+    const char *channelUri2 = CHANNEL_1_WITH_SESSION_ID_1_TERM_LENGTH_2;
+    ASSERT_EQ(addNetworkPublication(client_id2, pub_id2, channelUri2, STREAM_ID_1, false), 0);
+
+    doWork();
+
+    auto handler = [&](std::int32_t msgTypeId, AtomicBuffer& buffer, util::index_t offset, util::index_t length)
+    {
+        ASSERT_EQ(msgTypeId, AERON_RESPONSE_ON_ERROR);
+
+        const command::ErrorResponseFlyweight response(buffer, offset);
+
+        EXPECT_EQ(response.offendingCommandCorrelationId(), pub_id2);
+    };
+
+    EXPECT_EQ(readAllBroadcastsFromConductor(handler), 1u);
+}
+
+TEST_F(DriverConductorNetworkTest, shouldBeAbleToAddAndRemoveSingleNetworkPublicationWithExplicitSessionId)
+{
+    int64_t client_id = nextCorrelationId();
+    int64_t pub_id = nextCorrelationId();
+    int64_t remove_correlation_id = nextCorrelationId();
+
+    ASSERT_EQ(addNetworkPublication(client_id, pub_id, CHANNEL_1_WITH_SESSION_ID_1, STREAM_ID_1, false), 0);
+    doWork();
+    EXPECT_EQ(aeron_driver_conductor_num_network_publications(&m_conductor.m_conductor), 1u);
+    EXPECT_EQ(readAllBroadcastsFromConductor(null_handler), 1u);
+
+    ASSERT_EQ(removePublication(client_id, remove_correlation_id, pub_id), 0);
+    doWork();
+    auto handler = [&](std::int32_t msgTypeId, AtomicBuffer& buffer, util::index_t offset, util::index_t length)
+    {
+        ASSERT_EQ(msgTypeId, AERON_RESPONSE_ON_OPERATION_SUCCESS);
+
+        const command::OperationSucceededFlyweight response(buffer, offset);
+
+        EXPECT_EQ(response.correlationId(), remove_correlation_id);
+    };
+
+    EXPECT_EQ(readAllBroadcastsFromConductor(handler), 1u);
+}
+
+TEST_F(DriverConductorNetworkTest, shouldBeAbleToAddSingleNetworkPublicationThatAvoidCollisionWithSpecifiedSessionId)
+{
+    int64_t client_id = nextCorrelationId();
+    int64_t pub_id = nextCorrelationId();
+    int32_t next_session_id = SESSION_ID_1;
+
+    m_conductor.manuallySetNextSessionId(next_session_id);
+
+    ASSERT_EQ(addNetworkPublication(client_id, pub_id, CHANNEL_1_WITH_SESSION_ID_1, STREAM_ID_1, true), 0);
+
+    doWork();
+    EXPECT_EQ(aeron_driver_conductor_num_network_publications(&m_conductor.m_conductor), 1u);
+    EXPECT_EQ(readAllBroadcastsFromConductor(null_handler), 1u);
+
+    ASSERT_EQ(addNetworkPublication(client_id, pub_id, CHANNEL_1, STREAM_ID_1, true), 0);
+    doWork();
+    EXPECT_EQ(aeron_driver_conductor_num_network_publications(&m_conductor.m_conductor), 2u);
+
+    auto handler = [&](std::int32_t msgTypeId, AtomicBuffer& buffer, util::index_t offset, util::index_t length)
+    {
+        ASSERT_EQ(msgTypeId, AERON_RESPONSE_ON_EXCLUSIVE_PUBLICATION_READY);
+
+        const command::PublicationBuffersReadyFlyweight response(buffer, offset);
+
+        EXPECT_EQ(response.streamId(), STREAM_ID_1);
+        EXPECT_NE(response.sessionId(), next_session_id);
+        EXPECT_EQ(response.correlationId(), pub_id);
+        EXPECT_GT(response.logFileName().length(), 0u);
+    };
+
+    EXPECT_EQ(readAllBroadcastsFromConductor(handler), 1u);
+}
+
+TEST_F(DriverConductorNetworkTest, shouldErrorOnDuplicateExclusivePublicationWithSameSessionId)
+{
+    int64_t client_id = nextCorrelationId();
+    int64_t pub_id_1 = nextCorrelationId();
+    int64_t pub_id_2 = nextCorrelationId();
+
+    ASSERT_EQ(addNetworkPublication(client_id, pub_id_1, CHANNEL_1_WITH_SESSION_ID_1, STREAM_ID_1, true), 0);
+    doWork();
+    EXPECT_EQ(aeron_driver_conductor_num_network_publications(&m_conductor.m_conductor), 1u);
+    EXPECT_EQ(readAllBroadcastsFromConductor(null_handler), 1u);
+    doWork();
+
+    ASSERT_EQ(addNetworkPublication(client_id, pub_id_2, CHANNEL_1_WITH_SESSION_ID_1, STREAM_ID_1, true), 0);
+    doWork();
+    auto handler = [&](std::int32_t msgTypeId, AtomicBuffer& buffer, util::index_t offset, util::index_t length)
+    {
+        ASSERT_EQ(msgTypeId, AERON_RESPONSE_ON_ERROR);
+
+        const command::ErrorResponseFlyweight response(buffer, offset);
+
+        EXPECT_EQ(response.offendingCommandCorrelationId(), pub_id_2);
+    };
+
+    EXPECT_EQ(readAllBroadcastsFromConductor(handler), 1u);
+}
+
+TEST_F(DriverConductorNetworkTest, shouldErrorOnDuplicateSharedPublicationWithDifferentSessionId)
+{
+    int64_t client_id = nextCorrelationId();
+    int64_t pub_id_1 = nextCorrelationId();
+    int64_t pub_id_2 = nextCorrelationId();
+
+    ASSERT_EQ(addNetworkPublication(client_id, pub_id_1, CHANNEL_1_WITH_SESSION_ID_1, STREAM_ID_1, false), 0);
+    doWork();
+    EXPECT_EQ(aeron_driver_conductor_num_network_publications(&m_conductor.m_conductor), 1u);
+    EXPECT_EQ(readAllBroadcastsFromConductor(null_handler), 1u);
+    doWork();
+
+    ASSERT_EQ(addNetworkPublication(client_id, pub_id_2, CHANNEL_1_WITH_SESSION_ID_2, STREAM_ID_1, false), 0);
+    doWork();
+    auto handler = [&](std::int32_t msgTypeId, AtomicBuffer& buffer, util::index_t offset, util::index_t length)
+    {
+        ASSERT_EQ(msgTypeId, AERON_RESPONSE_ON_ERROR);
+
+        const command::ErrorResponseFlyweight response(buffer, offset);
+
+        EXPECT_EQ(response.offendingCommandCorrelationId(), pub_id_2);
+    };
+
+    EXPECT_EQ(readAllBroadcastsFromConductor(handler), 1u);
+}
+
+TEST_F(DriverConductorNetworkTest, shouldErrorOnDuplicateSharedPublicationWithExclusivePublicationWithSameSessionId)
+{
+    int64_t client_id = nextCorrelationId();
+    int64_t pub_id_1 = nextCorrelationId();
+    int64_t pub_id_2 = nextCorrelationId();
+
+    ASSERT_EQ(addNetworkPublication(client_id, pub_id_1, CHANNEL_1_WITH_SESSION_ID_1, STREAM_ID_1, true), 0);
+    doWork();
+    EXPECT_EQ(aeron_driver_conductor_num_network_publications(&m_conductor.m_conductor), 1u);
+    EXPECT_EQ(readAllBroadcastsFromConductor(null_handler), 1u);
+    doWork();
+
+    ASSERT_EQ(addNetworkPublication(client_id, pub_id_2, CHANNEL_1_WITH_SESSION_ID_1, STREAM_ID_1, false), 0);
+    doWork();
+    auto handler = [&](std::int32_t msgTypeId, AtomicBuffer& buffer, util::index_t offset, util::index_t length)
+    {
+        ASSERT_EQ(msgTypeId, AERON_RESPONSE_ON_ERROR);
+
+        const command::ErrorResponseFlyweight response(buffer, offset);
+
+        EXPECT_EQ(response.offendingCommandCorrelationId(), pub_id_2);
+    };
+
+    EXPECT_EQ(readAllBroadcastsFromConductor(handler), 1u);
+}
+
+TEST_F(DriverConductorNetworkTest, shouldErrorOnDuplicateExclusivePublicationWithSharedPublicationWithSameSessionId)
+{
+    int64_t client_id = nextCorrelationId();
+    int64_t pub_id_1 = nextCorrelationId();
+    int64_t pub_id_2 = nextCorrelationId();
+
+    ASSERT_EQ(addNetworkPublication(client_id, pub_id_1, CHANNEL_1_WITH_SESSION_ID_1, STREAM_ID_1, false), 0);
+    doWork();
+    EXPECT_EQ(aeron_driver_conductor_num_network_publications(&m_conductor.m_conductor), 1u);
+    EXPECT_EQ(readAllBroadcastsFromConductor(null_handler), 1u);
+    doWork();
+
+    ASSERT_EQ(addNetworkPublication(client_id, pub_id_2, CHANNEL_1_WITH_SESSION_ID_1, STREAM_ID_1, true), 0);
+    doWork();
+    auto handler = [&](std::int32_t msgTypeId, AtomicBuffer& buffer, util::index_t offset, util::index_t length)
+    {
+        ASSERT_EQ(msgTypeId, AERON_RESPONSE_ON_ERROR);
+
+        const command::ErrorResponseFlyweight response(buffer, offset);
+
+        EXPECT_EQ(response.offendingCommandCorrelationId(), pub_id_2);
+    };
+
+    EXPECT_EQ(readAllBroadcastsFromConductor(handler), 1u);
+}
+
 TEST_F(DriverConductorNetworkTest, shouldBeAbleToAddMultipleNetworkSubscriptionsWithSameChannelSameStreamId)
 {
     int64_t client_id = nextCorrelationId();
@@ -478,7 +784,7 @@ TEST_F(DriverConductorNetworkTest, shouldBeAbleToTimeoutNetworkPublication)
     EXPECT_EQ(aeron_driver_conductor_num_network_publications(&m_conductor.m_conductor), 1u);
     EXPECT_EQ(readAllBroadcastsFromConductor(null_handler), 1u);
 
-    doWorkUntilTimeNs(
+    doWorkForNs(
         m_context.m_context->publication_linger_timeout_ns + (m_context.m_context->client_liveness_timeout_ns * 2));
     EXPECT_EQ(aeron_driver_conductor_num_clients(&m_conductor.m_conductor), 0u);
     EXPECT_EQ(aeron_driver_conductor_num_network_publications(&m_conductor.m_conductor), 0u);
@@ -509,7 +815,7 @@ TEST_F(DriverConductorNetworkTest, shouldBeAbleToNotTimeoutNetworkPublicationOnK
     int64_t timeout =
         m_context.m_context->publication_linger_timeout_ns + (m_context.m_context->client_liveness_timeout_ns * 2);
 
-    doWorkUntilTimeNs(
+    doWorkForNs(
         timeout,
         100,
         [&]()
@@ -532,7 +838,7 @@ TEST_F(DriverConductorNetworkTest, shouldBeAbleToTimeoutNetworkSubscription)
     EXPECT_EQ(aeron_driver_conductor_num_network_subscriptions(&m_conductor.m_conductor), 1u);
     EXPECT_EQ(readAllBroadcastsFromConductor(null_handler), 1u);
 
-    doWorkUntilTimeNs(
+    doWorkForNs(
         m_context.m_context->publication_linger_timeout_ns + (m_context.m_context->client_liveness_timeout_ns * 2));
     EXPECT_EQ(aeron_driver_conductor_num_clients(&m_conductor.m_conductor), 0u);
     EXPECT_EQ(aeron_driver_conductor_num_network_subscriptions(&m_conductor.m_conductor), 0u);
@@ -563,7 +869,7 @@ TEST_F(DriverConductorNetworkTest, shouldBeAbleToNotTimeoutNetworkSubscriptionOn
     int64_t timeout =
         m_context.m_context->publication_linger_timeout_ns + (m_context.m_context->client_liveness_timeout_ns * 2);
 
-    doWorkUntilTimeNs(
+    doWorkForNs(
         timeout,
         100,
         [&]()
@@ -591,7 +897,7 @@ TEST_F(DriverConductorNetworkTest, shouldBeAbleToTimeoutSendChannelEndpointWithC
     int64_t timeout =
         m_context.m_context->publication_linger_timeout_ns + (m_context.m_context->client_liveness_timeout_ns * 2);
 
-    doWorkUntilTimeNs(
+    doWorkForNs(
         timeout,
         100,
         [&]()
@@ -619,7 +925,7 @@ TEST_F(DriverConductorNetworkTest, shouldBeAbleToTimeoutReceiveChannelEndpointWi
 
     int64_t timeout = m_context.m_context->client_liveness_timeout_ns;
 
-    doWorkUntilTimeNs(
+    doWorkForNs(
         timeout,
         100,
         [&]()
@@ -748,9 +1054,10 @@ TEST_F(DriverConductorNetworkTest, shouldTimeoutImageAndSendUnavailableImageWhen
 
     int64_t image_correlation_id = image->conductor_fields.managed_resource.registration_id;
 
-    int64_t timeout = m_context.m_context->image_liveness_timeout_ns + (m_context.m_context->client_liveness_timeout_ns * 2);
+    int64_t timeout = m_context.m_context->image_liveness_timeout_ns +
+        (m_context.m_context->client_liveness_timeout_ns * 2) + (m_context.m_context->timer_interval_ns * 3);
 
-    doWorkUntilTimeNs(
+    doWorkForNs(
         timeout,
         100,
         [&]()
@@ -789,9 +1096,10 @@ TEST_F(DriverConductorNetworkTest, shouldRemoveSubscriptionAfterImageTimeout)
 
     createPublicationImage(endpoint, STREAM_ID_1, 1000);
 
-    int64_t timeout = m_context.m_context->image_liveness_timeout_ns + (m_context.m_context->client_liveness_timeout_ns * 2);
+    int64_t timeout = m_context.m_context->image_liveness_timeout_ns +
+        (m_context.m_context->client_liveness_timeout_ns * 2) + (m_context.m_context->timer_interval_ns * 3);
 
-    doWorkUntilTimeNs(
+    doWorkForNs(
         timeout,
         100,
         [&]()
@@ -946,7 +1254,7 @@ TEST_F(DriverConductorNetworkTest, shouldTimeoutImageAndSendUnavailableImageWhen
     int64_t image_correlation_id = aeron_publication_image_registration_id(image);
     int64_t timeout = m_context.m_context->image_liveness_timeout_ns + (m_context.m_context->client_liveness_timeout_ns * 2);
 
-    doWorkUntilTimeNs(
+    doWorkForNs(
         timeout,
         100,
         [&]()
@@ -1032,7 +1340,7 @@ TEST_F(DriverConductorNetworkTest, shouldUseExistingChannelEndpointOnAddPublicat
     EXPECT_EQ(aeron_driver_conductor_num_network_publications(&m_conductor.m_conductor), 1u);
     EXPECT_EQ(readAllBroadcastsFromConductor(null_handler), 2u);
 
-    doWorkUntilTimeNs(
+    doWorkForNs(
         m_context.m_context->publication_linger_timeout_ns + (m_context.m_context->client_liveness_timeout_ns * 2));
     EXPECT_EQ(aeron_driver_conductor_num_clients(&m_conductor.m_conductor), 0u);
     EXPECT_EQ(aeron_driver_conductor_num_network_publications(&m_conductor.m_conductor), 0u);
@@ -1052,7 +1360,7 @@ TEST_F(DriverConductorNetworkTest, shouldUseExistingChannelEndpointOnAddPublicat
     EXPECT_EQ(aeron_driver_conductor_num_network_publications(&m_conductor.m_conductor), 2u);
     EXPECT_EQ(readAllBroadcastsFromConductor(null_handler), 2u);
 
-    doWorkUntilTimeNs(
+    doWorkForNs(
         m_context.m_context->publication_linger_timeout_ns + (m_context.m_context->client_liveness_timeout_ns * 2));
     EXPECT_EQ(aeron_driver_conductor_num_clients(&m_conductor.m_conductor), 0u);
     EXPECT_EQ(aeron_driver_conductor_num_network_publications(&m_conductor.m_conductor), 0u);
@@ -1072,18 +1380,19 @@ TEST_F(DriverConductorNetworkTest, shouldUseExistingChannelEndpointOnAddSubscrip
     EXPECT_EQ(aeron_driver_conductor_num_network_subscriptions(&m_conductor.m_conductor), 2u);
     EXPECT_EQ(readAllBroadcastsFromConductor(null_handler), 2u);
 
-    doWorkUntilTimeNs(
+    doWorkForNs(
         m_context.m_context->publication_linger_timeout_ns + (m_context.m_context->client_liveness_timeout_ns * 2));
     EXPECT_EQ(aeron_driver_conductor_num_clients(&m_conductor.m_conductor), 0u);
     EXPECT_EQ(aeron_driver_conductor_num_network_subscriptions(&m_conductor.m_conductor), 0u);
     EXPECT_EQ(aeron_driver_conductor_num_receive_channel_endpoints(&m_conductor.m_conductor), 0u);
 }
 
-TEST_F(DriverConductorNetworkTest, shouldBeAbleToAddDestinationToManualMdcPublication)
+TEST_F(DriverConductorNetworkTest, shouldBeAbleToAddAndRemoveDestinationToManualMdcPublication)
 {
     int64_t client_id = nextCorrelationId();
     int64_t pub_id = nextCorrelationId();
     int64_t add_destination_id = nextCorrelationId();
+    int64_t remove_destination_id = nextCorrelationId();
 
     ASSERT_EQ(addNetworkPublication(client_id, pub_id, CHANNEL_MDC_MANUAL, STREAM_ID_1, false), 0);
     doWork();
@@ -1092,13 +1401,141 @@ TEST_F(DriverConductorNetworkTest, shouldBeAbleToAddDestinationToManualMdcPublic
 
     ASSERT_EQ(addDestination(client_id, add_destination_id, pub_id, CHANNEL_1), 0);
     doWork();
-    auto handler = [&](std::int32_t msgTypeId, AtomicBuffer& buffer, util::index_t offset, util::index_t length)
+    auto add_handler = [&](std::int32_t msgTypeId, AtomicBuffer& buffer, util::index_t offset, util::index_t length)
     {
         ASSERT_EQ(msgTypeId, AERON_RESPONSE_ON_OPERATION_SUCCESS);
 
         const command::OperationSucceededFlyweight response(buffer, offset);
 
         EXPECT_EQ(response.correlationId(), add_destination_id);
+    };
+
+    EXPECT_EQ(readAllBroadcastsFromConductor(add_handler), 1u);
+
+    ASSERT_EQ(removeDestination(client_id, remove_destination_id, pub_id, CHANNEL_1), 0);
+    doWork();
+    auto remove_handler = [&](std::int32_t msgTypeId, AtomicBuffer& buffer, util::index_t offset, util::index_t length)
+    {
+        ASSERT_EQ(msgTypeId, AERON_RESPONSE_ON_OPERATION_SUCCESS);
+
+        const command::OperationSucceededFlyweight response(buffer, offset);
+
+        EXPECT_EQ(response.correlationId(), remove_destination_id);
+    };
+
+    EXPECT_EQ(readAllBroadcastsFromConductor(remove_handler), 1u);
+}
+
+TEST_F(DriverConductorNetworkTest, shouldNotAddDynamicSessionIdInReservedRange)
+{
+    m_conductor.manuallySetNextSessionId(m_conductor.m_conductor.publication_reserved_session_id_low);
+
+    int64_t client_id = nextCorrelationId();
+    int64_t pub_id = nextCorrelationId();
+
+    ASSERT_EQ(addNetworkPublication(client_id, pub_id, CHANNEL_1, STREAM_ID_1, false), 0);
+
+    doWork();
+
+    auto handler = [&](std::int32_t msgTypeId, AtomicBuffer& buffer, util::index_t offset, util::index_t length)
+    {
+        ASSERT_EQ(msgTypeId, AERON_RESPONSE_ON_PUBLICATION_READY);
+        const command::PublicationBuffersReadyFlyweight response(buffer, offset);
+
+        EXPECT_TRUE(
+            response.sessionId() < m_conductor.m_conductor.publication_reserved_session_id_low ||
+            m_conductor.m_conductor.publication_reserved_session_id_high < response.sessionId())
+                << "Session Id [" << response.sessionId() << "] should not be in the range: "
+                << m_conductor.m_conductor.publication_reserved_session_id_low
+                << " to "
+                << m_conductor.m_conductor.publication_reserved_session_id_high;
+
+    };
+
+    EXPECT_EQ(readAllBroadcastsFromConductor(handler), 1u);
+}
+
+TEST_F(DriverConductorNetworkTest, shouldNotAccidentallyBumpIntoExistingSessionId)
+{
+    int next_session_id = SESSION_ID_3;
+    m_conductor.manuallySetNextSessionId(next_session_id);
+
+    int64_t client_id = nextCorrelationId();
+    int64_t pub_id_1 = nextCorrelationId();
+    int64_t pub_id_2 = nextCorrelationId();
+    int64_t pub_id_3 = nextCorrelationId();
+    int64_t pub_id_4 = nextCorrelationId();
+
+    ASSERT_EQ(addNetworkPublication(client_id, pub_id_1, CHANNEL_1_WITH_SESSION_ID_3, STREAM_ID_1, true), 0);
+    ASSERT_EQ(addNetworkPublication(client_id, pub_id_2, CHANNEL_1_WITH_SESSION_ID_4, STREAM_ID_1, true), 0);
+    ASSERT_EQ(addNetworkPublication(client_id, pub_id_3, CHANNEL_1_WITH_SESSION_ID_5, STREAM_ID_1, true), 0);
+
+    doWork();
+
+    EXPECT_EQ(readAllBroadcastsFromConductor(null_handler), 3u);
+
+    ASSERT_EQ(addNetworkPublication(client_id, pub_id_4, CHANNEL_1, STREAM_ID_1, true), 0);
+
+    doWork();
+
+    auto handler = [&](std::int32_t msgTypeId, AtomicBuffer& buffer, util::index_t offset, util::index_t length)
+    {
+        ASSERT_EQ(msgTypeId, AERON_RESPONSE_ON_EXCLUSIVE_PUBLICATION_READY);
+        const command::PublicationBuffersReadyFlyweight response(buffer, offset);
+
+        EXPECT_EQ(response.correlationId(), pub_id_4);
+        EXPECT_NE(response.sessionId(), SESSION_ID_3);
+        EXPECT_NE(response.sessionId(), SESSION_ID_4);
+        EXPECT_NE(response.sessionId(), SESSION_ID_5);
+    };
+
+    EXPECT_EQ(readAllBroadcastsFromConductor(handler), 1u);
+}
+
+TEST_F(DriverConductorNetworkTest, shouldNotAccidentallyBumpIntoExistingSessionIdWithSessionIdWrapping)
+{
+    int32_t session_id_1 = INT32_MAX - 1;
+    int32_t session_id_2 = session_id_1 + 1;
+    int32_t session_id_3 = INT32_MIN;
+    int32_t session_id_4 = session_id_3 + 1;
+
+    std::string channel1StreamId1(std::string(CHANNEL_1) + "|session-id=" + std::to_string(session_id_1));
+    std::string channel1StreamId2(std::string(CHANNEL_1) + "|session-id=" + std::to_string(session_id_2));
+    std::string channel1StreamId3(std::string(CHANNEL_1) + "|session-id=" + std::to_string(session_id_3));
+    std::string channel1StreamId4(std::string(CHANNEL_1) + "|session-id=" + std::to_string(session_id_4));
+
+    m_conductor.manuallySetNextSessionId(session_id_1);
+
+    int64_t client_id = nextCorrelationId();
+    int64_t pub_id_1 = nextCorrelationId();
+    int64_t pub_id_2 = nextCorrelationId();
+    int64_t pub_id_3 = nextCorrelationId();
+    int64_t pub_id_4 = nextCorrelationId();
+    int64_t pub_id_5 = nextCorrelationId();
+
+    ASSERT_EQ(addNetworkPublication(client_id, pub_id_1, channel1StreamId1.c_str(), STREAM_ID_1, true), 0);
+    ASSERT_EQ(addNetworkPublication(client_id, pub_id_2, channel1StreamId2.c_str(), STREAM_ID_1, true), 0);
+    ASSERT_EQ(addNetworkPublication(client_id, pub_id_3, channel1StreamId3.c_str(), STREAM_ID_1, true), 0);
+    ASSERT_EQ(addNetworkPublication(client_id, pub_id_4, channel1StreamId4.c_str(), STREAM_ID_1, true), 0);
+
+    doWork();
+
+    EXPECT_EQ(readAllBroadcastsFromConductor(null_handler), 4u);
+
+    ASSERT_EQ(addNetworkPublication(client_id, pub_id_5, CHANNEL_1, STREAM_ID_1, true), 0);
+
+    doWork();
+
+    auto handler = [&](std::int32_t msgTypeId, AtomicBuffer& buffer, util::index_t offset, util::index_t length)
+    {
+        ASSERT_EQ(msgTypeId, AERON_RESPONSE_ON_EXCLUSIVE_PUBLICATION_READY);
+        const command::PublicationBuffersReadyFlyweight response(buffer, offset);
+
+        EXPECT_EQ(response.correlationId(), pub_id_5);
+        EXPECT_NE(response.sessionId(), session_id_1);
+        EXPECT_NE(response.sessionId(), session_id_2);
+        EXPECT_NE(response.sessionId(), session_id_3);
+        EXPECT_NE(response.sessionId(), session_id_4);
     };
 
     EXPECT_EQ(readAllBroadcastsFromConductor(handler), 1u);

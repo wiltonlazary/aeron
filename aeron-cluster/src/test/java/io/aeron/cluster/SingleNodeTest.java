@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,44 +16,47 @@
 package io.aeron.cluster;
 
 import io.aeron.cluster.service.Cluster;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
-import static org.hamcrest.core.Is.is;
-import static org.junit.Assert.assertThat;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 public class SingleNodeTest
 {
-    @Test(timeout = 10_000L)
-    public void shouldStartCluster() throws Exception
+    @Test
+    @Timeout(20)
+    public void shouldStartCluster()
     {
         try (TestCluster cluster = TestCluster.startSingleNodeStaticCluster())
         {
             final TestNode leader = cluster.awaitLeader();
 
-            assertThat(leader.index(), is(0));
-            assertThat(leader.role(), is(Cluster.Role.LEADER));
+            assertEquals(0, leader.index());
+            assertEquals(Cluster.Role.LEADER, leader.role());
         }
     }
 
-    @Test(timeout = 10_000L)
-    public void shouldSendMessagesToCluster() throws Exception
+    @Test
+    @Timeout(20)
+    public void shouldSendMessagesToCluster()
     {
         try (TestCluster cluster = TestCluster.startSingleNodeStaticCluster())
         {
             final TestNode leader = cluster.awaitLeader();
 
-            assertThat(leader.index(), is(0));
-            assertThat(leader.role(), is(Cluster.Role.LEADER));
+            assertEquals(0, leader.index());
+            assertEquals(Cluster.Role.LEADER, leader.role());
 
             cluster.connectClient();
             cluster.sendMessages(10);
-            cluster.awaitResponses(10);
-            cluster.awaitMessageCountForService(leader, 10);
+            cluster.awaitResponseMessageCount(10);
+            cluster.awaitServiceMessageCount(leader, 10);
         }
     }
 
-    @Test(timeout = 20_000L)
-    public void shouldReplayLog() throws Exception
+    @Test
+    @Timeout(20)
+    public void shouldReplayLog()
     {
         try (TestCluster cluster = TestCluster.startSingleNodeStaticCluster())
         {
@@ -61,14 +64,14 @@ public class SingleNodeTest
 
             cluster.connectClient();
             cluster.sendMessages(10);
-            cluster.awaitResponses(10);
-            cluster.awaitMessageCountForService(leader, 10);
+            cluster.awaitResponseMessageCount(10);
+            cluster.awaitServiceMessageCount(leader, 10);
 
             cluster.stopNode(leader);
 
             cluster.startStaticNode(0, false);
             final TestNode newLeader = cluster.awaitLeader();
-            cluster.awaitMessageCountForService(newLeader, 10);
+            cluster.awaitServiceMessageCount(newLeader, 10);
         }
     }
 }

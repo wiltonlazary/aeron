@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -37,12 +37,11 @@ public:
         std::int64_t maxSpins = 10,
         std::int64_t maxYields = 20,
         std::chrono::duration<long, std::nano> minParkPeriodNs = std::chrono::duration<long, std::nano>(1000),
-        std::chrono::duration<long, std::nano> maxParkPeriodNs = std::chrono::duration<long, std::milli>(1))
-        :
+        std::chrono::duration<long, std::nano> maxParkPeriodNs = std::chrono::duration<long, std::milli>(1)) :
         m_prePad(),
         m_maxSpins(maxSpins),
         m_maxYields(maxYields),
-        m_minParkPeroidNs(minParkPeriodNs),
+        m_minParkPeriodNs(minParkPeriodNs),
         m_maxParkPeriodNs(maxParkPeriodNs),
         m_spins(0),
         m_yields(0),
@@ -68,7 +67,7 @@ public:
     {
         m_spins = 0;
         m_yields = 0;
-        m_parkPeriodNs = m_minParkPeroidNs;
+        m_parkPeriodNs = m_minParkPeriodNs;
         m_state = BACKOFF_STATE_NOT_IDLE;
     }
 
@@ -94,7 +93,7 @@ public:
                 if (++m_yields > m_maxYields)
                 {
                     m_state = BACKOFF_STATE_PARKING;
-                    m_parkPeriodNs = m_minParkPeroidNs;
+                    m_parkPeriodNs = m_minParkPeriodNs;
                 }
                 else
                 {
@@ -111,16 +110,16 @@ public:
     }
 
 protected:
-    std::uint8_t m_prePad[aeron::util::BitUtil::CACHE_LINE_LENGTH * 2];
-    const std::int64_t m_maxSpins;
-    const std::int64_t m_maxYields;
-    const std::chrono::duration<long, std::nano> m_minParkPeroidNs;
-    const std::chrono::duration<long, std::nano> m_maxParkPeriodNs;
+    std::uint8_t m_prePad[aeron::util::BitUtil::CACHE_LINE_LENGTH];
+    std::int64_t m_maxSpins;
+    std::int64_t m_maxYields;
+    std::chrono::duration<long, std::nano> m_minParkPeriodNs;
+    std::chrono::duration<long, std::nano> m_maxParkPeriodNs;
     std::int64_t m_spins;
     std::int64_t m_yields;
     std::chrono::duration<long, std::nano> m_parkPeriodNs;
     std::uint8_t m_state;
-    std::uint8_t m_postPad[aeron::util::BitUtil::CACHE_LINE_LENGTH * 2];
+    std::uint8_t m_postPad[aeron::util::BitUtil::CACHE_LINE_LENGTH];
 };
 
 }}

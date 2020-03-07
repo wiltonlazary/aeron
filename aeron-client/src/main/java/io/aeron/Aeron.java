@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2019 Real Logic Ltd.
+ * Copyright 2014-2020 Real Logic Limited.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,9 +20,7 @@ import io.aeron.exceptions.ConcurrentConcludeException;
 import io.aeron.exceptions.ConfigurationException;
 import io.aeron.exceptions.DriverTimeoutException;
 import io.aeron.logbuffer.FragmentHandler;
-import org.agrona.DirectBuffer;
-import org.agrona.ErrorHandler;
-import org.agrona.IoUtil;
+import org.agrona.*;
 import org.agrona.concurrent.*;
 import org.agrona.concurrent.broadcast.BroadcastReceiver;
 import org.agrona.concurrent.broadcast.CopyBroadcastReceiver;
@@ -80,22 +78,34 @@ public class Aeron implements AutoCloseable
 
     Aeron(final Context ctx)
     {
-        ctx.conclude();
-
-        this.ctx = ctx;
-        clientId = ctx.clientId();
-        commandBuffer = ctx.toDriverBuffer();
-        conductor = new ClientConductor(ctx, this);
-
-        if (ctx.useConductorAgentInvoker())
+        try
         {
-            conductorInvoker = new AgentInvoker(ctx.errorHandler(), null, conductor);
-            conductorRunner = null;
+            ctx.conclude();
+
+            this.ctx = ctx;
+            clientId = ctx.clientId();
+            commandBuffer = ctx.toDriverBuffer();
+            conductor = new ClientConductor(ctx, this);
+
+            if (ctx.useConductorAgentInvoker())
+            {
+                conductorInvoker = new AgentInvoker(ctx.errorHandler(), null, conductor);
+                conductorRunner = null;
+            }
+            else
+            {
+                conductorInvoker = null;
+                conductorRunner = new AgentRunner(ctx.idleStrategy(), ctx.errorHandler(), null, conductor);
+            }
         }
-        else
+        catch (final ConcurrentConcludeException ex)
         {
-            conductorInvoker = null;
-            conductorRunner = new AgentRunner(ctx.idleStrategy(), ctx.errorHandler(), null, conductor);
+            throw ex;
+        }
+        catch (final Throwable ex)
+        {
+            CloseHelper.quietClose(ctx::close);
+            throw ex;
         }
     }
 
@@ -153,7 +163,7 @@ public class Aeron implements AutoCloseable
     /**
      * Print out the values from {@link #countersReader()} which can be useful for debugging.
      *
-     *  @param out to where the counters get printed.
+     * @param out to where the counters get printed.
      */
     public void printCounters(final PrintStream out)
     {
@@ -225,13 +235,14 @@ public class Aeron implements AutoCloseable
     {
         if (IS_CLOSED_UPDATER.compareAndSet(this, 0, 1))
         {
+            final ErrorHandler errorHandler = ctx.errorHandler();
             if (null != conductorRunner)
             {
-                conductorRunner.close();
+                CloseHelper.close(errorHandler, conductorRunner);
             }
             else
             {
-                conductorInvoker.close();
+                CloseHelper.close(errorHandler, conductorInvoker);
             }
         }
     }
@@ -521,7 +532,11 @@ public class Aeron implements AutoCloseable
         public static final ErrorHandler DEFAULT_ERROR_HANDLER =
             (throwable) ->
             {
-                throwable.printStackTrace();
+                synchronized (System.err)
+                {
+                    System.err.println(System.currentTimeMillis() + " Exception:");
+                    throwable.printStackTrace(System.err);
+                }
                 if (throwable instanceof DriverTimeoutException)
                 {
                     System.err.printf(
@@ -643,12 +658,12 @@ public class Aeron implements AutoCloseable
 
             if (null == epochClock)
             {
-                epochClock = new SystemEpochClock();
+                epochClock = SystemEpochClock.INSTANCE;
             }
 
             if (null == nanoClock)
             {
-                nanoClock = new SystemNanoClock();
+                nanoClock = SystemNanoClock.INSTANCE;
             }
 
             if (null == idleStrategy)
@@ -1123,7 +1138,7 @@ public class Aeron implements AutoCloseable
 
         /**
          * Set a {@link Runnable} that is called when the client is closed by timeout or normal means.
-         *
+         * <p>
          * It is not safe to call any API functions from any threads after this hook is called. In addition any
          * in flight calls may still cause faults. It is thus recommended to treat this as a hard error and
          * terminate the process in this hook as soon as possible.
@@ -1209,7 +1224,7 @@ public class Aeron implements AutoCloseable
          */
         public long interServiceTimeoutNs()
         {
-            return interServiceTimeoutNs;
+            return CommonContext.checkDebugTimeout(interServiceTimeoutNs, TimeUnit.NANOSECONDS);
         }
 
         /**
@@ -1306,9 +1321,8 @@ public class Aeron implements AutoCloseable
          */
         public void close()
         {
-            final MappedByteBuffer cncByteBuffer = this.cncByteBuffer;
-            this.cncByteBuffer = null;
             IoUtil.unmap(cncByteBuffer);
+            this.cncByteBuffer = null;
             super.close();
         }
 
@@ -1367,9 +1381,10 @@ public class Aeron implements AutoCloseable
                         throw new DriverTimeoutException("no driver heartbeat detected");
                     }
 
-                    IoUtil.unmap(cncByteBuffer);
-                    cncByteBuffer = null;
+                    final MappedByteBuffer cncByteBuffer = this.cncByteBuffer;
+                    this.cncByteBuffer = null;
                     cncMetaDataBuffer = null;
+                    IoUtil.unmap(cncByteBuffer);
 
                     sleep(100);
                     continue;
@@ -1409,9 +1424,9 @@ public class Aeron implements AutoCloseable
         {
             Thread.sleep(durationMs);
         }
-        catch (final InterruptedException ignore)
+        catch (final InterruptedException ex)
         {
-            Thread.currentThread().interrupt();
+            LangUtil.rethrowUnchecked(ex);
         }
     }
 }
