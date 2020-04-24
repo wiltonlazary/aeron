@@ -16,20 +16,24 @@
 package io.aeron.cluster;
 
 import io.aeron.Counter;
+import io.aeron.cluster.client.AeronCluster;
 import io.aeron.exceptions.AeronException;
 import io.aeron.test.Tests;
-import org.agrona.ErrorHandler;
-import org.agrona.LangUtil;
-import org.agrona.SystemUtil;
-import org.agrona.concurrent.AgentTerminationException;
-import org.agrona.concurrent.status.CountersReader;
+import org.agrona.*;
+import org.agrona.concurrent.*;
 
-import java.io.PrintStream;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.LockSupport;
 
 class ClusterTests
 {
+    static final String HELLO_WORLD_MSG = "Hello World!";
+    static final String NO_OP_MSG = "No op!           ";
+    static final String REGISTER_TIMER_MSG = "Register a timer!";
+    static final String ECHO_IPC_INGRESS_MSG = "Echo as IPC ingress";
+    static final String POISON_MSG = "You should never get this message!";
+
     private static final AtomicReference<Throwable> CLUSTER_ERROR = new AtomicReference<>();
 
     public static final Runnable TERMINATION_HOOK =
@@ -71,15 +75,12 @@ class ClusterTests
                     }
                 }
 
-                final Throwable error = CLUSTER_ERROR.get();
-                if (null == error)
+                if (ex instanceof AgentTerminationException)
                 {
-                    CLUSTER_ERROR.set(ex);
+                    return;
                 }
-                else
-                {
-                    error.addSuppressed(ex);
-                }
+
+                addError(ex);
 
                 System.err.println("\n*** Error in node " + nodeId + " followed by system thread dump ***\n\n");
                 ex.printStackTrace();
@@ -89,14 +90,17 @@ class ClusterTests
             };
     }
 
-    public static void printCounters(final CountersReader countersReader, final PrintStream out)
+    public static void addError(final Throwable ex)
     {
-        countersReader.forEach(
-            (counterId, typeId, keyBuffer, label) ->
-            {
-                final long value = countersReader.getCounterValue(counterId);
-                out.format("%3d: %,20d - %s%n", counterId, value, label);
-            });
+        final Throwable error = CLUSTER_ERROR.get();
+        if (null == error)
+        {
+            CLUSTER_ERROR.set(ex);
+        }
+        else
+        {
+            error.addSuppressed(ex);
+        }
     }
 
     public static void failOnClusterError()
@@ -115,5 +119,32 @@ class ClusterTests
             Thread.yield();
             Tests.checkInterruptStatus();
         }
+    }
+
+    public static Thread startMessageThread(final TestCluster cluster, final long intervalNs)
+    {
+        final Thread thread = new Thread(
+            () ->
+            {
+                final IdleStrategy idleStrategy = YieldingIdleStrategy.INSTANCE;
+                final AeronCluster client = cluster.client();
+                final ExpandableArrayBuffer msgBuffer = cluster.msgBuffer();
+                msgBuffer.putStringWithoutLengthAscii(0, HELLO_WORLD_MSG);
+
+                while (!Thread.interrupted())
+                {
+                    if (client.offer(msgBuffer, 0, HELLO_WORLD_MSG.length()) < 0)
+                    {
+                        LockSupport.parkNanos(intervalNs);
+                    }
+
+                    idleStrategy.idle(client.pollEgress());
+                }
+            });
+
+        thread.setDaemon(true);
+        thread.setName("message-thread");
+
+        return thread;
     }
 }

@@ -37,6 +37,7 @@ option(SANITISE_BUILD "Enable sanitise options" OFF)
 option(COVERAGE_BUILD "Enable code coverage" OFF)
 option(AERON_TESTS "Enable tests" ${STANDALONE_BUILD})
 option(AERON_SYSTEM_TESTS "Enable system tests" ${STANDALONE_BUILD})
+option(AERON_SLOW_SYSTEM_TESTS "Enable slow system tests" OFF)
 option(AERON_BUILD_SAMPLES "Enable building the sample projects" ${STANDALONE_BUILD})
 option(LINK_SAMPLES_CLIENT_SHARED "Enable shared linking for sample projects" OFF)
 option(AERON_BUILD_DOCUMENTATION "Build Aeron documentation" ${STANDALONE_BUILD})
@@ -229,6 +230,8 @@ endif ()
 
 set(AERON_CLIENT_SOURCE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/aeron-client/src/main/cpp")
 
+set(AERON_C_CLIENT_SOURCE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/aeron-client/src/main/c")
+
 set(AERON_DRIVER_SOURCE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/aeron-driver/src/main/c")
 
 set(AERON_ARCHIVE_SOURCE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/aeron-archive/src/main/cpp")
@@ -236,6 +239,7 @@ set(AERON_ARCHIVE_SOURCE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/aeron-archive/src/mai
 if (AERON_TESTS)
     set(AERON_CLIENT_TEST_PATH "${CMAKE_CURRENT_SOURCE_DIR}/aeron-client/src/test/cpp")
     set(AERON_DRIVER_TEST_PATH "${CMAKE_CURRENT_SOURCE_DIR}/aeron-driver/src/test/c")
+    set(AERON_C_CLIENT_TEST_PATH "${CMAKE_CURRENT_SOURCE_DIR}/aeron-client/src/test/c")
     set(AERON_ARCHIVE_TEST_PATH "${CMAKE_CURRENT_SOURCE_DIR}/aeron-archive/src/test/cpp")
     set(AERON_SYSTEM_TEST_PATH "${CMAKE_CURRENT_SOURCE_DIR}/aeron-system-tests")
 
@@ -253,9 +257,12 @@ endif ()
 
 add_definitions(-D_FILE_OFFSET_BITS=64)
 
+add_subdirectory(${AERON_C_CLIENT_SOURCE_PATH})
+
 add_subdirectory(${AERON_CLIENT_SOURCE_PATH})
 if (AERON_TESTS)
     add_subdirectory(${AERON_CLIENT_TEST_PATH})
+    add_subdirectory(${AERON_C_CLIENT_TEST_PATH})
 endif ()
 if (AERON_BUILD_SAMPLES)
     add_subdirectory(${AERON_SAMPLES_PATH})
@@ -265,8 +272,6 @@ if (BUILD_AERON_DRIVER)
     add_subdirectory(${AERON_DRIVER_SOURCE_PATH})
     if (AERON_TESTS)
         add_subdirectory(${AERON_DRIVER_TEST_PATH})
-    endif ()
-    if (AERON_SYSTEM_TESTS)
         add_subdirectory(${AERON_SYSTEM_TEST_PATH})
     endif ()
 endif (BUILD_AERON_DRIVER)
@@ -277,21 +282,21 @@ if (BUILD_AERON_ARCHIVE_API)
     set(ARCHIVE_CODEC_WORKING_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
 
     add_subdirectory(${AERON_ARCHIVE_SOURCE_PATH})
+    set(AERON_ALL_JAR "${CMAKE_CURRENT_SOURCE_DIR}/aeron-all/build/libs/aeron-all-${AERON_VERSION_TXT}.jar")
+
+    file(GLOB_RECURSE AERON_ALL_SOURCES
+        "${CMAKE_CURRENT_SOURCE_DIR}}/aeron-archive/src/main/java/*.java")
+
+    add_custom_command(OUTPUT ${AERON_ALL_JAR}
+        COMMAND ./gradlew :aeron-all:clean :aeron-all:assemble --no-parallel -x javadoc
+        DEPENDS ${AERON_ALL_SOURCES}
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        COMMENT "Generating aeron-all jar")
+
+    add_custom_target(aeron-all-jar
+        DEPENDS ${AERON_ALL_JAR})
+
     if (AERON_TESTS)
-        set(AERON_ALL_JAR "${CMAKE_CURRENT_SOURCE_DIR}/aeron-all/build/libs/aeron-all-${AERON_VERSION_TXT}.jar")
-
-        file(GLOB_RECURSE AERON_ALL_SOURCES
-            "${CMAKE_CURRENT_SOURCE_DIR}}/aeron-archive/src/main/java/*.java")
-
-        add_custom_command(OUTPUT ${AERON_ALL_JAR}
-            COMMAND ./gradlew :aeron-all:clean :aeron-all:assemble --no-parallel -x javadoc
-            DEPENDS ${AERON_ALL_SOURCES}
-            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-            COMMENT "Generating aeron-all jar")
-
-        add_custom_target(aeron-all-jar
-            DEPENDS ${AERON_ALL_JAR})
-
         add_subdirectory(${AERON_ARCHIVE_TEST_PATH})
     endif ()
 endif (BUILD_AERON_ARCHIVE_API)

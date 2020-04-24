@@ -95,7 +95,6 @@ public class ClusterBackupAgent implements Agent, UnavailableCounterHandler
     private long timeOfLastProgressMs = 0;
     private long correlationId = NULL_VALUE;
     private long leaderLogRecordingId = NULL_VALUE;
-    private long snapshotRetrieveSubscriptionId = NULL_VALUE;
     private long liveLogReplaySubscriptionId = NULL_VALUE;
     private long liveLogRecordingId = NULL_VALUE;
     private long liveLogReplayId = NULL_VALUE;
@@ -526,7 +525,6 @@ public class ClusterBackupAgent implements Agent, UnavailableCounterHandler
         else if (pollForResponse(clusterArchive, correlationId))
         {
             final long snapshotStopPosition = (int)clusterArchive.controlResponsePoller().relevantId();
-
             correlationId = NULL_VALUE;
 
             if (NULL_POSITION == snapshotStopPosition)
@@ -577,7 +575,6 @@ public class ClusterBackupAgent implements Agent, UnavailableCounterHandler
                     snapshot.timestamp,
                     snapshot.serviceId));
 
-                backupArchive.stopRecording(snapshotRetrieveSubscriptionId);
                 snapshotRetrieveMonitor = null;
                 correlationId = NULL_VALUE;
                 timeOfLastProgressMs = nowMs;
@@ -611,15 +608,14 @@ public class ClusterBackupAgent implements Agent, UnavailableCounterHandler
         }
         else if (pollForResponse(clusterArchive, correlationId))
         {
-            final int snapshotReplaySessionId = (int)clusterArchive.controlResponsePoller().relevantId();
-            final String replaySubscriptionChannel =
-                "aeron:udp?endpoint=" + ctx.transferEndpoint() + "|session-id=" + snapshotReplaySessionId;
+            final int replaySessionId = (int)clusterArchive.controlResponsePoller().relevantId();
+            final String replayChannel =
+                "aeron:udp?endpoint=" + ctx.transferEndpoint() + "|session-id=" + replaySessionId;
 
-            snapshotRetrieveSubscriptionId = backupArchive.startRecording(
-                replaySubscriptionChannel, ctx.replayStreamId(), SourceLocation.REMOTE);
+            backupArchive.startRecording(replayChannel, ctx.replayStreamId(), SourceLocation.REMOTE, true);
 
             snapshotRetrieveMonitor = new SnapshotRetrieveMonitor(
-                snapshotReplaySessionId, ctx.aeron().countersReader(), snapshotLengthMap.get(snapshotCursor));
+                replaySessionId, ctx.aeron().countersReader(), snapshotLengthMap.get(snapshotCursor));
 
             timeOfLastProgressMs = nowMs;
             workCount++;
@@ -685,7 +681,7 @@ public class ClusterBackupAgent implements Agent, UnavailableCounterHandler
                 final RecordingLog.Entry logEntry = recordingLog.findLastTerm();
                 liveLogReplayId = clusterArchive.controlResponsePoller().relevantId();
                 liveLogReplaySessionId = (int)liveLogReplayId;
-                final String replaySubscriptionChannel =
+                final String replayChannel =
                     "aeron:udp?endpoint=" + ctx.transferEndpoint() + "|session-id=" + liveLogReplaySessionId;
 
                 timeOfLastProgressMs = nowMs;
@@ -693,12 +689,12 @@ public class ClusterBackupAgent implements Agent, UnavailableCounterHandler
                 if (null == logEntry)
                 {
                     liveLogReplaySubscriptionId = backupArchive.startRecording(
-                        replaySubscriptionChannel, ctx.logStreamId(), SourceLocation.REMOTE);
+                        replayChannel, ctx.logStreamId(), SourceLocation.REMOTE);
                 }
                 else
                 {
                     liveLogReplaySubscriptionId = backupArchive.extendRecording(
-                        logEntry.recordingId, replaySubscriptionChannel, ctx.logStreamId(), SourceLocation.REMOTE);
+                        logEntry.recordingId, replayChannel, ctx.logStreamId(), SourceLocation.REMOTE);
                 }
             }
         }
@@ -714,8 +710,12 @@ public class ClusterBackupAgent implements Agent, UnavailableCounterHandler
     private int updateRecordingLog(final long nowMs)
     {
         boolean wasRecordingLogUpdated = false;
+        final long snapshotLeadershipTermId = snapshotsRetrieved.isEmpty() ?
+            NULL_VALUE : snapshotsRetrieved.get(0).leadershipTermId;
 
-        if (null != leaderLogEntry && recordingLog.isUnknown(leaderLogEntry.leadershipTermId))
+        if (null != leaderLogEntry &&
+            recordingLog.isUnknown(leaderLogEntry.leadershipTermId) &&
+            leaderLogEntry.leadershipTermId <= snapshotLeadershipTermId)
         {
             recordingLog.appendTerm(
                 liveLogRecordingId,
@@ -724,7 +724,6 @@ public class ClusterBackupAgent implements Agent, UnavailableCounterHandler
                 leaderLogEntry.timestamp);
 
             wasRecordingLogUpdated = true;
-
             leaderLogEntry = null;
         }
 
@@ -755,7 +754,6 @@ public class ClusterBackupAgent implements Agent, UnavailableCounterHandler
                 leaderLastTermEntry.timestamp);
 
             wasRecordingLogUpdated = true;
-
             leaderLastTermEntry = null;
         }
 

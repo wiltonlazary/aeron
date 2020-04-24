@@ -23,18 +23,16 @@ import io.aeron.driver.buffer.TestLogFactory;
 import io.aeron.driver.exceptions.InvalidChannelException;
 import io.aeron.driver.media.ReceiveChannelEndpoint;
 import io.aeron.driver.media.ReceiveChannelEndpointThreadLocals;
-import io.aeron.driver.media.UdpChannel;
 import io.aeron.driver.status.SystemCounters;
 import io.aeron.logbuffer.HeaderWriter;
 import io.aeron.logbuffer.LogBufferDescriptor;
 import io.aeron.logbuffer.TermAppender;
 import io.aeron.protocol.StatusMessageFlyweight;
-import org.agrona.ErrorHandler;
+import org.agrona.*;
 import org.agrona.concurrent.*;
 import org.agrona.concurrent.ringbuffer.ManyToOneRingBuffer;
 import org.agrona.concurrent.ringbuffer.RingBuffer;
-import org.agrona.concurrent.status.AtomicCounter;
-import org.agrona.concurrent.status.CountersManager;
+import org.agrona.concurrent.status.*;
 import org.hamcrest.Matchers;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -52,8 +50,9 @@ import java.util.function.LongConsumer;
 
 import static io.aeron.ErrorCode.*;
 import static io.aeron.driver.Configuration.*;
+import static io.aeron.driver.status.ClientHeartbeatTimestamp.CLIENT_HEARTBEAT_TYPE_ID;
 import static io.aeron.protocol.DataHeaderFlyweight.createDefaultHeader;
-import static org.agrona.concurrent.status.CountersReader.METADATA_LENGTH;
+import static org.agrona.concurrent.status.CountersReader.*;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.containsString;
@@ -102,30 +101,28 @@ public class DriverConductorTest
     private final SenderProxy senderProxy = mock(SenderProxy.class);
     private final ReceiverProxy receiverProxy = mock(ReceiverProxy.class);
     private final DriverConductorProxy driverConductorProxy = mock(DriverConductorProxy.class);
+    private ReceiveChannelEndpoint receiveChannelEndpoint = null;
 
-    private long currentTimeMs;
-    private final EpochClock epochClock = () -> currentTimeMs;
-    private long currentTimeNs;
-    private final NanoClock nanoClock = () -> currentTimeNs;
+    private final CachedEpochClock epochClock = new CachedEpochClock();
+    private final CachedNanoClock nanoClock = new CachedNanoClock();
 
     private CountersManager spyCountersManager;
     private DriverProxy driverProxy;
     private DriverConductor driverConductor;
 
-    private final Answer<Void> closeChannelEndpointAnswer = (invocation) ->
-    {
-        final Object[] args = invocation.getArguments();
-        final ReceiveChannelEndpoint channelEndpoint = (ReceiveChannelEndpoint)args[0];
-        channelEndpoint.close();
+    private final Answer<Void> closeChannelEndpointAnswer =
+        (invocation) ->
+        {
+            final Object[] args = invocation.getArguments();
+            final ReceiveChannelEndpoint channelEndpoint = (ReceiveChannelEndpoint)args[0];
+            channelEndpoint.close();
 
-        return null;
-    };
+            return null;
+        };
 
     @BeforeEach
     public void before()
     {
-        currentTimeNs = 0;
-
         counterKeyAndLabel.putInt(COUNTER_KEY_OFFSET, 42);
         counterKeyAndLabel.putStringAscii(COUNTER_LABEL_OFFSET, COUNTER_LABEL);
 
@@ -174,7 +171,7 @@ public class DriverConductorTest
     @AfterEach
     public void after()
     {
-        driverConductor.closeChannelEndpoints();
+        CloseHelper.close(receiveChannelEndpoint);
         driverConductor.onClose();
     }
 
@@ -287,11 +284,12 @@ public class DriverConductorTest
 
         driverConductor.doWork();
 
-        verify(receiverProxy).registerReceiveChannelEndpoint(any());
+        final ArgumentCaptor<ReceiveChannelEndpoint> captor = ArgumentCaptor.forClass(ReceiveChannelEndpoint.class);
+        verify(receiverProxy).registerReceiveChannelEndpoint(captor.capture());
+        receiveChannelEndpoint = captor.getValue();
+
         verify(receiverProxy).addSubscription(any(), eq(STREAM_ID_1));
         verify(mockClientProxy).onSubscriptionReady(eq(id), anyInt());
-
-        assertNotNull(driverConductor.receiverChannelEndpoint(UdpChannel.parse(CHANNEL_4000)));
     }
 
     @Test
@@ -302,7 +300,8 @@ public class DriverConductorTest
 
         driverConductor.doWork();
 
-        assertNull(driverConductor.receiverChannelEndpoint(UdpChannel.parse(CHANNEL_4000)));
+        verify(receiverProxy).registerReceiveChannelEndpoint(any());
+        verify(receiverProxy).closeReceiveChannelEndpoint(any());
     }
 
     @Test
@@ -326,8 +325,8 @@ public class DriverConductorTest
 
         doWorkUntil(() -> (CLIENT_LIVENESS_TIMEOUT_NS + PUBLICATION_LINGER_TIMEOUT_NS * 2) - nanoClock.nanoTime() < 0);
 
+        verify(senderProxy).registerSendChannelEndpoint(any());
         verify(senderProxy).removeNetworkPublication(any());
-        assertNull(driverConductor.senderChannelEndpoint(UdpChannel.parse(CHANNEL_4000)));
     }
 
     @Test
@@ -352,57 +351,55 @@ public class DriverConductorTest
     @Test
     public void shouldKeepSubscriptionMediaEndpointUponRemovalOfAllButOneSubscriber()
     {
-        final UdpChannel udpChannel = UdpChannel.parse(CHANNEL_4000);
-
         final long id1 = driverProxy.addSubscription(CHANNEL_4000, STREAM_ID_1);
         final long id2 = driverProxy.addSubscription(CHANNEL_4000, STREAM_ID_2);
         driverProxy.addSubscription(CHANNEL_4000, STREAM_ID_3);
 
         driverConductor.doWork();
 
-        final ReceiveChannelEndpoint channelEndpoint = driverConductor.receiverChannelEndpoint(udpChannel);
+        final ArgumentCaptor<ReceiveChannelEndpoint> captor = ArgumentCaptor.forClass(ReceiveChannelEndpoint.class);
+        verify(receiverProxy).registerReceiveChannelEndpoint(captor.capture());
+        receiveChannelEndpoint = captor.getValue();
 
-        assertNotNull(channelEndpoint);
-        assertEquals(3, channelEndpoint.streamCount());
+        assertNotNull(receiveChannelEndpoint);
+        assertEquals(3, receiveChannelEndpoint.streamCount());
 
         driverProxy.removeSubscription(id1);
         driverProxy.removeSubscription(id2);
 
         driverConductor.doWork();
 
-        assertNotNull(driverConductor.receiverChannelEndpoint(udpChannel));
-        assertEquals(1, channelEndpoint.streamCount());
+        assertEquals(1, receiveChannelEndpoint.streamCount());
     }
 
     @Test
     public void shouldOnlyRemoveSubscriptionMediaEndpointUponRemovalOfAllSubscribers()
     {
-        final UdpChannel udpChannel = UdpChannel.parse(CHANNEL_4000);
-
         final long id1 = driverProxy.addSubscription(CHANNEL_4000, STREAM_ID_1);
         final long id2 = driverProxy.addSubscription(CHANNEL_4000, STREAM_ID_2);
         final long id3 = driverProxy.addSubscription(CHANNEL_4000, STREAM_ID_3);
 
         driverConductor.doWork();
 
-        final ReceiveChannelEndpoint channelEndpoint = driverConductor.receiverChannelEndpoint(udpChannel);
+        final ArgumentCaptor<ReceiveChannelEndpoint> captor = ArgumentCaptor.forClass(ReceiveChannelEndpoint.class);
+        verify(receiverProxy).registerReceiveChannelEndpoint(captor.capture());
+        receiveChannelEndpoint = captor.getValue();
 
-        assertNotNull(channelEndpoint);
-        assertEquals(3, channelEndpoint.streamCount());
+        assertNotNull(receiveChannelEndpoint);
+        assertEquals(3, receiveChannelEndpoint.streamCount());
 
         driverProxy.removeSubscription(id2);
         driverProxy.removeSubscription(id3);
 
         driverConductor.doWork();
 
-        assertNotNull(driverConductor.receiverChannelEndpoint(udpChannel));
-        assertEquals(1, channelEndpoint.streamCount());
+        assertEquals(1, receiveChannelEndpoint.streamCount());
 
         driverProxy.removeSubscription(id1);
 
         driverConductor.doWork();
 
-        assertNull(driverConductor.receiverChannelEndpoint(udpChannel));
+        verify(receiverProxy).closeReceiveChannelEndpoint(receiveChannelEndpoint);
     }
 
     @Test
@@ -489,10 +486,8 @@ public class DriverConductorTest
 
         doWorkUntil(() -> (CLIENT_LIVENESS_TIMEOUT_NS + PUBLICATION_LINGER_TIMEOUT_NS * 2) - nanoClock.nanoTime() <= 0);
 
-        verify(mockClientProxy, times(1))
-            .onClientTimeout(driverProxy.clientId());
         verify(senderProxy).removeNetworkPublication(eq(publication));
-        assertNull(driverConductor.senderChannelEndpoint(UdpChannel.parse(CHANNEL_4000)));
+        verify(senderProxy).registerSendChannelEndpoint(any());
     }
 
     @Test
@@ -506,14 +501,15 @@ public class DriverConductorTest
         verify(senderProxy, times(1)).newNetworkPublication(captor.capture());
 
         final NetworkPublication publication = captor.getValue();
+        final AtomicCounter heartbeatCounter = clientHeartbeatCounter(spyCountersManager);
 
         doWorkUntil(() -> (CLIENT_LIVENESS_TIMEOUT_NS / 2) - nanoClock.nanoTime() <= 0);
 
-        driverProxy.sendClientKeepalive();
+        heartbeatCounter.setOrdered(epochClock.time());
 
         doWorkUntil(() -> (CLIENT_LIVENESS_TIMEOUT_NS + 1000) - nanoClock.nanoTime() <= 0);
 
-        driverProxy.sendClientKeepalive();
+        heartbeatCounter.setOrdered(epochClock.time());
 
         doWorkUntil(() -> nanoClock.nanoTime() >= CLIENT_LIVENESS_TIMEOUT_NS * 2);
 
@@ -568,12 +564,12 @@ public class DriverConductorTest
         assertThat(publication.state(),
             Matchers.anyOf(is(NetworkPublication.State.LINGER), is(NetworkPublication.State.CLOSING)));
 
-        currentTimeNs += DEFAULT_TIMER_INTERVAL_NS + PUBLICATION_LINGER_TIMEOUT_NS;
+        nanoClock.advance(DEFAULT_TIMER_INTERVAL_NS + PUBLICATION_LINGER_TIMEOUT_NS);
         driverConductor.doWork();
         assertEquals(NetworkPublication.State.CLOSING, publication.state());
 
         verify(senderProxy).removeNetworkPublication(eq(publication));
-        assertNull(driverConductor.senderChannelEndpoint(UdpChannel.parse(CHANNEL_4000)));
+        verify(senderProxy).registerSendChannelEndpoint(any());
     }
 
     @Test
@@ -583,20 +579,18 @@ public class DriverConductorTest
 
         driverConductor.doWork();
 
-        final ReceiveChannelEndpoint receiveChannelEndpoint =
-            driverConductor.receiverChannelEndpoint(UdpChannel.parse(CHANNEL_4000));
-        assertNotNull(receiveChannelEndpoint);
+        final ArgumentCaptor<ReceiveChannelEndpoint> captor = ArgumentCaptor.forClass(ReceiveChannelEndpoint.class);
+        verify(receiverProxy).registerReceiveChannelEndpoint(captor.capture());
+        receiveChannelEndpoint = captor.getValue();
 
         verify(receiverProxy).addSubscription(eq(receiveChannelEndpoint), eq(STREAM_ID_1));
 
         doWorkUntil(() -> nanoClock.nanoTime() >= CLIENT_LIVENESS_TIMEOUT_NS * 2);
 
-        verify(mockClientProxy, times(1))
-            .onClientTimeout(driverProxy.clientId());
         verify(receiverProxy, times(1))
             .removeSubscription(eq(receiveChannelEndpoint), eq(STREAM_ID_1));
 
-        assertNull(driverConductor.receiverChannelEndpoint(UdpChannel.parse(CHANNEL_4000)));
+        verify(receiverProxy).closeReceiveChannelEndpoint(receiveChannelEndpoint);
     }
 
     @Test
@@ -606,24 +600,24 @@ public class DriverConductorTest
 
         driverConductor.doWork();
 
-        final ReceiveChannelEndpoint receiveChannelEndpoint =
-            driverConductor.receiverChannelEndpoint(UdpChannel.parse(CHANNEL_4000));
-        assertNotNull(receiveChannelEndpoint);
+        final ArgumentCaptor<ReceiveChannelEndpoint> captor = ArgumentCaptor.forClass(ReceiveChannelEndpoint.class);
+        verify(receiverProxy).registerReceiveChannelEndpoint(captor.capture());
+        receiveChannelEndpoint = captor.getValue();
 
         verify(receiverProxy).addSubscription(eq(receiveChannelEndpoint), eq(STREAM_ID_1));
+        final AtomicCounter heartbeatCounter = clientHeartbeatCounter(spyCountersManager);
 
         doWorkUntil(() -> nanoClock.nanoTime() >= CLIENT_LIVENESS_TIMEOUT_NS);
 
-        driverProxy.sendClientKeepalive();
+        heartbeatCounter.setOrdered(epochClock.time());
 
         doWorkUntil(() -> nanoClock.nanoTime() >= CLIENT_LIVENESS_TIMEOUT_NS + 1000);
 
-        driverProxy.sendClientKeepalive();
+        heartbeatCounter.setOrdered(epochClock.time());
 
         doWorkUntil(() -> nanoClock.nanoTime() >= CLIENT_LIVENESS_TIMEOUT_NS * 2);
 
         verify(receiverProxy, never()).removeSubscription(any(), anyInt());
-        assertNotNull(driverConductor.receiverChannelEndpoint(UdpChannel.parse(CHANNEL_4000)));
     }
 
     @Test
@@ -638,9 +632,9 @@ public class DriverConductorTest
 
         driverConductor.doWork();
 
-        final ReceiveChannelEndpoint receiveChannelEndpoint =
-            driverConductor.receiverChannelEndpoint(UdpChannel.parse(CHANNEL_4000));
-        assertNotNull(receiveChannelEndpoint);
+        final ArgumentCaptor<ReceiveChannelEndpoint> captor1 = ArgumentCaptor.forClass(ReceiveChannelEndpoint.class);
+        verify(receiverProxy).registerReceiveChannelEndpoint(captor1.capture());
+        receiveChannelEndpoint = captor1.getValue();
 
         receiveChannelEndpoint.openChannel(driverConductorProxy);
 
@@ -648,10 +642,10 @@ public class DriverConductorTest
             SESSION_ID, STREAM_ID_1, initialTermId, activeTermId, termOffset, TERM_BUFFER_LENGTH, MTU_LENGTH, 0,
             mock(InetSocketAddress.class), sourceAddress, receiveChannelEndpoint);
 
-        final ArgumentCaptor<PublicationImage> captor = ArgumentCaptor.forClass(PublicationImage.class);
-        verify(receiverProxy).newPublicationImage(eq(receiveChannelEndpoint), captor.capture());
+        final ArgumentCaptor<PublicationImage> captor2 = ArgumentCaptor.forClass(PublicationImage.class);
+        verify(receiverProxy).newPublicationImage(eq(receiveChannelEndpoint), captor2.capture());
 
-        final PublicationImage publicationImage = captor.getValue();
+        final PublicationImage publicationImage = captor2.getValue();
         assertEquals(SESSION_ID, publicationImage.sessionId());
         assertEquals(STREAM_ID_1, publicationImage.streamId());
 
@@ -668,9 +662,9 @@ public class DriverConductorTest
 
         driverConductor.doWork();
 
-        final ReceiveChannelEndpoint receiveChannelEndpoint =
-            driverConductor.receiverChannelEndpoint(UdpChannel.parse(CHANNEL_4000));
-        assertNotNull(receiveChannelEndpoint);
+        final ArgumentCaptor<ReceiveChannelEndpoint> captor = ArgumentCaptor.forClass(ReceiveChannelEndpoint.class);
+        verify(receiverProxy).registerReceiveChannelEndpoint(captor.capture());
+        receiveChannelEndpoint = captor.getValue();
 
         receiveChannelEndpoint.openChannel(driverConductorProxy);
 
@@ -692,9 +686,9 @@ public class DriverConductorTest
 
         driverConductor.doWork();
 
-        final ReceiveChannelEndpoint receiveChannelEndpoint =
-            driverConductor.receiverChannelEndpoint(UdpChannel.parse(CHANNEL_4000));
-        assertNotNull(receiveChannelEndpoint);
+        final ArgumentCaptor<ReceiveChannelEndpoint> captor1 = ArgumentCaptor.forClass(ReceiveChannelEndpoint.class);
+        verify(receiverProxy).registerReceiveChannelEndpoint(captor1.capture());
+        receiveChannelEndpoint = captor1.getValue();
 
         receiveChannelEndpoint.openChannel(driverConductorProxy);
 
@@ -702,10 +696,10 @@ public class DriverConductorTest
             SESSION_ID, STREAM_ID_1, 1, 1, 0, TERM_BUFFER_LENGTH, MTU_LENGTH, 0,
             mock(InetSocketAddress.class), sourceAddress, receiveChannelEndpoint);
 
-        final ArgumentCaptor<PublicationImage> captor = ArgumentCaptor.forClass(PublicationImage.class);
-        verify(receiverProxy).newPublicationImage(eq(receiveChannelEndpoint), captor.capture());
+        final ArgumentCaptor<PublicationImage> captor2 = ArgumentCaptor.forClass(PublicationImage.class);
+        verify(receiverProxy).newPublicationImage(eq(receiveChannelEndpoint), captor2.capture());
 
-        final PublicationImage publicationImage = captor.getValue();
+        final PublicationImage publicationImage = captor2.getValue();
 
         publicationImage.activate();
         publicationImage.ifActiveGoInactive();
@@ -725,9 +719,9 @@ public class DriverConductorTest
 
         driverConductor.doWork();
 
-        final ReceiveChannelEndpoint receiveChannelEndpoint =
-            driverConductor.receiverChannelEndpoint(UdpChannel.parse(CHANNEL_4000));
-        assertNotNull(receiveChannelEndpoint);
+        final ArgumentCaptor<ReceiveChannelEndpoint> captor1 = ArgumentCaptor.forClass(ReceiveChannelEndpoint.class);
+        verify(receiverProxy).registerReceiveChannelEndpoint(captor1.capture());
+        receiveChannelEndpoint = captor1.getValue();
 
         receiveChannelEndpoint.openChannel(driverConductorProxy);
 
@@ -735,10 +729,10 @@ public class DriverConductorTest
             SESSION_ID, STREAM_ID_1, 1, 1, 0, TERM_BUFFER_LENGTH, MTU_LENGTH, 0,
             mock(InetSocketAddress.class), sourceAddress, receiveChannelEndpoint);
 
-        final ArgumentCaptor<PublicationImage> captor = ArgumentCaptor.forClass(PublicationImage.class);
-        verify(receiverProxy).newPublicationImage(eq(receiveChannelEndpoint), captor.capture());
+        final ArgumentCaptor<PublicationImage> captor2 = ArgumentCaptor.forClass(PublicationImage.class);
+        verify(receiverProxy).newPublicationImage(eq(receiveChannelEndpoint), captor2.capture());
 
-        final PublicationImage publicationImage = captor.getValue();
+        final PublicationImage publicationImage = captor2.getValue();
 
         publicationImage.activate();
 
@@ -774,9 +768,9 @@ public class DriverConductorTest
 
         driverConductor.doWork();
 
-        final ReceiveChannelEndpoint receiveChannelEndpoint =
-            driverConductor.receiverChannelEndpoint(UdpChannel.parse(CHANNEL_4000));
-        assertNotNull(receiveChannelEndpoint);
+        final ArgumentCaptor<ReceiveChannelEndpoint> captor1 = ArgumentCaptor.forClass(ReceiveChannelEndpoint.class);
+        verify(receiverProxy).registerReceiveChannelEndpoint(captor1.capture());
+        receiveChannelEndpoint = captor1.getValue();
 
         receiveChannelEndpoint.openChannel(driverConductorProxy);
 
@@ -784,17 +778,18 @@ public class DriverConductorTest
             SESSION_ID, STREAM_ID_1, 1, 1, 0, TERM_BUFFER_LENGTH, MTU_LENGTH, 0,
             mock(InetSocketAddress.class), sourceAddress, receiveChannelEndpoint);
 
-        final ArgumentCaptor<PublicationImage> captor = ArgumentCaptor.forClass(PublicationImage.class);
-        verify(receiverProxy).newPublicationImage(eq(receiveChannelEndpoint), captor.capture());
+        final ArgumentCaptor<PublicationImage> captor2 = ArgumentCaptor.forClass(PublicationImage.class);
+        verify(receiverProxy).newPublicationImage(eq(receiveChannelEndpoint), captor2.capture());
 
-        final PublicationImage publicationImage = captor.getValue();
+        final PublicationImage publicationImage = captor2.getValue();
 
         publicationImage.activate();
         publicationImage.ifActiveGoInactive();
 
         doWorkUntil(() -> nanoClock.nanoTime() >= imageLivenessTimeoutNs() / 2);
 
-        driverProxy.sendClientKeepalive();
+        final AtomicCounter heartbeatCounter = clientHeartbeatCounter(spyCountersManager);
+        heartbeatCounter.setOrdered(epochClock.time());
 
         doWorkUntil(() -> nanoClock.nanoTime() >= imageLivenessTimeoutNs() + 1000);
 
@@ -996,7 +991,8 @@ public class DriverConductorTest
 
         doWorkUntil(() -> CLIENT_LIVENESS_TIMEOUT_NS - nanoClock.nanoTime() <= 0);
 
-        driverProxy.sendClientKeepalive();
+        final AtomicCounter heartbeatCounter = clientHeartbeatCounter(spyCountersManager);
+        heartbeatCounter.setOrdered(epochClock.time());
 
         doWorkUntil(() -> CLIENT_LIVENESS_TIMEOUT_NS - nanoClock.nanoTime() <= 0);
 
@@ -1014,8 +1010,6 @@ public class DriverConductorTest
         verify(receiverProxy, never()).registerReceiveChannelEndpoint(any());
         verify(receiverProxy, never()).addSubscription(any(), eq(STREAM_ID_1));
         verify(mockClientProxy).onSubscriptionReady(eq(id), anyInt());
-
-        assertNull(driverConductor.receiverChannelEndpoint(UdpChannel.parse(CHANNEL_4000)));
     }
 
     @Test
@@ -1111,7 +1105,8 @@ public class DriverConductorTest
 
         doWorkUntil(() -> CLIENT_LIVENESS_TIMEOUT_NS - nanoClock.nanoTime() <= 0);
 
-        driverProxy.sendClientKeepalive();
+        final AtomicCounter heartbeatCounter = clientHeartbeatCounter(spyCountersManager);
+        heartbeatCounter.setOrdered(epochClock.time());
 
         doWorkUntil(() -> CLIENT_LIVENESS_TIMEOUT_NS - nanoClock.nanoTime() <= 0);
 
@@ -1132,14 +1127,15 @@ public class DriverConductorTest
         final ArgumentCaptor<NetworkPublication> captor = ArgumentCaptor.forClass(NetworkPublication.class);
         verify(senderProxy, times(1)).newNetworkPublication(captor.capture());
         final NetworkPublication publication = captor.getValue();
+        final AtomicCounter heartbeatCounter = clientHeartbeatCounter(spyCountersManager);
 
         doWorkUntil(() -> (CLIENT_LIVENESS_TIMEOUT_NS / 2) - nanoClock.nanoTime() <= 0);
 
-        spyDriverProxy.sendClientKeepalive();
+        heartbeatCounter.setOrdered(epochClock.time());
 
         doWorkUntil(() -> (CLIENT_LIVENESS_TIMEOUT_NS + 1000) - nanoClock.nanoTime() <= 0);
 
-        spyDriverProxy.sendClientKeepalive();
+        heartbeatCounter.setOrdered(0);
 
         doWorkUntil(() -> (CLIENT_LIVENESS_TIMEOUT_NS * 2) - nanoClock.nanoTime() <= 0);
 
@@ -1155,11 +1151,7 @@ public class DriverConductorTest
         driverProxy.removePublication(id1);
         driverProxy.removePublication(id2);
 
-        doWorkUntil(() ->
-        {
-            driverProxy.sendClientKeepalive();
-            return (PUBLICATION_LINGER_TIMEOUT_NS * 2) - nanoClock.nanoTime() <= 0;
-        });
+        doWorkUntil(() -> (PUBLICATION_LINGER_TIMEOUT_NS * 2) - nanoClock.nanoTime() <= 0);
 
         verify(senderProxy, times(1)).closeSendChannelEndpoint(any());
     }
@@ -1172,11 +1164,7 @@ public class DriverConductorTest
         driverProxy.removeSubscription(id1);
         driverProxy.removeSubscription(id2);
 
-        doWorkUntil(() ->
-        {
-            driverProxy.sendClientKeepalive();
-            return (CLIENT_LIVENESS_TIMEOUT_NS * 2) - nanoClock.nanoTime() <= 0;
-        });
+        doWorkUntil(() -> (CLIENT_LIVENESS_TIMEOUT_NS * 2) - nanoClock.nanoTime() <= 0);
 
         verify(receiverProxy, times(1)).closeReceiveChannelEndpoint(any());
     }
@@ -1191,6 +1179,48 @@ public class DriverConductorTest
         driverConductor.doWork();
 
         verify(mockClientProxy).onError(eq(id2), any(ErrorCode.class), anyString());
+    }
+
+    @Test
+    public void shouldErrorWhenConflictingUnreliableSessionSpecificSubscriptionAdded()
+    {
+        driverProxy.addSubscription(CHANNEL_4000 + "|session-id=1024", STREAM_ID_1);
+        driverConductor.doWork();
+
+        final long id2 = driverProxy.addSubscription(CHANNEL_4000 + "|session-id=1024|reliable=false", STREAM_ID_1);
+        driverConductor.doWork();
+
+        verify(mockClientProxy).onError(eq(id2), any(ErrorCode.class), anyString());
+    }
+
+    @Test
+    public void shouldNotErrorWhenConflictingUnreliableSessionSpecificSubscriptionAddedToDifferentSessions()
+    {
+        final long id1 = driverProxy.addSubscription(CHANNEL_4000 + "|session-id=1024|reliable=true", STREAM_ID_1);
+        driverConductor.doWork();
+
+        final long id2 = driverProxy.addSubscription(CHANNEL_4000 + "|session-id=1025|reliable=false", STREAM_ID_1);
+        driverConductor.doWork();
+
+        verify(mockClientProxy).onSubscriptionReady(eq(id1), anyInt());
+        verify(mockClientProxy).onSubscriptionReady(eq(id2), anyInt());
+    }
+
+    @Test
+    public void shouldNotErrorWhenConflictingUnreliableSessionSpecificSubscriptionAddedToDifferentSessionsVsWildcard()
+    {
+        final long id1 = driverProxy.addSubscription(CHANNEL_4000 + "|session-id=1024|reliable=false", STREAM_ID_1);
+        driverConductor.doWork();
+
+        final long id2 = driverProxy.addSubscription(CHANNEL_4000 + "|reliable=true", STREAM_ID_1);
+        driverConductor.doWork();
+
+        final long id3 = driverProxy.addSubscription(CHANNEL_4000 + "|session-id=1025|reliable=false", STREAM_ID_1);
+        driverConductor.doWork();
+
+        verify(mockClientProxy).onSubscriptionReady(eq(id1), anyInt());
+        verify(mockClientProxy).onSubscriptionReady(eq(id2), anyInt());
+        verify(mockClientProxy).onSubscriptionReady(eq(id3), anyInt());
     }
 
     @Test
@@ -1308,10 +1338,11 @@ public class DriverConductorTest
         final ArgumentCaptor<Integer> captor = ArgumentCaptor.forClass(Integer.class);
 
         verify(mockClientProxy).onCounterReady(eq(registrationId), captor.capture());
+        final AtomicCounter heartbeatCounter = clientHeartbeatCounter(spyCountersManager);
 
         doWorkUntil(() ->
         {
-            driverProxy.sendClientKeepalive();
+            heartbeatCounter.setOrdered(epochClock.time());
             return (CLIENT_LIVENESS_TIMEOUT_NS * 2) - nanoClock.nanoTime() <= 0;
         });
 
@@ -1698,15 +1729,57 @@ public class DriverConductorTest
         verify(mockErrorHandler, never()).onError(any());
     }
 
+    @Test
+    public void shouldBeAbleToAddNetworkPublicationThenSingleSpyWithTag()
+    {
+        driverProxy.addPublication(CHANNEL_4000_TAG_ID_1, STREAM_ID_1);
+        final long idSpy = driverProxy.addSubscription(spyForChannel(CHANNEL_TAG_ID_1), STREAM_ID_1);
+
+        driverConductor.doWork();
+
+        final ArgumentCaptor<NetworkPublication> captor = ArgumentCaptor.forClass(NetworkPublication.class);
+        verify(senderProxy, times(1)).newNetworkPublication(captor.capture());
+        final NetworkPublication publication = captor.getValue();
+
+        assertTrue(publication.hasSpies());
+
+        final InOrder inOrder = inOrder(mockClientProxy);
+        inOrder.verify(mockClientProxy).onSubscriptionReady(eq(idSpy), anyInt());
+        inOrder.verify(mockClientProxy).onAvailableImage(
+            eq(networkPublicationCorrelationId(publication)), eq(STREAM_ID_1), eq(publication.sessionId()),
+            anyLong(), anyInt(), eq(publication.rawLog().fileName()), anyString());
+    }
+
+    @Test
+    public void shouldBeAbleToAddSingleSpyThenNetworkPublicationWithTag()
+    {
+        final long idSpy = driverProxy.addSubscription(spyForChannel(CHANNEL_TAG_ID_1), STREAM_ID_1);
+        driverProxy.addPublication(CHANNEL_4000_TAG_ID_1, STREAM_ID_1);
+
+        driverConductor.doWork();
+
+        final ArgumentCaptor<NetworkPublication> captor = ArgumentCaptor.forClass(NetworkPublication.class);
+        verify(senderProxy, times(1)).newNetworkPublication(captor.capture());
+        final NetworkPublication publication = captor.getValue();
+
+        assertTrue(publication.hasSpies());
+
+        final InOrder inOrder = inOrder(mockClientProxy);
+        inOrder.verify(mockClientProxy).onSubscriptionReady(eq(idSpy), anyInt());
+        inOrder.verify(mockClientProxy).onAvailableImage(
+            eq(networkPublicationCorrelationId(publication)), eq(STREAM_ID_1), eq(publication.sessionId()),
+            anyLong(), anyInt(), eq(publication.rawLog().fileName()), anyString());
+    }
+
     private void doWorkUntil(final BooleanSupplier condition, final LongConsumer timeConsumer)
     {
         while (!condition.getAsBoolean())
         {
             final long millisecondsToAdvance = 16;
 
-            currentTimeNs += TimeUnit.MILLISECONDS.toNanos(millisecondsToAdvance);
-            currentTimeMs += millisecondsToAdvance;
-            timeConsumer.accept(currentTimeNs);
+            nanoClock.advance(TimeUnit.MILLISECONDS.toNanos(millisecondsToAdvance));
+            epochClock.advance(millisecondsToAdvance);
+            timeConsumer.accept(nanoClock.nanoTime());
             driverConductor.doWork();
         }
     }
@@ -1724,5 +1797,25 @@ public class DriverConductorTest
     private static long networkPublicationCorrelationId(final NetworkPublication publication)
     {
         return LogBufferDescriptor.correlationId(publication.rawLog().metaData());
+    }
+
+    private static AtomicCounter clientHeartbeatCounter(final CountersReader countersReader)
+    {
+        final DirectBuffer buffer = countersReader.metaDataBuffer();
+
+        for (int i = 0, size = countersReader.maxCounterId(); i < size; i++)
+        {
+            if (countersReader.getCounterState(i) == RECORD_ALLOCATED)
+            {
+                final int recordOffset = CountersReader.metaDataOffset(i);
+
+                if (buffer.getInt(recordOffset + TYPE_ID_OFFSET) == CLIENT_HEARTBEAT_TYPE_ID)
+                {
+                    return new AtomicCounter(countersReader.valuesBuffer(), i);
+                }
+            }
+        }
+
+        throw new IllegalStateException("could not find client heartbeat counter");
     }
 }

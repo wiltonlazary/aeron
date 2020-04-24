@@ -21,6 +21,7 @@ import io.aeron.driver.DefaultNameResolver;
 import io.aeron.driver.NameResolver;
 import io.aeron.driver.exceptions.InvalidChannelException;
 import org.agrona.BitUtil;
+import org.agrona.LangUtil;
 
 import java.net.*;
 import java.util.Objects;
@@ -38,11 +39,6 @@ import static java.net.InetAddress.getByAddress;
  */
 public final class UdpChannel
 {
-    private static final byte[] HEX_TABLE =
-    {
-        '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'
-    };
-
     private static final AtomicInteger UNIQUE_CANONICAL_FORM_VALUE = new AtomicInteger();
 
     private final boolean isManualControlMode;
@@ -100,7 +96,7 @@ public final class UdpChannel
      * Parse channel URI and create a {@link UdpChannel}.
      *
      * @param channelUriString to parse.
-     * @param nameResolver to use for resolving names
+     * @param nameResolver     to use for resolving names
      * @return a new {@link UdpChannel} as the result of parsing.
      * @throws InvalidChannelException if an error occurs.
      */
@@ -236,10 +232,10 @@ public final class UdpChannel
      * The general format is:
      * UDP-interface:localPort-remoteAddress:remotePort
      *
-     * @param localParamValue interface or MDC control param value or null for not set.
-     * @param localData  address/interface for the channel.
+     * @param localParamValue  interface or MDC control param value or null for not set.
+     * @param localData        address/interface for the channel.
      * @param remoteParamValue endpoint param value or null if not set.
-     * @param remoteData address for the channel.
+     * @param remoteData       address for the channel.
      * @return canonical representation as a string.
      */
     public static String canonicalise(
@@ -362,39 +358,6 @@ public final class UdpChannel
     }
 
     /**
-     * Channels are considered equal if the {@link #canonicalForm()} is equal.
-     *
-     * @param o object to be compared with.
-     * @return true if the {@link #canonicalForm()} is equal, otherwise false.
-     */
-    public boolean equals(final Object o)
-    {
-        if (this == o)
-        {
-            return true;
-        }
-
-        if (o == null || getClass() != o.getClass())
-        {
-            return false;
-        }
-
-        final UdpChannel that = (UdpChannel)o;
-
-        return Objects.equals(canonicalForm, that.canonicalForm);
-    }
-
-    /**
-     * The hash code for the {@link #canonicalForm()}.
-     *
-     * @return the hash code for the {@link #canonicalForm()}.
-     */
-    public int hashCode()
-    {
-        return canonicalForm != null ? canonicalForm.hashCode() : 0;
-    }
-
-    /**
      * The {@link #canonicalForm()} for the channel.
      *
      * @return the {@link #canonicalForm()} for the channel.
@@ -495,6 +458,16 @@ public final class UdpChannel
     }
 
     /**
+     * Is the channel configured as multi-destination.
+     *
+     * @return true if he channel configured as multi-destination.
+     */
+    public boolean isMultiDestination()
+    {
+        return isDynamicControlMode || isManualControlMode || hasExplicitControl;
+    }
+
+    /**
      * Does this channel have a tag match to another channel including endpoints.
      *
      * @param udpChannel to match against.
@@ -517,26 +490,6 @@ public final class UdpChannel
 
         throw new IllegalArgumentException(
             "matching tag has set endpoint or control address - " + uriStr + " <> " + udpChannel.uriStr);
-    }
-
-    /**
-     * Get the endpoint destination address from the URI.
-     *
-     * @param uri to check.
-     * @param nameResolver to use for resolution
-     * @return endpoint address for URI.
-     */
-    public static InetSocketAddress destinationAddress(final ChannelUri uri, final NameResolver nameResolver)
-    {
-        try
-        {
-            validateConfiguration(uri);
-            return getEndpointAddress(uri, nameResolver);
-        }
-        catch (final Exception ex)
-        {
-            throw new InvalidChannelException(ex);
-        }
     }
 
     /**
@@ -564,16 +517,71 @@ public final class UdpChannel
     }
 
     /**
+     * Channels are considered equal if the {@link #canonicalForm()} is equal.
+     *
+     * @param o object to be compared with.
+     * @return true if the {@link #canonicalForm()} is equal, otherwise false.
+     */
+    public boolean equals(final Object o)
+    {
+        if (this == o)
+        {
+            return true;
+        }
+
+        if (o == null || getClass() != o.getClass())
+        {
+            return false;
+        }
+
+        final UdpChannel that = (UdpChannel)o;
+
+        return Objects.equals(canonicalForm, that.canonicalForm);
+    }
+
+    /**
+     * The hash code for the {@link #canonicalForm()}.
+     *
+     * @return the hash code for the {@link #canonicalForm()}.
+     */
+    public int hashCode()
+    {
+        return canonicalForm != null ? canonicalForm.hashCode() : 0;
+    }
+
+    /**
+     * Get the endpoint destination address from the URI.
+     *
+     * @param uri          to check.
+     * @param nameResolver to use for resolution
+     * @return endpoint address for URI.
+     */
+    public static InetSocketAddress destinationAddress(final ChannelUri uri, final NameResolver nameResolver)
+    {
+        try
+        {
+            validateConfiguration(uri);
+            return getEndpointAddress(uri, nameResolver);
+        }
+        catch (final Exception ex)
+        {
+            throw new InvalidChannelException(ex);
+        }
+    }
+
+    /**
      * Resolve and endpoint into a {@link InetSocketAddress}.
      *
-     * @param endpoint to resolve
-     * @param uriParamName for the resolution
+     * @param endpoint       to resolve
+     * @param uriParamName   for the resolution
      * @param isReResolution for the resolution
-     * @param nameResolver to be used for hostname.
+     * @param nameResolver   to be used for hostname.
      * @return address for endpoint
+     * @throws UnknownHostException if the endpoint can not be resolved.
      */
     public static InetSocketAddress resolve(
         final String endpoint, final String uriParamName, final boolean isReResolution, final NameResolver nameResolver)
+        throws UnknownHostException
     {
         return SocketAddressParser.parse(endpoint, uriParamName, isReResolution, nameResolver);
     }
@@ -601,24 +609,42 @@ public final class UdpChannel
 
     private static InetSocketAddress getEndpointAddress(final ChannelUri uri, final NameResolver nameResolver)
     {
+        InetSocketAddress address = null;
         final String endpointValue = uri.get(CommonContext.ENDPOINT_PARAM_NAME);
         if (null != endpointValue)
         {
-            return SocketAddressParser.parse(endpointValue, CommonContext.ENDPOINT_PARAM_NAME, false, nameResolver);
+            try
+            {
+                address = SocketAddressParser.parse(
+                    endpointValue, CommonContext.ENDPOINT_PARAM_NAME, false, nameResolver);
+            }
+            catch (final UnknownHostException ex)
+            {
+                LangUtil.rethrowUnchecked(ex);
+            }
         }
 
-        return null;
+        return address;
     }
 
     private static InetSocketAddress getExplicitControlAddress(final ChannelUri uri, final NameResolver nameResolver)
     {
+        InetSocketAddress address = null;
         final String controlValue = uri.get(CommonContext.MDC_CONTROL_PARAM_NAME);
         if (null != controlValue)
         {
-            return SocketAddressParser.parse(controlValue, CommonContext.MDC_CONTROL_PARAM_NAME, false, nameResolver);
+            try
+            {
+                address = SocketAddressParser.parse(
+                    controlValue, CommonContext.MDC_CONTROL_PARAM_NAME, false, nameResolver);
+            }
+            catch (final UnknownHostException ex)
+            {
+                LangUtil.rethrowUnchecked(ex);
+            }
         }
 
-        return null;
+        return address;
     }
 
     private static void validateDataAddress(final byte[] addressAsBytes)
@@ -636,7 +662,7 @@ public final class UdpChannel
 
     private static void validateMedia(final ChannelUri uri)
     {
-        if (!CommonContext.UDP_MEDIA.equals(uri.media()))
+        if (!uri.isUdp())
         {
             throw new IllegalArgumentException("UdpChannel only supports UDP media: " + uri);
         }
@@ -701,17 +727,6 @@ public final class UdpChannel
         }
 
         return builder.toString();
-    }
-
-    private static StringBuilder toHex(final StringBuilder builder, final byte[] bytes)
-    {
-        for (final byte b : bytes)
-        {
-            builder.append((char)(HEX_TABLE[(b >> 4) & 0x0F]));
-            builder.append((char)(HEX_TABLE[b & 0x0F]));
-        }
-
-        return builder;
     }
 
     static class Context

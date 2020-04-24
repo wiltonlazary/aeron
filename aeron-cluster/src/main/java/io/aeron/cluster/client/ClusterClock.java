@@ -46,6 +46,36 @@ public interface ClusterClock
     long time();
 
     /**
+     * Get the current time in {@link TimeUnit#MILLISECONDS}.
+     *
+     * @return the current time in {@link TimeUnit#MILLISECONDS}.
+     */
+    default long timeMillis()
+    {
+        return timeUnit().toMillis(time());
+    }
+
+    /**
+     * Get the current time in {@link TimeUnit#MICROSECONDS}.
+     *
+     * @return the current time in {@link TimeUnit#MICROSECONDS}.
+     */
+    default long timeMicros()
+    {
+        return timeUnit().toMicros(time());
+    }
+
+    /**
+     * Get the current time in {@link TimeUnit#NANOSECONDS}.
+     *
+     * @return the current time in {@link TimeUnit#NANOSECONDS}.
+     */
+    default long timeNanos()
+    {
+        return timeUnit().toNanos(time());
+    }
+
+    /**
      * Map {@link TimeUnit} to a corresponding {@link ClusterTimeUnit}.
      *
      * @param timeUnit to map to a corresponding {@link ClusterTimeUnit}.
@@ -55,9 +85,14 @@ public interface ClusterClock
     {
         switch (timeUnit)
         {
-            case MILLISECONDS: return ClusterTimeUnit.MILLIS;
-            case MICROSECONDS: return ClusterTimeUnit.MICROS;
-            case NANOSECONDS: return ClusterTimeUnit.NANOS;
+            case MILLISECONDS:
+                return ClusterTimeUnit.MILLIS;
+
+            case MICROSECONDS:
+                return ClusterTimeUnit.MICROS;
+
+            case NANOSECONDS:
+                return ClusterTimeUnit.NANOS;
         }
 
         throw new IllegalArgumentException("unsupported time unit: " + timeUnit);
@@ -74,10 +109,15 @@ public interface ClusterClock
     {
         switch (clusterTimeUnit)
         {
-            case MILLIS: return TimeUnit.MILLISECONDS;
-            case MICROS: return TimeUnit.MICROSECONDS;
-            case NANOS: return TimeUnit.NANOSECONDS;
-            case NULL_VAL: return TimeUnit.MILLISECONDS;
+            case NULL_VAL:
+            case MILLIS:
+                return TimeUnit.MILLISECONDS;
+
+            case MICROS:
+                return TimeUnit.MICROSECONDS;
+
+            case NANOS:
+                return TimeUnit.NANOSECONDS;
         }
 
         throw new IllegalArgumentException("unsupported time unit: " + clusterTimeUnit);

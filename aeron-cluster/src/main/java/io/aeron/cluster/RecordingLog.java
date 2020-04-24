@@ -566,6 +566,23 @@ public class RecordingLog implements AutoCloseable
     }
 
     /**
+     * Find the term {@link Entry} for a given leadership term id.
+     *
+     * @param leadershipTermId to get {@link Entry} for.
+     * @return the {@link Entry} if found or null if not found.
+     */
+    public Entry findTermEntry(final long leadershipTermId)
+    {
+        final int index = (int)cacheIndexByLeadershipTermIdMap.get(leadershipTermId);
+        if (NULL_VALUE != index)
+        {
+            return entriesCache.get(index);
+        }
+
+        return null;
+    }
+
+    /**
      * Get the latest snapshot {@link Entry} in the log.
      *
      * @param serviceId for the snapshot.
@@ -901,7 +918,7 @@ public class RecordingLog implements AutoCloseable
         final Entry entry = entriesCache.get(index);
         if (entry.logPosition != logPosition)
         {
-            commitEntryValue(entry.entryIndex, logPosition, LOG_POSITION_OFFSET);
+            commitEntryLogPosition(entry.entryIndex, logPosition);
 
             entriesCache.set(index, new Entry(
                 entry.recordingId,
@@ -1124,11 +1141,11 @@ public class RecordingLog implements AutoCloseable
         }
     }
 
-    private void commitEntryValue(final int entryIndex, final long value, final int fieldOffset)
+    private void commitEntryLogPosition(final int entryIndex, final long value)
     {
         buffer.putLong(0, value, LITTLE_ENDIAN);
         byteBuffer.limit(SIZE_OF_LONG).position(0);
-        final long position = (entryIndex * (long)ENTRY_LENGTH) + fieldOffset;
+        final long position = (entryIndex * (long)ENTRY_LENGTH) + LOG_POSITION_OFFSET;
 
         try
         {

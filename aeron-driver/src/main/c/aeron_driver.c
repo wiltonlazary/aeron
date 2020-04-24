@@ -22,37 +22,22 @@
 #endif
 #endif
 
+#include "util/aeron_platform.h"
+#if defined(AERON_COMPILER_MSVC) && defined(AERON_CPU_X64)
+#define _CRT_RAND_S
+
+#define S_IRWXU 0
+#define S_IRWXG 0
+#define S_IRWXO 0
+#endif
+#include <stdlib.h>
 #include <stddef.h>
 #include <sys/stat.h>
 #include <stdio.h>
 #include <time.h>
 #include <fcntl.h>
 
-#include "util/aeron_platform.h"
 #include "aeron_windows.h"
-#if defined(AERON_COMPILER_MSVC) && defined(AERON_CPU_X64)
-
-    #define _CRT_RAND_S
-    #include <io.h>
-    #include <direct.h>
-    #include <process.h>
-    #include <WinSock2.h>
-    #include <Windows.h>
-
-    #define S_IRWXU 0
-    static int aeron_mkdir(const char *path, int permission)
-    {
-        return _mkdir(path);
-    }
-
-#else
-
-    #include <unistd.h>
-
-    #define aeron_mkdir mkdir
-
-#endif
-
 #include <inttypes.h>
 #include "util/aeron_error.h"
 #include "aeronmd.h"
@@ -123,7 +108,6 @@ extern int aeron_number_of_trailing_zeroes_u64(uint64_t value);
 extern int32_t aeron_find_next_power_of_two(int32_t value);
 
 #ifndef HAVE_ARC4RANDOM
-#include <stdlib.h>
 static int aeron_dev_random_fd = -1;
 #endif
 
@@ -282,21 +266,21 @@ int aeron_driver_ensure_dir_is_recreated(aeron_driver_t *driver)
         }
     }
 
-    if (aeron_mkdir(driver->context->aeron_dir, S_IRWXU) != 0)
+    if (aeron_mkdir(driver->context->aeron_dir, S_IRWXU | S_IRWXG | S_IRWXO) != 0)
     {
         aeron_set_err_from_last_err_code("mkdir %s", driver->context->aeron_dir);
         return -1;
     }
 
     snprintf(buffer, sizeof(buffer) - 1, "%s/%s", dirname, AERON_PUBLICATIONS_DIR);
-    if (aeron_mkdir(buffer, S_IRWXU) != 0)
+    if (aeron_mkdir(buffer, S_IRWXU | S_IRWXG | S_IRWXO) != 0)
     {
         aeron_set_err_from_last_err_code("mkdir %s", buffer);
         return -1;
     }
 
     snprintf(buffer, sizeof(buffer) - 1, "%s/%s", dirname, AERON_IMAGES_DIR);
-    if (aeron_mkdir(buffer, S_IRWXU) != 0)
+    if (aeron_mkdir(buffer, S_IRWXU | S_IRWXG | S_IRWXO) != 0)
     {
         aeron_set_err_from_last_err_code("mkdir %s", buffer);
         return -1;
@@ -649,6 +633,18 @@ void aeron_driver_context_print_configuration(aeron_driver_context_t *context)
         (void *)context->termination_hook_func,
         aeron_dlinfo((const void *)context->termination_hook_func, buffer, sizeof(buffer)));
     fprintf(fpout, "\n    termination_hook_state=%p", context->termination_hook_state);
+    fprintf(fpout, "\n    name_resolver_supplier_func=%p%s",
+        (void *)context->name_resolver_supplier_func,
+        aeron_dlinfo((const void *)context->name_resolver_supplier_func, buffer, sizeof(buffer)));
+    fprintf(fpout, "\n    name_resolver_init_args=%s",
+        (void *)context->name_resolver_init_args ? context->name_resolver_init_args : "");
+    fprintf(fpout, "\n    resolver_name=%s",
+        (void *)context->resolver_name ? context->resolver_name : "");
+    fprintf(fpout, "\n    resolver_interface=%s",
+        (void *)context->resolver_interface ? context->resolver_interface : "");
+    fprintf(fpout, "\n    resolver_bootstrap_neighbor=%s",
+        (void *)context->resolver_bootstrap_neighbor ? context->resolver_bootstrap_neighbor : "");
+    fprintf(fpout, "\n    re_resolution_check_interval_ns=%" PRIu64, context->re_resolution_check_interval_ns);
 
     const aeron_udp_channel_transport_bindings_t *bindings = context->udp_channel_transport_bindings;
     while (NULL != bindings)
@@ -801,14 +797,15 @@ int aeron_driver_init(aeron_driver_t **driver, aeron_driver_context_t *context)
         goto error;
     }
 
+    context->counters_manager = &_driver->conductor.counters_manager;
+    context->system_counters = &_driver->conductor.system_counters;
+    context->error_log = &_driver->conductor.error_log;
+    _driver->context->conductor_proxy = &_driver->conductor.conductor_proxy;
+
     if (aeron_driver_conductor_init(&_driver->conductor, context) < 0)
     {
         goto error;
     }
-
-    context->counters_manager = &_driver->conductor.counters_manager;
-    context->error_log = &_driver->conductor.error_log;
-    _driver->context->conductor_proxy = &_driver->conductor.conductor_proxy;
 
     if (aeron_driver_sender_init(
         &_driver->sender, context, &_driver->conductor.system_counters, &_driver->conductor.error_log) < 0)

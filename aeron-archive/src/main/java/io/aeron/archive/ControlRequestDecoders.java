@@ -16,7 +16,6 @@
 package io.aeron.archive;
 
 import io.aeron.archive.codecs.*;
-import org.agrona.ExpandableArrayBuffer;
 
 class ControlRequestDecoders
 {
@@ -24,6 +23,7 @@ class ControlRequestDecoders
     final ConnectRequestDecoder connectRequest = new ConnectRequestDecoder();
     final CloseSessionRequestDecoder closeSessionRequest = new CloseSessionRequestDecoder();
     final StartRecordingRequestDecoder startRecordingRequest = new StartRecordingRequestDecoder();
+    final StartRecordingRequest2Decoder startRecordingRequest2 = new StartRecordingRequest2Decoder();
     final StopRecordingRequestDecoder stopRecordingRequest = new StopRecordingRequestDecoder();
     final ReplayRequestDecoder replayRequest = new ReplayRequestDecoder();
     final StopReplayRequestDecoder stopReplayRequest = new StopReplayRequestDecoder();
@@ -31,6 +31,7 @@ class ControlRequestDecoders
     final ListRecordingsForUriRequestDecoder listRecordingsForUriRequest = new ListRecordingsForUriRequestDecoder();
     final ListRecordingRequestDecoder listRecordingRequest = new ListRecordingRequestDecoder();
     final ExtendRecordingRequestDecoder extendRecordingRequest = new ExtendRecordingRequestDecoder();
+    final ExtendRecordingRequest2Decoder extendRecordingRequest2 = new ExtendRecordingRequest2Decoder();
     final RecordingPositionRequestDecoder recordingPositionRequest = new RecordingPositionRequestDecoder();
     final TruncateRecordingRequestDecoder truncateRecordingRequest = new TruncateRecordingRequestDecoder();
     final StopRecordingSubscriptionRequestDecoder stopRecordingSubscriptionRequest =
@@ -40,6 +41,8 @@ class ControlRequestDecoders
         new FindLastMatchingRecordingRequestDecoder();
     final ListRecordingSubscriptionsRequestDecoder listRecordingSubscriptionsRequest =
         new ListRecordingSubscriptionsRequestDecoder();
+    final StopRecordingByIdentityRequestDecoder stopRecordingByIdentityRequest =
+        new StopRecordingByIdentityRequestDecoder();
     final BoundedReplayRequestDecoder boundedReplayRequest = new BoundedReplayRequestDecoder();
     final StopAllReplaysRequestDecoder stopAllReplaysRequest = new StopAllReplaysRequestDecoder();
     final ReplicateRequestDecoder replicateRequest = new ReplicateRequestDecoder();
@@ -55,6 +58,4 @@ class ControlRequestDecoders
     final ChallengeResponseDecoder challengeResponse = new ChallengeResponseDecoder();
     final KeepAliveRequestDecoder keepAliveRequest = new KeepAliveRequestDecoder();
     final TaggedReplicateRequestDecoder taggedReplicateRequest = new TaggedReplicateRequestDecoder();
-
-    final ExpandableArrayBuffer tempBuffer = new ExpandableArrayBuffer();
 }

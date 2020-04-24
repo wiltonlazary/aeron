@@ -22,9 +22,9 @@ buildscript {
 plugins {
     id 'java-library'
     id 'idea'
-    id 'io.freefair.javadoc-links' version '4.1.6' apply false
+    id 'io.freefair.javadoc-links' version '5.0.0' apply false
     id 'com.github.johnrengelman.shadow' version '5.2.0' apply false
-    id 'biz.aQute.bnd.builder' version '5.0.0' apply false
+    id 'biz.aQute.bnd.builder' version '5.0.1' apply false
     id "com.github.ben-manes.versions" version "0.28.0"
 }
 
@@ -33,12 +33,13 @@ defaultTasks 'clean', 'build'
 def aeronGroup = 'io.aeron'
 def aeronVersion = file('version.txt').text.trim()
 
-def agronaVersion = '1.4.0'
-def sbeVersion = '1.16.3'
+def agronaVersion = '1.4.1'
+def agronaVersionRange = '[1.4,1.5[' // allow any patch release of 1.4.x
+def sbeVersion = '1.17.0'
 def checkstyleVersion = '8.28'
 def hamcrestVersion = '2.2'
-def junitVersion = '5.6.0'
-def mockitoVersion = '3.3.0'
+def junitVersion = '5.6.2'
+def mockitoVersion = '3.3.3'
 def byteBuddyVersion = '1.10.5'
 def hdrHistogramVersion = '2.1.12'
 
@@ -120,8 +121,8 @@ jar.enabled = false
 
 allprojects {
     repositories {
-        mavenCentral()
         mavenLocal()
+        mavenCentral()
     }
 }
 
@@ -236,7 +237,12 @@ project(':aeron-client') {
     apply plugin: 'biz.aQute.bnd.builder'
 
     dependencies {
-        api "org.agrona:agrona:${agronaVersion}"
+        api("org.agrona:agrona") {
+            version {
+                strictly(agronaVersionRange)
+                prefer(agronaVersion)
+            }
+        }
     }
 
     jar {
@@ -605,12 +611,12 @@ project(':aeron-agent') {
     task sourcesJar(type: Jar) {
         archiveClassifier.set('sources')
         from files(
-                aeronClientProject.sourceSets.main.allSource,
-                aeronDriverProject.sourceSets.main.allSource,
-                aeronArchiveProject.sourceSets.main.allSource,
-                aeronArchiveProject.sourceSets.generated.allSource,
-                aeronClusterProject.sourceSets.main.allSource,
-                aeronClusterProject.sourceSets.generated.allSource)
+            aeronClientProject.sourceSets.main.allSource,
+            aeronDriverProject.sourceSets.main.allSource,
+            aeronArchiveProject.sourceSets.main.allSource,
+            aeronArchiveProject.sourceSets.generated.allSource,
+            aeronClusterProject.sourceSets.main.allSource,
+            aeronClusterProject.sourceSets.generated.allSource)
     }
 
     javadoc {
@@ -706,9 +712,8 @@ project(':aeron-system-tests') {
 
 project(':aeron-test-support') {
     dependencies {
-        api "org.junit.jupiter:junit-jupiter-api:${junitVersion}"
-        api "org.agrona:agrona:${agronaVersion}"
         api project(':aeron-client')
+        api "org.junit.jupiter:junit-jupiter-api:${junitVersion}"
         implementation "org.mockito:mockito-junit-jupiter:${mockitoVersion}"
     }
 }
@@ -810,6 +815,6 @@ task copyCrashLogs(type: Copy) {
 }
 
 wrapper {
-    gradleVersion = '6.2.1'
+    gradleVersion = '6.3'
     distributionType = 'ALL'
 }

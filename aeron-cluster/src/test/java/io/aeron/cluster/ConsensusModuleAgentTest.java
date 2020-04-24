@@ -17,12 +17,12 @@ package io.aeron.cluster;
 
 import io.aeron.*;
 import io.aeron.archive.client.AeronArchive;
-import io.aeron.cluster.codecs.ClusterAction;
-import io.aeron.cluster.codecs.EventCode;
+import io.aeron.cluster.codecs.*;
 import io.aeron.cluster.service.Cluster;
 import io.aeron.cluster.service.ClusterMarkFile;
 import io.aeron.security.DefaultAuthenticatorSupplier;
 import io.aeron.status.ReadableCounter;
+import io.aeron.test.Tests;
 import org.agrona.collections.MutableLong;
 import org.agrona.concurrent.AgentInvoker;
 import org.agrona.concurrent.NoOpIdleStrategy;
@@ -56,7 +56,7 @@ public class ConsensusModuleAgentTest
     private final Counter mockTimedOutClientCounter = mock(Counter.class);
 
     private final ConsensusModule.Context ctx = new ConsensusModule.Context()
-        .errorHandler(Throwable::printStackTrace)
+        .errorHandler(Tests::onError)
         .errorCounter(mock(AtomicCounter.class))
         .moduleStateCounter(mock(Counter.class))
         .commitPositionCounter(mock(Counter.class))
@@ -151,7 +151,7 @@ public class ConsensusModuleAgentTest
         verify(mockTimedOutClientCounter).incrementOrdered();
         verify(mockLogPublisher).appendSessionClose(any(ClusterSession.class), anyLong(), eq(timeoutMs));
         verify(mockEgressPublisher).sendEvent(
-            any(ClusterSession.class), anyLong(), anyInt(), eq(EventCode.ERROR), eq(SESSION_TIMEOUT_MSG));
+            any(ClusterSession.class), anyLong(), anyInt(), eq(EventCode.CLOSED), eq(CloseReason.TIMEOUT.name()));
     }
 
     @Test
@@ -186,7 +186,11 @@ public class ConsensusModuleAgentTest
 
         verify(mockLogPublisher).appendSessionClose(any(ClusterSession.class), anyLong(), eq(timeMs));
         verify(mockEgressPublisher).sendEvent(
-            any(ClusterSession.class), anyLong(), anyInt(), eq(EventCode.ERROR), eq(SESSION_TERMINATED_MSG));
+            any(ClusterSession.class),
+            anyLong(),
+            anyInt(),
+            eq(EventCode.CLOSED),
+            eq(CloseReason.SERVICE_ACTION.name()));
     }
 
     @Test

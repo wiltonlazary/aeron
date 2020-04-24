@@ -82,6 +82,9 @@ using namespace aeron;
 #define _TERM_LENGTH_1 65536
 #define _TERM_LENGTH_2 131072
 
+#define CHANNEL_1_WITH_TAG_1001 "aeron:udp?endpoint=localhost:40001|tags=1001"
+#define CHANNEL_TAG_1001 "aeron:udp?tags=1001"
+
 #define CHANNEL_1_WITH_SESSION_ID_1 "aeron:udp?endpoint=localhost:40001|session-id=" STR(_SESSION_ID_1)
 #define CHANNEL_1_WITH_SESSION_ID_2 "aeron:udp?endpoint=localhost:40001|session-id=" STR(_SESSION_ID_2)
 #define CHANNEL_1_WITH_SESSION_ID_3 "aeron:udp?endpoint=localhost:40001|session-id=" STR(_SESSION_ID_3)
@@ -283,9 +286,38 @@ public:
 
     size_t readAllBroadcastsFromConductor(const handler_t &func)
     {
+        return readAllBroadcastsFromConductor(func, m_hideCounterResponses);
+    }
+
+    size_t readAllBroadcastsFromConductor(const handler_t &func, const std::vector<std::int32_t>& ignored_msg_types)
+    {
         size_t num_received = 0;
 
-        while (m_to_clients_copy_receiver.receive(func) > 0)
+        auto handler = [&](std::int32_t msgTypeId, AtomicBuffer& buffer, util::index_t offset, util::index_t length)
+        {
+            const bool msgTypeIgnored = std::end(ignored_msg_types) != std::find(
+                std::begin(ignored_msg_types), std::end(ignored_msg_types), msgTypeId);
+
+            if (!msgTypeIgnored)
+            {
+                func(msgTypeId, buffer, offset, length);
+                num_received++;
+            }
+        };
+
+        while (m_to_clients_copy_receiver.receive(handler) > 0)
+        {
+            // No-op
+        }
+
+        return num_received;
+    }
+
+    size_t readNextBroadcastFromConductor(const handler_t &func)
+    {
+        size_t num_received = 0;
+
+        if (m_to_clients_copy_receiver.receive(func) > 0)
         {
             num_received++;
         }
@@ -447,6 +479,26 @@ public:
         return writeCommand(AERON_COMMAND_REMOVE_COUNTER, command.length());
     }
 
+    int32_t expectNextCounterFromConductor(std::int32_t correlationId)
+    {
+        int32_t counter_id = -1;
+        auto handler = [&](std::int32_t msgTypeId, AtomicBuffer& buffer, util::index_t offset, util::index_t length)
+        {
+            ASSERT_EQ(msgTypeId, AERON_RESPONSE_ON_COUNTER_READY);
+
+            const command::CounterUpdateFlyweight response(buffer, offset);
+
+            EXPECT_EQ(response.correlationId(), correlationId);
+            counter_id = response.counterId();
+            EXPECT_GE(counter_id, 0);
+        };
+
+        size_t read_from_buffer = readNextBroadcastFromConductor(handler);
+        EXPECT_EQ(read_from_buffer, 1u);
+
+        return counter_id;
+    }
+
     template<typename F>
     bool findCounter(int32_t counter_id, F &&func)
     {
@@ -569,6 +621,12 @@ protected:
 
     AtomicBuffer m_to_driver_buffer;
     ManyToOneRingBuffer m_to_driver;
+    const std::vector<std::int32_t> m_hideCounterResponses
+    {
+        AERON_RESPONSE_ON_COUNTER_READY,
+        AERON_RESPONSE_ON_UNAVAILABLE_COUNTER
+    };
+    const std::vector<std::int32_t> m_showAllResponses { };
 };
 
 static auto null_handler = [](std::int32_t msgTypeId, AtomicBuffer& buffer, util::index_t offset, util::index_t length)

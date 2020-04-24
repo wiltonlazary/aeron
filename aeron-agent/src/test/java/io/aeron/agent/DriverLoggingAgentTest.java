@@ -95,6 +95,8 @@ public class DriverLoggingAgentTest
             SEND_CHANNEL_CLOSE,
             RECEIVE_CHANNEL_CLOSE,
             CMD_OUT_SUBSCRIPTION_READY,
+            CMD_OUT_ON_UNAVAILABLE_COUNTER,
+            CMD_OUT_COUNTER_READY,
             CMD_IN_CLIENT_CLOSE));
     }
 
@@ -132,7 +134,7 @@ public class DriverLoggingAgentTest
         final String aeronDirectoryName = testDir.toPath().resolve("media").toString();
 
         final MediaDriver.Context driverCtx = new MediaDriver.Context()
-            .errorHandler(Throwable::printStackTrace)
+            .errorHandler(Tests::onError)
             .publicationLingerTimeoutNs(0)
             .timerIntervalNs(TimeUnit.MILLISECONDS.toNanos(1))
             .aeronDirectoryName(aeronDirectoryName);

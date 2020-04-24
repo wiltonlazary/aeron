@@ -17,7 +17,6 @@ package io.aeron.samples;
 
 import io.aeron.CncFileDescriptor;
 import io.aeron.CommonContext;
-import org.agrona.DirectBuffer;
 import org.agrona.concurrent.AtomicBuffer;
 import org.agrona.concurrent.errors.ErrorLogReader;
 
@@ -25,7 +24,6 @@ import java.io.File;
 import java.nio.MappedByteBuffer;
 import java.text.SimpleDateFormat;
 import java.util.Date;
-
 
 /**
  * Application to print out errors recorded in the command-and-control (cnc) file is maintained by media driver in
@@ -42,12 +40,8 @@ public class ErrorStat
         System.out.println("Command `n Control file " + cncFile);
 
         final MappedByteBuffer cncByteBuffer = SamplesUtil.mapExistingFileReadOnly(cncFile);
-        final DirectBuffer cncMetaDataBuffer = CncFileDescriptor.createMetaDataBuffer(cncByteBuffer);
-        final int cncVersion = cncMetaDataBuffer.getInt(CncFileDescriptor.cncVersionOffset(0));
 
-        CncFileDescriptor.checkVersion(cncVersion);
-
-        final AtomicBuffer buffer = CncFileDescriptor.createErrorLogBuffer(cncByteBuffer, cncMetaDataBuffer);
+        final AtomicBuffer buffer = CommonContext.errorLogBuffer(cncByteBuffer);
         final int distinctErrorCount = ErrorLogReader.read(buffer, ErrorStat::accept);
 
         System.out.format("%n%d distinct errors observed.%n", distinctErrorCount);

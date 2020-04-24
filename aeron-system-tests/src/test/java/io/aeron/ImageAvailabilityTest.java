@@ -45,14 +45,14 @@ public class ImageAvailabilityTest
     private static final int STREAM_ID = 1001;
 
     private final TestMediaDriver driver = TestMediaDriver.launch(new MediaDriver.Context()
-        .errorHandler(Throwable::printStackTrace)
+        .errorHandler(Tests::onError)
         .dirDeleteOnStart(true)
         .timerIntervalNs(TimeUnit.MILLISECONDS.toNanos(20))
         .threadingMode(ThreadingMode.SHARED));
 
     private final Aeron aeron = Aeron.connect(new Aeron.Context()
         .useConductorAgentInvoker(true)
-        .errorHandler(Throwable::printStackTrace));
+        .errorHandler(Tests::onError));
 
     @AfterEach
     public void after()
@@ -127,8 +127,7 @@ public class ImageAvailabilityTest
 
         final String spyChannel = channel.contains("ipc") ? channel : CommonContext.SPY_PREFIX + channel;
         final Aeron.Context ctx = new Aeron.Context()
-            .useConductorAgentInvoker(true)
-            .errorHandler(Throwable::printStackTrace);
+            .useConductorAgentInvoker(true);
 
         try (Aeron aeronTwo = Aeron.connect(ctx);
             Subscription subOne = aeron.addSubscription(channel, STREAM_ID, availableHandler, unavailableHandler);

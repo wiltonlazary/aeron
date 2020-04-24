@@ -62,12 +62,12 @@ public class ReplayMergeTest
         .minFlowControl(null, "5s")
         .termLength(TERM_LENGTH);
 
-    private ChannelUriStringBuilder recordingChannel = new ChannelUriStringBuilder()
+    private final ChannelUriStringBuilder recordingChannel = new ChannelUriStringBuilder()
         .media(CommonContext.UDP_MEDIA)
         .endpoint(RECORDING_ENDPOINT)
         .controlEndpoint(CONTROL_ENDPOINT);
 
-    private ChannelUriStringBuilder subscriptionChannel = new ChannelUriStringBuilder()
+    private final ChannelUriStringBuilder subscriptionChannel = new ChannelUriStringBuilder()
         .media(CommonContext.UDP_MEDIA)
         .controlMode(CommonContext.MDC_CONTROL_MODE_MANUAL);
 
@@ -105,13 +105,13 @@ public class ReplayMergeTest
                 .termBufferSparseFile(true)
                 .publicationTermBufferLength(TERM_LENGTH)
                 .threadingMode(ThreadingMode.SHARED)
-                .errorHandler(Throwable::printStackTrace)
+                .errorHandler(Tests::onError)
                 .spiesSimulateConnection(false)
                 .dirDeleteOnStart(true),
             new Archive.Context()
                 .maxCatalogEntries(MAX_CATALOG_ENTRIES)
                 .aeronDirectoryName(mediaDriverContext.aeronDirectoryName())
-                .errorHandler(Throwable::printStackTrace)
+                .errorHandler(Tests::onError)
                 .archiveDir(archiveDir)
                 .recordingEventsEnabled(false)
                 .threadingMode(ArchiveThreadingMode.SHARED)
@@ -119,12 +119,11 @@ public class ReplayMergeTest
 
         aeron = Aeron.connect(
             new Aeron.Context()
-                .errorHandler(Throwable::printStackTrace)
                 .aeronDirectoryName(mediaDriverContext.aeronDirectoryName()));
 
         aeronArchive = AeronArchive.connect(
             new AeronArchive.Context()
-                .errorHandler(Throwable::printStackTrace)
+                .errorHandler(Tests::onError)
                 .aeron(aeron));
     }
 

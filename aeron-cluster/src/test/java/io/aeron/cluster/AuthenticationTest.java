@@ -62,9 +62,10 @@ public class AuthenticationTest
     @AfterEach
     public void after()
     {
-        CloseHelper.close(aeronCluster);
-        CloseHelper.close(container);
-        CloseHelper.close(clusteredMediaDriver);
+        final ConsensusModule consensusModule = null == clusteredMediaDriver ?
+            null : clusteredMediaDriver.consensusModule();
+
+        CloseHelper.closeAll(aeronCluster, consensusModule, container, clusteredMediaDriver);
 
         if (null != clusteredMediaDriver)
         {
@@ -127,7 +128,7 @@ public class AuthenticationTest
 
         connectClient(credentialsSupplier);
         sendCountedMessageIntoCluster(0);
-        TestCluster.awaitCount(serviceMsgCounter, 1);
+        Tests.awaitValue(serviceMsgCounter, 1);
 
         assertEquals(aeronCluster.clusterSessionId(), authenticatorSessionId.value);
         assertEquals(aeronCluster.clusterSessionId(), serviceSessionId.value);
@@ -189,7 +190,7 @@ public class AuthenticationTest
 
         connectClient(credentialsSupplier);
         sendCountedMessageIntoCluster(0);
-        TestCluster.awaitCount(serviceMsgCounter, 1);
+        Tests.awaitValue(serviceMsgCounter, 1);
 
         assertEquals(aeronCluster.clusterSessionId(), authenticatorSessionId.value);
         assertEquals(aeronCluster.clusterSessionId(), serviceSessionId.value);
@@ -259,7 +260,7 @@ public class AuthenticationTest
 
         connectClient(credentialsSupplier);
         sendCountedMessageIntoCluster(0);
-        TestCluster.awaitCount(serviceMsgCounter, 1);
+        Tests.awaitValue(serviceMsgCounter, 1);
 
         assertEquals(aeronCluster.clusterSessionId(), authenticatorSessionId.value);
         assertEquals(aeronCluster.clusterSessionId(), serviceSessionId.value);
@@ -446,8 +447,6 @@ public class AuthenticationTest
             }
         };
 
-        container = null;
-
         container = ClusteredServiceContainer.launch(
             new ClusteredServiceContainer.Context()
                 .clusteredService(service)
@@ -464,14 +463,11 @@ public class AuthenticationTest
 
     private void connectClient(final CredentialsSupplier credentialsSupplier)
     {
-        aeronCluster = null;
         aeronCluster = connectToCluster(credentialsSupplier);
     }
 
     private void launchClusteredMediaDriver(final AuthenticatorSupplier authenticatorSupplier)
     {
-        clusteredMediaDriver = null;
-
         clusteredMediaDriver = ClusteredMediaDriver.launch(
             new MediaDriver.Context()
                 .warnIfDirectoryExists(true)
@@ -485,7 +481,7 @@ public class AuthenticationTest
                 .recordingEventsEnabled(false)
                 .deleteArchiveOnStart(true),
             new ConsensusModule.Context()
-                .errorHandler(Throwable::printStackTrace)
+                .errorHandler(ClusterTests.errorHandler(0))
                 .authenticatorSupplier(authenticatorSupplier)
                 .terminationHook(ClusterTests.TERMINATION_HOOK)
                 .deleteDirOnStart(true));

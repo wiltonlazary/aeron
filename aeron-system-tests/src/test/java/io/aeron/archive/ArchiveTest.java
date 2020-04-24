@@ -135,7 +135,7 @@ public class ArchiveTest
                 .threadingMode(threadingMode)
                 .sharedIdleStrategy(YieldingIdleStrategy.INSTANCE)
                 .spiesSimulateConnection(true)
-                .errorHandler(Throwable::printStackTrace)
+                .errorHandler(Tests::onError)
                 .dirDeleteOnStart(true));
 
         archive = Archive.launch(
@@ -151,7 +151,7 @@ public class ArchiveTest
                 .errorCounter(driver.context().systemCounters().get(SystemCounterDescriptor.ERRORS))
                 .errorHandler(driver.context().errorHandler()));
 
-        client = Aeron.connect(new Aeron.Context().errorHandler(Throwable::printStackTrace));
+        client = Aeron.connect();
 
         recorded = 0;
     }
@@ -191,6 +191,7 @@ public class ArchiveTest
 
         final Publication controlPublication = client.addPublication(controlChannel, controlStreamId);
         final Subscription recordingEvents = client.addSubscription(recordingChannel, recordingStreamId);
+        Tests.await(recordingEvents::isConnected, TIMEOUT_NS);
         final ArchiveProxy archiveProxy = new ArchiveProxy(controlPublication);
 
         prePublicationActionsAndVerifications(archiveProxy, controlPublication, recordingEvents);
@@ -235,6 +236,7 @@ public class ArchiveTest
 
         final Publication controlPublication = client.addPublication(controlChannel, controlStreamId);
         final Subscription recordingEvents = client.addSubscription(recordingChannel, recordingStreamId);
+        Tests.await(recordingEvents::isConnected, TIMEOUT_NS);
         final ArchiveProxy archiveProxy = new ArchiveProxy(controlPublication);
 
         prePublicationActionsAndVerifications(archiveProxy, controlPublication, recordingEvents);
@@ -284,6 +286,7 @@ public class ArchiveTest
 
         final Publication controlPublication = client.addPublication(controlChannel, controlStreamId);
         final Subscription recordingEvents = client.addSubscription(recordingChannel, recordingStreamId);
+        Tests.await(recordingEvents::isConnected, TIMEOUT_NS);
         final ArchiveProxy archiveProxy = new ArchiveProxy(controlPublication);
 
         prePublicationActionsAndVerifications(archiveProxy, controlPublication, recordingEvents);

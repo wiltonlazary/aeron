@@ -133,8 +133,29 @@ public class ChannelUri
      */
     public ChannelUri media(final String media)
     {
+        validateMedia(media);
         this.media = media;
         return this;
+    }
+
+    /**
+     * Is the channel {@link #media()} equal to {@link CommonContext#UDP_MEDIA}.
+     *
+     * @return true the channel {@link #media()} equals {@link CommonContext#UDP_MEDIA}.
+     */
+    public boolean isUdp()
+    {
+        return UDP_MEDIA.equals(media);
+    }
+
+    /**
+     * Is the channel {@link #media()} equal to {@link CommonContext#IPC_MEDIA}.
+     *
+     * @return true the channel {@link #media()} equals {@link CommonContext#IPC_MEDIA}.
+     */
+    public boolean isIpc()
+    {
+        return IPC_MEDIA.equals(media);
     }
 
     /**
@@ -303,6 +324,7 @@ public class ChannelUri
      * @param cs to be parsed.
      * @return a new {@link ChannelUri} representing the URI string.
      */
+    @SuppressWarnings("MethodLength")
     public static ChannelUri parse(final CharSequence cs)
     {
         int position = 0;
@@ -319,7 +341,7 @@ public class ChannelUri
 
         if (!startsWith(cs, position, AERON_PREFIX))
         {
-            throw new IllegalArgumentException("Aeron URIs must start with 'aeron:', found: '" + cs + "'");
+            throw new IllegalArgumentException("Aeron URIs must start with 'aeron:', found: " + cs);
         }
         else
         {
@@ -332,10 +354,9 @@ public class ChannelUri
         String key = null;
 
         State state = State.MEDIA;
-        for (int i = position; i < cs.length(); i++)
+        for (int i = position, length = cs.length(); i < length; i++)
         {
             final char c = cs.charAt(i);
-
             switch (state)
             {
                 case MEDIA:
@@ -348,7 +369,10 @@ public class ChannelUri
                             break;
 
                         case ':':
-                            throw new IllegalArgumentException("encountered ':' within media definition");
+                        case '|':
+                        case '=':
+                            throw new IllegalArgumentException(
+                                "encountered '" + c + "' within media definition at index " + i + " in " + cs);
 
                         default:
                             builder.append(c);
@@ -358,12 +382,20 @@ public class ChannelUri
                 case PARAMS_KEY:
                     if (c == '=')
                     {
+                        if (0 == builder.length())
+                        {
+                            throw new IllegalStateException("empty key not allowed at index " + i + " in " + cs);
+                        }
                         key = builder.toString();
                         builder.setLength(0);
                         state = State.PARAMS_VALUE;
                     }
                     else
                     {
+                        if (c == '|')
+                        {
+                            throw new IllegalStateException("invalid end of key at index " + i + " in " + cs);
+                        }
                         builder.append(c);
                     }
                     break;
@@ -390,6 +422,7 @@ public class ChannelUri
         {
             case MEDIA:
                 media = builder.toString();
+                validateMedia(media);
                 break;
 
             case PARAMS_VALUE:
@@ -397,7 +430,7 @@ public class ChannelUri
                 break;
 
             default:
-                throw new IllegalArgumentException("no more input found, state=" + state);
+                throw new IllegalStateException("no more input found, state=" + state);
         }
 
         return new ChannelUri(prefix, media, params);
@@ -443,6 +476,16 @@ public class ChannelUri
     {
         return isTagged(paramValue) ?
             AsciiEncoding.parseLongAscii(paramValue, 4, paramValue.length() - 4) : INVALID_TAG;
+    }
+
+    private static void validateMedia(final String media)
+    {
+        if (IPC_MEDIA.equals(media) || UDP_MEDIA.equals(media))
+        {
+            return;
+        }
+
+        throw new IllegalArgumentException("unknown media: " + media);
     }
 
     private static boolean startsWith(final CharSequence input, final int position, final CharSequence prefix)

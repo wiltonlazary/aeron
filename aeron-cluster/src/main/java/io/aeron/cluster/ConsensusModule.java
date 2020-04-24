@@ -370,7 +370,7 @@ public class ConsensusModule implements AutoCloseable
          * Channel for the clustered log. This channel can exist for a potentially log time given cluster operation
          * so attention should be given to configuration such as term-length and mtu.
          */
-        public static final String LOG_CHANNEL_DEFAULT = "aeron:udp?endpoint=localhost:9030|group=true|term-length=64m";
+        public static final String LOG_CHANNEL_DEFAULT = "aeron:udp?term-length=64m";
 
         /**
          * Property name for the comma separated list of member endpoints.
@@ -412,16 +412,6 @@ public class ConsensusModule implements AutoCloseable
          * Message detail to be sent when max concurrent session limit is reached.
          */
         public static final String SESSION_LIMIT_MSG = "concurrent session limit";
-
-        /**
-         * Message detail to be sent when a session timeout occurs.
-         */
-        public static final String SESSION_TIMEOUT_MSG = "session inactive";
-
-        /**
-         * Message detail to be sent when a session is terminated by a service.
-         */
-        public static final String SESSION_TERMINATED_MSG = "session terminated";
 
         /**
          * Message detail to be sent when a session is rejected due to authentication.
@@ -1030,6 +1020,7 @@ public class ConsensusModule implements AutoCloseable
         private String aeronDirectoryName = CommonContext.getAeronDirectoryName();
         private Aeron aeron;
 
+        private boolean shouldTerminateWhenClosed = true;
         private boolean deleteDirOnStart = false;
         private String clusterDirectoryName = ClusteredServiceContainer.Configuration.clusterDirName();
         private File clusterDir;
@@ -1360,6 +1351,30 @@ public class ConsensusModule implements AutoCloseable
         public boolean deleteDirOnStart()
         {
             return deleteDirOnStart;
+        }
+
+        /**
+         * Should the consensus module terminate by {@link AgentTerminationException} when
+         * in {@link ConsensusModule.State#CLOSED} state.
+         *
+         * @param shouldTerminateWhenClosed should the {@link Agent} terminate when closed state is entered?
+         * @return this for a fluent API.
+         */
+        public Context shouldTerminateWhenClosed(final boolean shouldTerminateWhenClosed)
+        {
+            this.shouldTerminateWhenClosed = shouldTerminateWhenClosed;
+            return this;
+        }
+
+        /**
+         * Should the consensus module terminate by {@link AgentTerminationException} when
+         * in {@link ConsensusModule.State#CLOSED} state.
+         *
+         * @return true when the {@link Agent} should terminate when closed state is entered?
+         */
+        public boolean shouldTerminateWhenClosed()
+        {
+            return shouldTerminateWhenClosed;
         }
 
         /**

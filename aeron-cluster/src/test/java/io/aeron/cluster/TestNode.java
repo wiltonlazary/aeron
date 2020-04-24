@@ -15,22 +15,20 @@
  */
 package io.aeron.cluster;
 
-import io.aeron.ExclusivePublication;
-import io.aeron.Image;
+import io.aeron.*;
 import io.aeron.archive.Archive;
 import io.aeron.archive.client.AeronArchive;
 import io.aeron.archive.status.RecordingPos;
+import io.aeron.cluster.codecs.CloseReason;
 import io.aeron.cluster.service.ClientSession;
 import io.aeron.cluster.service.Cluster;
 import io.aeron.cluster.service.ClusteredServiceContainer;
-import io.aeron.cluster.service.CommitPos;
 import io.aeron.driver.MediaDriver;
 import io.aeron.driver.status.SystemCounterDescriptor;
 import io.aeron.logbuffer.FragmentHandler;
 import io.aeron.logbuffer.Header;
 import org.agrona.*;
 import org.agrona.collections.MutableInteger;
-import org.agrona.collections.MutableLong;
 import org.agrona.concurrent.AgentTerminationException;
 import org.agrona.concurrent.status.CountersReader;
 
@@ -39,6 +37,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static io.aeron.Aeron.NULL_VALUE;
+import static io.aeron.archive.client.AeronArchive.NULL_POSITION;
+import static org.junit.jupiter.api.Assertions.fail;
 
 class TestNode implements AutoCloseable
 {
@@ -71,6 +71,11 @@ class TestNode implements AutoCloseable
         return clusteredMediaDriver.consensusModule();
     }
 
+    ClusteredServiceContainer container()
+    {
+        return container;
+    }
+
     TestService service()
     {
         return service;
@@ -81,7 +86,7 @@ class TestNode implements AutoCloseable
         if (!isClosed)
         {
             isClosed = true;
-            CloseHelper.closeAll(container, clusteredMediaDriver);
+            CloseHelper.closeAll(clusteredMediaDriver.consensusModule(), container, clusteredMediaDriver);
         }
     }
 
@@ -147,57 +152,76 @@ class TestNode implements AutoCloseable
         }
     }
 
-    Cluster.Role role()
-    {
-        return Cluster.Role.get((int)clusteredMediaDriver.consensusModule().context().clusterNodeRoleCounter().get());
-    }
-
     boolean isClosed()
     {
         return isClosed;
     }
 
+    Cluster.Role role()
+    {
+        final Counter counter = clusteredMediaDriver.consensusModule().context().clusterNodeRoleCounter();
+        if (counter.isClosed())
+        {
+            return Cluster.Role.FOLLOWER;
+        }
+
+        return Cluster.Role.get(counter);
+    }
+
     Election.State electionState()
     {
-        return Election.State.get((int)clusteredMediaDriver.consensusModule().context().electionStateCounter().get());
+        final Counter counter = clusteredMediaDriver.consensusModule().context().electionStateCounter();
+        if (counter.isClosed())
+        {
+            return Election.State.CLOSED;
+        }
+
+        return Election.State.get(counter);
+    }
+
+    ConsensusModule.State moduleState()
+    {
+        final Counter counter = clusteredMediaDriver.consensusModule().context().moduleStateCounter();
+        if (counter.isClosed())
+        {
+            return ConsensusModule.State.CLOSED;
+        }
+
+        return ConsensusModule.State.get(counter);
     }
 
     long commitPosition()
     {
-        final MutableLong commitPosition = new MutableLong(NULL_VALUE);
+        final Counter counter = clusteredMediaDriver.consensusModule().context().commitPositionCounter();
+        if (counter.isClosed())
+        {
+            return NULL_POSITION;
+        }
 
-        countersReader().forEach(
-            (counterId, typeId, keyBuffer, label) ->
-            {
-                if (typeId == CommitPos.COMMIT_POSITION_TYPE_ID)
-                {
-                    commitPosition.value = countersReader().getCounterValue(counterId);
-                }
-            });
-
-        return commitPosition.value;
+        return counter.get();
     }
 
     long appendPosition()
     {
-        final MutableLong appendPosition = new MutableLong(NULL_VALUE);
+        final long recordingId = consensusModule().context().recordingLog().findLastTermRecordingId();
+        if (RecordingPos.NULL_RECORDING_ID == recordingId)
+        {
+            fail("no recording for last term");
+        }
 
-        countersReader().forEach(
-            (counterId, typeId, keyBuffer, label) ->
-            {
-                // Doesn't work if there with multiple recordings
-                if (typeId == RecordingPos.RECORDING_POSITION_TYPE_ID)
-                {
-                    appendPosition.value = countersReader().getCounterValue(counterId);
-                }
-            });
+        final CountersReader countersReader = countersReader();
+        final int counterId = RecordingPos.findCounterIdByRecording(countersReader, recordingId);
+        if (NULL_VALUE == counterId)
+        {
+            fail("recording not active " + recordingId);
+        }
 
-        return appendPosition.value;
+        return countersReader.getCounterValue(counterId);
     }
 
     boolean isLeader()
     {
-        return role() == Cluster.Role.LEADER;
+        return role() == Cluster.Role.LEADER && moduleState() != ConsensusModule.State.CLOSED;
     }
 
     boolean isFollower()
@@ -258,17 +282,19 @@ class TestNode implements AutoCloseable
         }
     }
 
+    @SuppressWarnings("NonAtomicOperationOnVolatileField")
     static class TestService extends StubClusteredService
     {
-        public static final int SNAPSHOT_FRAGMENT_COUNT = 500;
-        public static final int SNAPSHOT_MSG_LENGTH = 1000;
+        static final int SNAPSHOT_FRAGMENT_COUNT = 500;
+        static final int SNAPSHOT_MSG_LENGTH = 1000;
+
         private int index;
+        private volatile int activeSessionCount;
         private volatile int messageCount;
         private volatile boolean wasSnapshotTaken = false;
         private volatile boolean wasSnapshotLoaded = false;
-        private volatile boolean wasOnStartCalled = false;
-        private volatile Cluster.Role roleChangedTo = null;
         private volatile boolean hasReceivedUnexpectedMessage = false;
+        private volatile Cluster.Role roleChangedTo = null;
 
         TestService index(final int index)
         {
@@ -279,6 +305,11 @@ class TestNode implements AutoCloseable
         int index()
         {
             return index;
+        }
+
+        int activeSessionCount()
+        {
+            return activeSessionCount;
         }
 
         int messageCount()
@@ -301,11 +332,6 @@ class TestNode implements AutoCloseable
             return wasSnapshotLoaded;
         }
 
-        boolean wasOnStartCalled()
-        {
-            return wasOnStartCalled;
-        }
-
         Cluster.Role roleChangedTo()
         {
             return roleChangedTo;
@@ -324,6 +350,8 @@ class TestNode implements AutoCloseable
         public void onStart(final Cluster cluster, final Image snapshotImage)
         {
             super.onStart(cluster, snapshotImage);
+
+            activeSessionCount = cluster.clientSessions().size();
 
             if (null != snapshotImage)
             {
@@ -356,8 +384,6 @@ class TestNode implements AutoCloseable
 
                 wasSnapshotLoaded = true;
             }
-
-            wasOnStartCalled = true;
         }
 
         public void onSessionMessage(
@@ -369,7 +395,7 @@ class TestNode implements AutoCloseable
             final Header header)
         {
             final String message = buffer.getStringWithoutLengthAscii(offset, length);
-            if (message.equals(TestMessages.REGISTER_TIMER))
+            if (message.equals(ClusterTests.REGISTER_TIMER_MSG))
             {
                 while (!cluster.scheduleTimer(1, cluster.time() + 1_000))
                 {
@@ -377,13 +403,13 @@ class TestNode implements AutoCloseable
                 }
             }
 
-            if (message.equals(TestMessages.POISON_MESSAGE))
+            if (message.equals(ClusterTests.POISON_MSG))
             {
                 hasReceivedUnexpectedMessage = true;
                 throw new IllegalStateException("Poison message received.");
             }
 
-            if (message.equals(TestMessages.ECHO_IPC_INGRESS))
+            if (message.equals(ClusterTests.ECHO_IPC_INGRESS_MSG))
             {
                 if (null != session)
                 {
@@ -414,7 +440,6 @@ class TestNode implements AutoCloseable
                 }
             }
 
-            //noinspection NonAtomicOperationOnVolatileField
             ++messageCount;
         }
 
@@ -433,6 +458,18 @@ class TestNode implements AutoCloseable
             }
 
             wasSnapshotTaken = true;
+        }
+
+        public void onSessionOpen(final ClientSession session, final long timestamp)
+        {
+            super.onSessionOpen(session, timestamp);
+            activeSessionCount += 1;
+        }
+
+        public void onSessionClose(final ClientSession session, final long timestamp, final CloseReason closeReason)
+        {
+            super.onSessionClose(session, timestamp, closeReason);
+            activeSessionCount -= 1;
         }
 
         public void onRoleChange(final Cluster.Role newRole)

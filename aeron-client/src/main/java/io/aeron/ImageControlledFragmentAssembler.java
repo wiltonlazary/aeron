@@ -105,9 +105,8 @@ public class ImageControlledFragmentAssembler implements ControlledFragmentHandl
      */
     public Action onFragment(final DirectBuffer buffer, final int offset, final int length, final Header header)
     {
-        final byte flags = header.flags();
-
         Action action = Action.CONTINUE;
+        final byte flags = header.flags();
 
         if ((flags & UNFRAGMENTED) == UNFRAGMENTED)
         {
@@ -122,20 +121,22 @@ public class ImageControlledFragmentAssembler implements ControlledFragmentHandl
             else
             {
                 final int limit = builder.limit();
-                builder.append(buffer, offset, length);
-
-                if ((flags & END_FRAG_FLAG) == END_FRAG_FLAG)
+                if (limit > 0)
                 {
-                    final int msgLength = builder.limit();
-                    action = delegate.onFragment(builder.buffer(), 0, msgLength, header);
+                    builder.append(buffer, offset, length);
 
-                    if (Action.ABORT == action)
+                    if ((flags & END_FRAG_FLAG) == END_FRAG_FLAG)
                     {
-                        builder.limit(limit);
-                    }
-                    else
-                    {
-                        builder.reset();
+                        action = delegate.onFragment(builder.buffer(), 0, builder.limit(), header);
+
+                        if (Action.ABORT == action)
+                        {
+                            builder.limit(limit);
+                        }
+                        else
+                        {
+                            builder.reset();
+                        }
                     }
                 }
             }

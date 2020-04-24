@@ -30,18 +30,18 @@ public interface TestMediaDriver extends AutoCloseable
         return !isEmpty(System.getProperty(AERONMD_PATH_PROP_NAME));
     }
 
-    static void notSupportedOnCMediaDriverYet(String reason)
+    static void notSupportedOnCMediaDriverYet(final String reason)
     {
         assumeFalse(shouldRunCMediaDriver(), () -> "Functionality not support by C Media Driver: " + reason);
     }
 
-    static TestMediaDriver launch(MediaDriver.Context context)
+    static TestMediaDriver launch(final MediaDriver.Context context)
     {
         return shouldRunCMediaDriver() ?
             CTestMediaDriver.launch(context, null) : JavaTestMediaDriver.launch(context);
     }
 
-    static TestMediaDriver launch(MediaDriver.Context context, DriverOutputConsumer driverOutputConsumer)
+    static TestMediaDriver launch(final MediaDriver.Context context, final DriverOutputConsumer driverOutputConsumer)
     {
         return shouldRunCMediaDriver() ?
             CTestMediaDriver.launch(context, driverOutputConsumer) : JavaTestMediaDriver.launch(context);
@@ -62,6 +62,18 @@ public interface TestMediaDriver extends AutoCloseable
         {
             JavaTestMediaDriver.enableLossGenerationOnReceive(
                 context, rate, seed, loseDataMessages, loseControlMessages);
+        }
+    }
+
+    static void enableCsvNameLookupConfiguration(final MediaDriver.Context context, final String csvLookupTable)
+    {
+        if (shouldRunCMediaDriver())
+        {
+            CTestMediaDriver.enableCsvNameLookupConfiguration(context, csvLookupTable);
+        }
+        else
+        {
+            context.nameResolver(new StubCsvNameResolver(csvLookupTable));
         }
     }
 

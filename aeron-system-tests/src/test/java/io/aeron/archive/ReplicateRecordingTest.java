@@ -22,6 +22,7 @@ import io.aeron.archive.codecs.RecordingSignal;
 import io.aeron.archive.status.RecordingPos;
 import io.aeron.driver.MediaDriver;
 import io.aeron.driver.ThreadingMode;
+import io.aeron.test.Tests;
 import org.agrona.CloseHelper;
 import org.agrona.SystemUtil;
 import org.agrona.collections.MutableLong;
@@ -46,6 +47,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 
+@Timeout(10)
 public class ReplicateRecordingTest
 {
     private static final int SRC_CONTROL_STREAM_ID = AeronArchive.Configuration.CONTROL_STREAM_ID_DEFAULT;
@@ -81,7 +83,7 @@ public class ReplicateRecordingTest
                 .aeronDirectoryName(srcAeronDirectoryName)
                 .termBufferSparseFile(true)
                 .threadingMode(ThreadingMode.SHARED)
-                .errorHandler(Throwable::printStackTrace)
+                .errorHandler(Tests::onError)
                 .spiesSimulateConnection(true)
                 .dirDeleteOnStart(true),
             new Archive.Context()
@@ -101,7 +103,7 @@ public class ReplicateRecordingTest
                 .aeronDirectoryName(dstAeronDirectoryName)
                 .termBufferSparseFile(true)
                 .threadingMode(ThreadingMode.SHARED)
-                .errorHandler(Throwable::printStackTrace)
+                .errorHandler(Tests::onError)
                 .spiesSimulateConnection(true)
                 .dirDeleteOnStart(true),
             new Archive.Context()
@@ -157,7 +159,6 @@ public class ReplicateRecordingTest
     }
 
     @Test
-    @Timeout(10)
     public void shouldThrowExceptionWhenDstRecordingIdUnknown()
     {
         final long unknownId = 7L;
@@ -177,7 +178,6 @@ public class ReplicateRecordingTest
     }
 
     @Test
-    @Timeout(10)
     public void shouldThrowExceptionWhenSrcRecordingIdUnknown()
     {
         final long unknownId = 7L;
@@ -200,7 +200,6 @@ public class ReplicateRecordingTest
     }
 
     @Test
-    @Timeout(10)
     public void shouldReplicateStoppedRecording()
     {
         final String messagePrefix = "Message-Prefix-";
@@ -246,7 +245,6 @@ public class ReplicateRecordingTest
     }
 
     @Test
-    @Timeout(10)
     public void shouldReplicateStoppedRecordingTwiceConcurrently()
     {
         final String messagePrefix = "Message-Prefix-";
@@ -294,7 +292,6 @@ public class ReplicateRecordingTest
     }
 
     @Test
-    @Timeout(10)
     public void shouldReplicateLiveWithoutMergingRecording()
     {
         final String messagePrefix = "Message-Prefix-";
@@ -342,7 +339,6 @@ public class ReplicateRecordingTest
     }
 
     @Test
-    @Timeout(10)
     public void shouldReplicateMoreThanOnce()
     {
         final String messagePrefix = "Message-Prefix-";
@@ -401,7 +397,6 @@ public class ReplicateRecordingTest
     }
 
     @Test
-    @Timeout(10)
     public void shouldReplicateLiveRecordingAndMerge()
     {
         final String messagePrefix = "Message-Prefix-";
@@ -452,7 +447,6 @@ public class ReplicateRecordingTest
     }
 
     @Test
-    @Timeout(10)
     public void shouldReplicateLiveRecordingAndMergeBeforeDataFlows()
     {
         final String messagePrefix = "Message-Prefix-";
@@ -498,7 +492,6 @@ public class ReplicateRecordingTest
     }
 
     @Test
-    @Timeout(10)
     public void shouldReplicateLiveRecordingAndMergeWhileFollowingWithTaggedSubscription()
     {
         final String messagePrefix = "Message-Prefix-";

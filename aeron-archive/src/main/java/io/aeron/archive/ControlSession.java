@@ -24,7 +24,6 @@ import io.aeron.archive.codecs.SourceLocation;
 import io.aeron.security.Authenticator;
 import org.agrona.CloseHelper;
 import org.agrona.concurrent.CachedEpochClock;
-import org.agrona.concurrent.CountedErrorHandler;
 import org.agrona.concurrent.UnsafeBuffer;
 
 import java.util.ArrayDeque;
@@ -38,17 +37,17 @@ import static io.aeron.archive.codecs.ControlResponseCode.*;
  * Control sessions are interacted with from the {@link ArchiveConductor}. The interaction may result in pending
  * send actions being queued for execution by the {@link ArchiveConductor}.
  */
-class ControlSession implements Session
+final class ControlSession implements Session
 {
     private static final long RESEND_INTERVAL_MS = 200L;
     private static final String SESSION_REJECTED_MSG = "authentication rejected";
 
+
     enum State
     {
-        INIT, CONNECTED, CHALLENGED, AUTHENTICATED, ACTIVE, INACTIVE, REJECTED, CLOSED
+        INIT, CONNECTED, CHALLENGED, AUTHENTICATED, ACTIVE, INACTIVE, REJECTED
     }
 
-    private final int majorVersion;
     private final long controlSessionId;
     private final long connectTimeoutMs;
     private long correlationId;
@@ -67,7 +66,6 @@ class ControlSession implements Session
     private State state = State.INIT;
 
     ControlSession(
-        final int majorVersion,
         final long controlSessionId,
         final long correlationId,
         final long connectTimeoutMs,
@@ -80,7 +78,6 @@ class ControlSession implements Session
         final Authenticator authenticator,
         final ControlSessionProxy controlSessionProxy)
     {
-        this.majorVersion = majorVersion;
         this.controlSessionId = controlSessionId;
         this.correlationId = correlationId;
         this.connectTimeoutMs = connectTimeoutMs;
@@ -93,11 +90,6 @@ class ControlSession implements Session
         this.authenticator = authenticator;
         this.controlSessionProxy = controlSessionProxy;
         this.activityDeadlineMs = cachedEpochClock.time() + connectTimeoutMs;
-    }
-
-    public int majorVersion()
-    {
-        return majorVersion;
     }
 
     public long sessionId()
@@ -121,16 +113,17 @@ class ControlSession implements Session
 
     public void close()
     {
-        final CountedErrorHandler errorHandler = conductor.context().countedErrorHandler();
         if (null != activeListing)
         {
-            CloseHelper.close(errorHandler, activeListing::abort);
+            activeListing.abort();
         }
 
-        CloseHelper.close(errorHandler, controlPublication);
-
-        state(State.CLOSED);
+        CloseHelper.close(conductor.context().countedErrorHandler(), controlPublication);
         demuxer.removeControlSession(this);
+        if (!conductor.context().controlSessionsCounter().isClosed())
+        {
+            conductor.context().controlSessionsCounter().decrementOrdered();
+        }
     }
 
     public boolean isDone()
@@ -228,12 +221,16 @@ class ControlSession implements Session
     }
 
     void onStartRecording(
-        final long correlationId, final int streamId, final SourceLocation sourceLocation, final String channel)
+        final long correlationId,
+        final int streamId,
+        final SourceLocation sourceLocation,
+        final boolean autoStop,
+        final String channel)
     {
         attemptToGoActive();
         if (State.ACTIVE == state)
         {
-            conductor.startRecording(correlationId, streamId, sourceLocation, channel, this);
+            conductor.startRecording(correlationId, streamId, sourceLocation, autoStop, channel, this);
         }
     }
 
@@ -358,12 +355,13 @@ class ControlSession implements Session
         final long recordingId,
         final int streamId,
         final SourceLocation sourceLocation,
+        final boolean autoStop,
         final String channel)
     {
         attemptToGoActive();
         if (State.ACTIVE == state)
         {
-            conductor.extendRecording(correlationId, recordingId, streamId, sourceLocation, channel, this);
+            conductor.extendRecording(correlationId, recordingId, streamId, sourceLocation, autoStop, channel, this);
         }
     }
 
@@ -413,6 +411,15 @@ class ControlSession implements Session
                 streamId,
                 channelFragment,
                 this);
+        }
+    }
+
+    void onStopRecordingByIdentity(final long correlationId, final long recordingId)
+    {
+        attemptToGoActive();
+        if (State.ACTIVE == state)
+        {
+            conductor.stopRecordingByIdentity(correlationId, recordingId, this);
         }
     }
 
@@ -632,11 +639,6 @@ class ControlSession implements Session
     void reject()
     {
         state(State.REJECTED);
-    }
-
-    State state()
-    {
-        return state;
     }
 
     private void queueResponse(

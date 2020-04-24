@@ -24,9 +24,11 @@ import io.aeron.logbuffer.BufferClaim;
 import io.aeron.logbuffer.Header;
 import org.agrona.DirectBuffer;
 import org.agrona.concurrent.IdleStrategy;
+import org.agrona.concurrent.status.AtomicCounter;
 
 import java.util.Collection;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 
 /**
  * Interface for a {@link ClusteredService} to interact with cluster hosting it.
@@ -100,6 +102,18 @@ public interface Cluster
 
             return ROLES[code];
         }
+
+        /**
+         * Get the role by reading the code from a counter.
+         *
+         * @param counter containing the value of the role.
+         *
+         * @return the role for the cluster member.
+         */
+        public static Role get(final AtomicCounter counter)
+        {
+            return get((int)counter.get());
+        }
     }
 
     /**
@@ -147,10 +161,20 @@ public interface Cluster
 
     /**
      * Get the current collection of cluster client sessions.
+     * <p>
+     * The {@link java.util.Iterator} on this class does not support nested iteration. It reuses the iterator to
+     * avoid allocation.
      *
      * @return the current collection of cluster client sessions.
      */
     Collection<ClientSession> clientSessions();
+
+    /**
+     * For each iterator over {@link ClientSession}s using the most efficient method possible.
+     *
+     * @param action to be taken for each {@link ClientSession} in turn.
+     */
+    void forEachClientSession(Consumer<? super ClientSession> action);
 
     /**
      * Request the close of a {@link ClientSession} by sending the request to the consensus module.
@@ -159,7 +183,7 @@ public interface Cluster
      * @return true if the event to close a session was sent or false if back pressure was applied.
      * @throws ClusterException if the clusterSessionId is not recognised.
      */
-    boolean closeSession(long clusterSessionId);
+    boolean closeClientSession(long clusterSessionId);
 
     /**
      * Cluster time as {@link #timeUnit()}s since 1 Jan 1970 UTC.

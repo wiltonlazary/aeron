@@ -64,23 +64,29 @@ public class ClusterNodeTest
             new ConsensusModule.Context()
                 .errorHandler(ClusterTests.errorHandler(0))
                 .terminationHook(ClusterTests.TERMINATION_HOOK)
+                .logChannel("aeron:ipc")
                 .deleteDirOnStart(true));
     }
 
     @AfterEach
     public void after()
     {
-        CloseHelper.closeAll(aeronCluster, container, clusteredMediaDriver);
+        final ConsensusModule consensusModule = null == clusteredMediaDriver ?
+            null : clusteredMediaDriver.consensusModule();
+
+        CloseHelper.closeAll(aeronCluster, consensusModule, container, clusteredMediaDriver);
 
         if (null != clusteredMediaDriver)
         {
             clusteredMediaDriver.consensusModule().context().deleteDirectory();
             clusteredMediaDriver.archive().context().deleteDirectory();
             clusteredMediaDriver.mediaDriver().context().deleteDirectory();
+            container.context().deleteDirectory();
         }
     }
 
     @Test
+    @Timeout(10)
     public void shouldConnectAndSendKeepAlive()
     {
         container = launchEchoService();
@@ -257,7 +263,7 @@ public class ClusterNodeTest
         return ClusteredServiceContainer.launch(
             new ClusteredServiceContainer.Context()
                 .clusteredService(clusteredService)
-                .errorHandler(Throwable::printStackTrace));
+                .errorHandler(Tests::onError));
     }
 
     private ClusteredServiceContainer launchTimedService()
@@ -331,14 +337,15 @@ public class ClusterNodeTest
                 }
                 else
                 {
-                    for (final ClientSession clientSession : cluster.clientSessions())
-                    {
-                        idleStrategy.reset();
-                        while (clientSession.offer(buffer, offset, length) < 0)
+                    cluster.forEachClientSession(
+                        (clientSession) ->
                         {
-                            idleStrategy.idle();
-                        }
-                    }
+                            idleStrategy.reset();
+                            while (clientSession.offer(buffer, offset, length) < 0)
+                            {
+                                idleStrategy.idle();
+                            }
+                        });
                 }
             }
         };

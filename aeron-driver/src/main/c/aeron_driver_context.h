@@ -29,28 +29,11 @@
 #include "aeron_flow_control.h"
 #include "aeron_congestion_control.h"
 #include "aeron_agent.h"
+#include "aeron_name_resolver.h"
+#include "aeron_system_counters.h"
+#include "aeron_cnc_file_descriptor.h"
 
-#define AERON_CNC_FILE "cnc.dat"
 #define AERON_LOSS_REPORT_FILE "loss-report.dat"
-
-#pragma pack(push)
-#pragma pack(4)
-typedef struct aeron_cnc_metadata_stct
-{
-    int32_t cnc_version;
-    int32_t to_driver_buffer_length;
-    int32_t to_clients_buffer_length;
-    int32_t counter_metadata_buffer_length;
-    int32_t counter_values_buffer_length;
-    int32_t error_log_buffer_length;
-    int64_t client_liveness_timeout;
-    int64_t start_timestamp;
-    int64_t pid;
-}
-aeron_cnc_metadata_t;
-#pragma pack(pop)
-
-#define AERON_CNC_VERSION_AND_META_DATA_LENGTH (AERON_ALIGN(sizeof(aeron_cnc_metadata_t), AERON_CACHE_LINE_LENGTH * 2))
 
 #define AERON_COMMAND_QUEUE_CAPACITY (256)
 
@@ -96,6 +79,7 @@ typedef struct aeron_driver_context_stct
     uint64_t retransmit_unicast_linger_ns;                  /* aeron.retransmit.unicast.linger = 60ms */
     uint64_t nak_unicast_delay_ns;                          /* aeron.nak.unicast.delay = 60ms */
     uint64_t nak_multicast_max_backoff_ns;                  /* aeron.nak.multicast.max.backoff = 60ms */
+    uint64_t re_resolution_check_interval_ns;               /* aeron.driver.reresolution.check.interval = 1s */
     size_t to_driver_buffer_length;                         /* aeron.conductor.buffer.length = 1MB + trailer*/
     size_t to_clients_buffer_length;                        /* aeron.clients.buffer.length = 1MB + trailer */
     size_t counters_values_buffer_length;                   /* aeron.counters.buffer.length = 1MB */
@@ -190,6 +174,7 @@ typedef struct aeron_driver_context_stct
     aeron_driver_receiver_proxy_t *receiver_proxy;
 
     aeron_counters_manager_t *counters_manager;
+    aeron_system_counters_t *system_counters;
     aeron_distinct_error_log_t *error_log;
 
     aeron_driver_conductor_to_driver_interceptor_func_t to_driver_interceptor_func;
@@ -209,6 +194,12 @@ typedef struct aeron_driver_context_stct
 
     aeron_feedback_delay_generator_state_t unicast_delay_feedback_generator;
     aeron_feedback_delay_generator_state_t multicast_delay_feedback_generator;
+
+    const char *resolver_name;
+    const char *resolver_interface;
+    const char *resolver_bootstrap_neighbor;
+    aeron_name_resolver_supplier_func_t name_resolver_supplier_func;
+    const char *name_resolver_init_args;
 }
 aeron_driver_context_t;
 
@@ -233,40 +224,6 @@ inline int32_t aeron_cnc_version_volatile(aeron_cnc_metadata_t *metadata)
 inline void aeron_cnc_version_signal_cnc_ready(aeron_cnc_metadata_t *metadata, int32_t cnc_version)
 {
     AERON_PUT_VOLATILE(metadata->cnc_version, cnc_version);
-}
-
-inline uint8_t *aeron_cnc_to_driver_buffer(aeron_cnc_metadata_t *metadata)
-{
-    return (uint8_t *)metadata + AERON_CNC_VERSION_AND_META_DATA_LENGTH;
-}
-
-inline uint8_t *aeron_cnc_to_clients_buffer(aeron_cnc_metadata_t *metadata)
-{
-    return (uint8_t *)metadata + AERON_CNC_VERSION_AND_META_DATA_LENGTH + metadata->to_driver_buffer_length;
-}
-
-inline uint8_t *aeron_cnc_counters_metadata_buffer(aeron_cnc_metadata_t *metadata)
-{
-    return (uint8_t *)metadata + AERON_CNC_VERSION_AND_META_DATA_LENGTH +
-        metadata->to_driver_buffer_length +
-        metadata->to_clients_buffer_length;
-}
-
-inline uint8_t *aeron_cnc_counters_values_buffer(aeron_cnc_metadata_t *metadata)
-{
-    return (uint8_t *)metadata + AERON_CNC_VERSION_AND_META_DATA_LENGTH +
-        metadata->to_driver_buffer_length +
-        metadata->to_clients_buffer_length +
-        metadata->counter_metadata_buffer_length;
-}
-
-inline uint8_t *aeron_cnc_error_log_buffer(aeron_cnc_metadata_t *metadata)
-{
-    return (uint8_t *)metadata + AERON_CNC_VERSION_AND_META_DATA_LENGTH +
-        metadata->to_driver_buffer_length +
-        metadata->to_clients_buffer_length +
-        metadata->counter_metadata_buffer_length +
-        metadata->counter_values_buffer_length;
 }
 
 inline size_t aeron_cnc_computed_length(size_t total_length_of_buffers, size_t alignment)

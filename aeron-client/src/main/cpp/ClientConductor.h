@@ -85,8 +85,8 @@ public:
         m_driverActive(true),
         m_isClosed(false),
         m_timeOfLastDoWorkMs(m_epochClock()),
-        m_timeOfLastKeepaliveMs(m_epochClock()),
-        m_timeOfLastCheckManagedResourcesMs(m_epochClock()),
+        m_timeOfLastKeepaliveMs(m_timeOfLastDoWorkMs),
+        m_timeOfLastCheckManagedResourcesMs(m_timeOfLastDoWorkMs),
         m_padding()
     {
         static_cast<void>(m_padding);
@@ -436,14 +436,13 @@ private:
                 m_errorHandler(exception);
             }
 
-            std::int64_t clientId = m_driverProxy.clientId();
             if (m_heartbeatTimestamp)
             {
                 if (HeartbeatTimestamp::isActive(
                     m_countersReader,
                     m_heartbeatTimestamp->id(),
                     HeartbeatTimestamp::CLIENT_HEARTBEAT_TYPE_ID,
-                    clientId))
+                    m_driverProxy.clientId()))
                 {
                     m_heartbeatTimestamp->setOrdered(nowMs);
                 }
@@ -458,7 +457,7 @@ private:
             else
             {
                 std::int32_t counterId = HeartbeatTimestamp::findCounterIdByRegistrationId(
-                    m_countersReader, HeartbeatTimestamp::CLIENT_HEARTBEAT_TYPE_ID, clientId);
+                    m_countersReader, HeartbeatTimestamp::CLIENT_HEARTBEAT_TYPE_ID, m_driverProxy.clientId());
 
                 if (CountersReader::NULL_COUNTER_ID != counterId)
                 {

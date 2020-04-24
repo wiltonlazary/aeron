@@ -34,7 +34,7 @@ class ClusterSession
 
     enum State
     {
-        INIT, CONNECTED, CHALLENGED, AUTHENTICATED, REJECTED, OPEN, CLOSED
+        INIT, CONNECTED, CHALLENGED, AUTHENTICATED, REJECTED, OPEN, CLOSING, CLOSED
     }
 
     private boolean hasNewLeaderEventPending = false;
@@ -43,7 +43,7 @@ class ClusterSession
     private long openedLogPosition = Aeron.NULL_VALUE;
     private long closedLogPosition = Aeron.NULL_VALUE;
     private long timeOfLastActivityNs;
-    private boolean isBackupQuery = false;
+    private boolean isBackupSession = false;
     private final int responseStreamId;
     private final String responseChannel;
     private Publication responsePublication;
@@ -62,7 +62,7 @@ class ClusterSession
     }
 
     ClusterSession(
-        final long sessionId,
+        final long id,
         final long correlationId,
         final long openedLogPosition,
         final long timeOfLastActivityNs,
@@ -70,7 +70,7 @@ class ClusterSession
         final String responseChannel,
         final CloseReason closeReason)
     {
-        this.id = sessionId;
+        this.id = id;
         this.responseStreamId = responseStreamId;
         this.responseChannel = responseChannel;
         this.openedLogPosition = openedLogPosition;
@@ -90,21 +90,9 @@ class ClusterSession
 
     public void close(final ErrorHandler errorHandler)
     {
-        final Publication responsePublication = this.responsePublication;
+        CloseHelper.close(errorHandler, responsePublication);
         this.responsePublication = null;
         state(State.CLOSED);
-
-        if (null != responsePublication)
-        {
-            try
-            {
-                responsePublication.close();
-            }
-            catch (final Throwable ex)
-            {
-                errorHandler.onError(ex);
-            }
-        }
     }
 
     long id()
@@ -122,10 +110,10 @@ class ClusterSession
         return responseChannel;
     }
 
-    void close(final CloseReason closeReason, final ErrorHandler errorHandler)
+    void closing(final CloseReason closeReason)
     {
         this.closeReason = closeReason;
-        close(errorHandler);
+        state(State.CLOSING);
     }
 
     CloseReason closeReason()
@@ -280,14 +268,14 @@ class ClusterSession
         return hasNewLeaderEventPending;
     }
 
-    boolean isBackupQuery()
+    boolean isBackupSession()
     {
-        return isBackupQuery;
+        return isBackupSession;
     }
 
-    void isBackupQuery(final boolean isBackupQuery)
+    void markAsBackupSession()
     {
-        this.isBackupQuery = isBackupQuery;
+        this.isBackupSession = true;
     }
 
     Publication responsePublication()

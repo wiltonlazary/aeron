@@ -46,10 +46,17 @@ static aeron_system_counter_t system_counters[] =
         { "Possible TTL Asymmetry", AERON_SYSTEM_COUNTER_POSSIBLE_TTL_ASYMMETRY },
         { "ControllableIdleStrategy status", AERON_SYSTEM_COUNTER_CONTROLLABLE_IDLE_STRATEGY },
         { "Loss gap fills", AERON_SYSTEM_COUNTER_LOSS_GAP_FILLS},
-        { "Client liveness timeouts", AERON_SYSTEM_COUNTER_CLIENT_TIMEOUTS}
+        { "Client liveness timeouts", AERON_SYSTEM_COUNTER_CLIENT_TIMEOUTS},
+        { "Resolution changes", AERON_SYSTEM_COUNTER_RESOLUTION_CHANGES}
     };
 
 static size_t num_system_counters = sizeof(system_counters) / sizeof(aeron_system_counter_t);
+
+#ifdef AERON_COMPILER_GCC
+_Static_assert(
+    AERON_SYSTEM_COUNTER_DUMMY_LAST == sizeof(system_counters) / sizeof(aeron_system_counter_t),
+    "Please add counters in aeron_system_counter_t enum to the system_counters table");
+#endif
 
 int aeron_system_counters_init(aeron_system_counters_t *counters, aeron_counters_manager_t *manager)
 {

@@ -121,14 +121,14 @@ public class MultipleClusteredServicesTest
                 Tests.checkInterruptStatus();
             }
 
-            TestCluster.awaitCount(serviceAMessageCount, 3);
-            TestCluster.awaitCount(serviceBMessageCount, 3);
+            Tests.awaitValue(serviceAMessageCount, 3);
+            Tests.awaitValue(serviceBMessageCount, 3);
         }
         finally
         {
             CloseHelper.closeAll(client, clientMediaDriver);
-            clusteredServiceContainers.forEach(CloseHelper::close);
             clusteredMediaDrivers.forEach(CloseHelper::close);
+            clusteredServiceContainers.forEach(CloseHelper::close);
 
             clientMediaDriver.context().deleteDirectory();
             clusteredMediaDrivers.forEach((driver) -> driver.mediaDriver().context().deleteDirectory());

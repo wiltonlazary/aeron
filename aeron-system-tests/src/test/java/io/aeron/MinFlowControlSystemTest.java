@@ -32,7 +32,7 @@ import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
-import static io.aeron.FlowControlTests.waitForConnectionAndStatusMessages;
+import static io.aeron.FlowControlTests.awaitConnectionAndStatusMessages;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
@@ -46,7 +46,7 @@ public class MinFlowControlSystemTest
     private static final int MESSAGE_LENGTH =
         (TERM_BUFFER_LENGTH / NUM_MESSAGES_PER_TERM) - DataHeaderFlyweight.HEADER_LENGTH;
     private static final String ROOT_DIR =
-        SystemUtil.tmpDirName() + "aeron-system-tests-" + UUID.randomUUID().toString() + File.separator;
+        SystemUtil.tmpDirName() + "aeron-system-tests-" + UUID.randomUUID() + File.separator;
 
     private final MediaDriver.Context driverAContext = new MediaDriver.Context();
     private final MediaDriver.Context driverBContext = new MediaDriver.Context();
@@ -76,25 +76,23 @@ public class MinFlowControlSystemTest
         driverAContext.publicationTermBufferLength(TERM_BUFFER_LENGTH)
             .aeronDirectoryName(baseDirA)
             .timerIntervalNs(TimeUnit.MILLISECONDS.toNanos(100))
-            .errorHandler(Throwable::printStackTrace)
+            .errorHandler(Tests::onError)
             .threadingMode(ThreadingMode.SHARED);
 
         driverBContext.publicationTermBufferLength(TERM_BUFFER_LENGTH)
             .aeronDirectoryName(baseDirB)
             .timerIntervalNs(TimeUnit.MILLISECONDS.toNanos(100))
-            .errorHandler(Throwable::printStackTrace)
+            .errorHandler(Tests::onError)
             .threadingMode(ThreadingMode.SHARED);
 
         driverA = TestMediaDriver.launch(driverAContext, testWatcher);
         driverB = TestMediaDriver.launch(driverBContext, testWatcher);
         clientA = Aeron.connect(
             new Aeron.Context()
-                .errorHandler(Throwable::printStackTrace)
                 .aeronDirectoryName(driverAContext.aeronDirectoryName()));
 
         clientB = Aeron.connect(
             new Aeron.Context()
-                .errorHandler(Throwable::printStackTrace)
                 .aeronDirectoryName(driverBContext.aeronDirectoryName()));
     }
 
@@ -286,20 +284,19 @@ public class MinFlowControlSystemTest
                 new MediaDriver.Context().publicationTermBufferLength(TERM_BUFFER_LENGTH)
                     .aeronDirectoryName(ROOT_DIR + "C")
                     .timerIntervalNs(TimeUnit.MILLISECONDS.toNanos(100))
-                    .errorHandler(Throwable::printStackTrace)
+                    .errorHandler(Tests::onError)
                     .threadingMode(ThreadingMode.SHARED),
                 testWatcher);
 
             clientC = Aeron.connect(
                 new Aeron.Context()
-                    .errorHandler(Throwable::printStackTrace)
                     .aeronDirectoryName(driverC.aeronDirectoryName()));
 
             publication = clientA.addPublication(uriWithMinFlowControl, STREAM_ID);
             subscription0 = clientA.addSubscription(uriPlain, STREAM_ID);
             subscription1 = clientB.addSubscription(uriPlain, STREAM_ID);
 
-            waitForConnectionAndStatusMessages(countersReader, subscription0, subscription1);
+            awaitConnectionAndStatusMessages(countersReader, subscription0, subscription1);
 
             assertFalse(publication.isConnected());
 
@@ -333,8 +330,7 @@ public class MinFlowControlSystemTest
                 publication,
                 subscription0, subscription1, subscription2,
                 clientC,
-                driverC
-            );
+                driverC);
         }
     }
 
@@ -403,7 +399,7 @@ public class MinFlowControlSystemTest
 
         subscriptionA = clientA.addSubscription(subscriberUri, STREAM_ID);
 
-        waitForConnectionAndStatusMessages(countersReader, subscriptionA);
+        awaitConnectionAndStatusMessages(countersReader, subscriptionA);
 
         assertEquals(currentSenderLimit, countersReader.getCounterValue(senderLimitCounterId));
 

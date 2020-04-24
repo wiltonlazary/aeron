@@ -249,7 +249,7 @@ public class CommonContext implements Cloneable
     public static final String TETHER_PARAM_NAME = "tether";
 
     /**
-     * Parameter name for channel URI param to indicate Subscription represents a group member or individual
+     * Parameter name for channel URI param to indicate if a Subscription represents a group member or individual
      * from the perspective of message reception. This can inform loss handling and similar semantics.
      * <p>
      * When configuring an subscription for an MDC publication then should be added as this is effective multicast.
@@ -352,7 +352,7 @@ public class CommonContext implements Cloneable
      */
     public static String generateRandomDirName()
     {
-        return AERON_DIR_PROP_DEFAULT + '-' + UUID.randomUUID().toString();
+        return AERON_DIR_PROP_DEFAULT + "-" + UUID.randomUUID();
     }
 
     /**
@@ -434,6 +434,17 @@ public class CommonContext implements Cloneable
     public static File newDefaultCncFile()
     {
         return new File(getProperty(AERON_DIR_PROP_NAME, AERON_DIR_PROP_DEFAULT), CncFileDescriptor.CNC_FILE);
+    }
+
+    /**
+     * Create a new command and control file in the administration directory.
+     *
+     * @return The newly created File.
+     * @param aeronDirectoryName name of the aeronDirectory that containing the cnc file.
+     */
+    public static File newCncFile(final String aeronDirectoryName)
+    {
+        return new File(aeronDirectoryName, CncFileDescriptor.CNC_FILE);
     }
 
     /**
@@ -758,12 +769,7 @@ public class CommonContext implements Cloneable
             return 0;
         }
 
-        final UnsafeBuffer cncMetaDataBuffer = CncFileDescriptor.createMetaDataBuffer(cncByteBuffer);
-        final int cncVersion = cncMetaDataBuffer.getInt(CncFileDescriptor.cncVersionOffset(0));
-
-        CncFileDescriptor.checkVersion(cncVersion);
-
-        return printErrorLog(CncFileDescriptor.createErrorLogBuffer(cncByteBuffer, cncMetaDataBuffer), out);
+        return printErrorLog(errorLogBuffer(cncByteBuffer), out);
     }
 
     /**
@@ -800,5 +806,21 @@ public class CommonContext implements Cloneable
         }
 
         return distinctErrorCount;
+    }
+
+    /**
+     * Get an {@link AtomicBuffer} which wraps the error log in the CnC file.
+     *
+     * @param cncByteBuffer which contains the error log.
+     * @return an {@link AtomicBuffer} which wraps the error log in the CnC file.
+     */
+    public static AtomicBuffer errorLogBuffer(final ByteBuffer cncByteBuffer)
+    {
+        final DirectBuffer cncMetaDataBuffer = CncFileDescriptor.createMetaDataBuffer(cncByteBuffer);
+        final int cncVersion = cncMetaDataBuffer.getInt(cncVersionOffset(0));
+
+        CncFileDescriptor.checkVersion(cncVersion);
+
+        return CncFileDescriptor.createErrorLogBuffer(cncByteBuffer, cncMetaDataBuffer);
     }
 }

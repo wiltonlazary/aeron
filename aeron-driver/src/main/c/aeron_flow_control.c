@@ -98,7 +98,7 @@ int aeron_max_flow_control_strategy_fini(aeron_flow_control_strategy_t *strategy
 int aeron_max_multicast_flow_control_strategy_supplier(
     aeron_flow_control_strategy_t **strategy,
     aeron_driver_context_t *context,
-    aeron_udp_channel_t *channel,
+    const aeron_udp_channel_t *channel,
     int32_t stream_id,
     int64_t registration_id,
     int32_t initial_term_id,
@@ -124,7 +124,7 @@ int aeron_max_multicast_flow_control_strategy_supplier(
 int aeron_unicast_flow_control_strategy_supplier(
     aeron_flow_control_strategy_t **strategy,
     aeron_driver_context_t *context,
-    aeron_udp_channel_t *channel,
+    const aeron_udp_channel_t *channel,
     int32_t stream_id,
     int64_t registration_id,
     int32_t initial_term_id,
@@ -166,13 +166,13 @@ void aeron_flow_control_extract_strategy_name_length(
     size_t *strategy_length)
 {
     const char *next_option = (const char *)memchr(options, ',', options_length);
-    *strategy_length = NULL == next_option ? options_length : labs((long)(next_option - options));
+    *strategy_length = NULL == next_option ? options_length : (size_t)labs((long)(next_option - options));
 }
 
 int aeron_default_multicast_flow_control_strategy_supplier(
     aeron_flow_control_strategy_t **strategy,
     aeron_driver_context_t *context,
-    aeron_udp_channel_t *channel,
+    const aeron_udp_channel_t *channel,
     int32_t stream_id,
     int64_t registration_id,
     int32_t initial_term_id,
@@ -180,7 +180,10 @@ int aeron_default_multicast_flow_control_strategy_supplier(
 {
     aeron_flow_control_strategy_supplier_func_t flow_control_strategy_supplier_func;
 
-    if (channel->has_explicit_control || channel->is_multicast)
+    if (channel->is_manual_control_mode ||
+        channel->is_dynamic_control_mode ||
+        channel->has_explicit_control ||
+        channel->is_multicast)
     {
         const char *flow_control_options = aeron_uri_find_param_value(&channel->uri.params.udp.additional_params, "fc");
         if (NULL != flow_control_options)

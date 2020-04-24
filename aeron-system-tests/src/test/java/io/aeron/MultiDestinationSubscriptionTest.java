@@ -60,7 +60,7 @@ public class MultiDestinationSubscriptionTest
     private static final int MESSAGE_LENGTH =
         (TERM_BUFFER_LENGTH / NUM_MESSAGES_PER_TERM) - DataHeaderFlyweight.HEADER_LENGTH;
     private static final String ROOT_DIR =
-        SystemUtil.tmpDirName() + "aeron-system-tests-" + UUID.randomUUID().toString() + File.separator;
+        SystemUtil.tmpDirName() + "aeron-system-tests-" + UUID.randomUUID() + File.separator;
 
     private final MediaDriver.Context driverContextA = new MediaDriver.Context();
     private final MediaDriver.Context driverContextB = new MediaDriver.Context();
@@ -86,7 +86,7 @@ public class MultiDestinationSubscriptionTest
         buffer.putInt(0, 1);
 
         driverContextA
-            .errorHandler(Throwable::printStackTrace)
+            .errorHandler(Tests::onError)
             .publicationTermBufferLength(TERM_BUFFER_LENGTH)
             .aeronDirectoryName(baseDirA)
             .threadingMode(ThreadingMode.SHARED);
@@ -100,7 +100,7 @@ public class MultiDestinationSubscriptionTest
         final String baseDirB = ROOT_DIR + "B";
 
         driverContextB
-            .errorHandler(Throwable::printStackTrace)
+            .errorHandler(Tests::onError)
             .publicationTermBufferLength(TERM_BUFFER_LENGTH)
             .aeronDirectoryName(baseDirB)
             .threadingMode(ThreadingMode.SHARED);
@@ -130,8 +130,7 @@ public class MultiDestinationSubscriptionTest
         subscription = clientA.addSubscription(SUB_URI, STREAM_ID);
         subscription.addDestination(publicationChannelA);
 
-        CloseHelper.close(subscription);
-        CloseHelper.close(clientA);
+        CloseHelper.closeAll(subscription, clientA);
 
         clientA = Aeron.connect(new Aeron.Context().aeronDirectoryName(driverContextA.aeronDirectoryName()));
         subscription = clientA.addSubscription(SUB_URI, STREAM_ID);

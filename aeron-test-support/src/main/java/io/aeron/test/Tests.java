@@ -16,12 +16,17 @@
 package io.aeron.test;
 
 import io.aeron.Subscription;
+import io.aeron.exceptions.AeronException;
 import io.aeron.exceptions.TimeoutException;
 import io.aeron.logbuffer.FragmentHandler;
 import org.agrona.LangUtil;
 import org.agrona.concurrent.IdleStrategy;
+import org.agrona.concurrent.SleepingMillisIdleStrategy;
 import org.agrona.concurrent.YieldingIdleStrategy;
+import org.agrona.concurrent.status.AtomicCounter;
+import org.agrona.concurrent.status.CountersReader;
 
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BooleanSupplier;
 import java.util.function.IntConsumer;
 import java.util.function.Supplier;
@@ -31,6 +36,8 @@ import static org.mockito.Mockito.doAnswer;
 
 public class Tests
 {
+    public static final IdleStrategy SLEEP_1_MS = new SleepingMillisIdleStrategy(1);
+
     /**
      * Check if the interrupt flag has been set on the current thread and fail the test if it has.
      * <p>
@@ -96,7 +103,6 @@ public class Tests
     public static void unexpectedInterruptStackTrace(final String message)
     {
         final StringBuilder sb = new StringBuilder();
-
         sb.append("*** unexpected interrupt");
 
         if (null != message)
@@ -129,6 +135,45 @@ public class Tests
         catch (final InterruptedException ex)
         {
             unexpectedInterruptStackTrace(null);
+            LangUtil.rethrowUnchecked(ex);
+        }
+    }
+
+    /**
+     * Same as {@link Thread#sleep(long)} but without the checked exception.
+     *
+     * @param durationMs      to sleep.
+     * @param messageSupplier of message to be reported on interrupt.
+     */
+    public static void sleep(final long durationMs, final Supplier<String> messageSupplier)
+    {
+        try
+        {
+            Thread.sleep(durationMs);
+        }
+        catch (final InterruptedException ex)
+        {
+            unexpectedInterruptStackTrace(messageSupplier.get());
+            LangUtil.rethrowUnchecked(ex);
+        }
+    }
+
+    /**
+     * Same as {@link Thread#sleep(long)} but without the checked exception.
+     *
+     * @param durationMs to sleep.
+     * @param format     of the message.
+     * @param params     to be formatted.
+     */
+    public static void sleep(final long durationMs, final String format, final Object... params)
+    {
+        try
+        {
+            Thread.sleep(durationMs);
+        }
+        catch (final InterruptedException ex)
+        {
+            unexpectedInterruptStackTrace(String.format(format, params));
             LangUtil.rethrowUnchecked(ex);
         }
     }
@@ -260,6 +305,67 @@ public class Tests
 
             Thread.yield();
             checkInterruptStatus();
+        }
+    }
+
+    public static void onError(final Throwable ex)
+    {
+        if (ex instanceof AeronException && ((AeronException)ex).category() == AeronException.Category.WARN)
+        {
+            System.out.println("Warning: " + ex.getMessage());
+            return;
+        }
+
+        ex.printStackTrace();
+    }
+
+    public static void awaitValue(final AtomicLong counter, final long value)
+    {
+        long counterValue;
+        while ((counterValue = counter.get()) < value)
+        {
+            Thread.yield();
+            if (Thread.interrupted())
+            {
+                unexpectedInterruptStackTrace("awaiting=" + value + " counter=" + counterValue);
+                fail("unexpected interrupt");
+            }
+        }
+    }
+
+    public static void awaitValue(final AtomicCounter counter, final long value)
+    {
+        long counterValue;
+        while ((counterValue = counter.get()) < value)
+        {
+            Thread.yield();
+            if (Thread.interrupted())
+            {
+                unexpectedInterruptStackTrace("awaiting=" + value + " counter=" + counterValue);
+                fail("unexpected interrupt");
+            }
+        }
+    }
+
+    public static void awaitCounterDelta(final CountersReader reader, final int counterId, final long delta)
+    {
+        awaitCounterDelta(reader, counterId, reader.getCounterValue(counterId), delta);
+    }
+
+    public static void awaitCounterDelta(
+        final CountersReader reader,
+        final int counterId,
+        final long initialValue,
+        final long delta)
+    {
+        final long expectedValue = initialValue + delta;
+        final Supplier<String> counterMessage = () ->
+            "Timed out waiting for counter '" + reader.getCounterLabel(counterId) +
+            "' to increase to at least " + expectedValue;
+
+        while (reader.getCounterValue(counterId) < expectedValue)
+        {
+            wait(SLEEP_1_MS, counterMessage);
         }
     }
 }

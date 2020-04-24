@@ -19,6 +19,7 @@
 #define _GNU_SOURCE
 #endif
 
+#include <stdlib.h>
 #include <errno.h>
 #include <inttypes.h>
 #include "protocol/aeron_udp_protocol.h"
@@ -264,7 +265,7 @@ bool aeron_min_flow_control_strategy_has_required_receivers(aeron_flow_control_s
 int aeron_tagged_flow_control_strategy_supplier_init(
     aeron_flow_control_strategy_t **strategy,
     aeron_driver_context_t *context,
-    aeron_udp_channel_t *channel,
+    const aeron_udp_channel_t *channel,
     int32_t stream_id,
     int64_t registration_id,
     int32_t initial_term_id,
@@ -316,7 +317,7 @@ int aeron_tagged_flow_control_strategy_supplier_init(
 int aeron_min_flow_control_strategy_supplier(
     aeron_flow_control_strategy_t **strategy,
     aeron_driver_context_t *context,
-    aeron_udp_channel_t *channel,
+    const aeron_udp_channel_t *channel,
     int32_t stream_id,
     int64_t registration_id,
     int32_t initial_term_id,
@@ -329,7 +330,7 @@ int aeron_min_flow_control_strategy_supplier(
 int aeron_tagged_flow_control_strategy_supplier(
     aeron_flow_control_strategy_t **strategy,
     aeron_driver_context_t *context,
-    aeron_udp_channel_t *channel,
+    const aeron_udp_channel_t *channel,
     int32_t stream_id,
     int64_t registration_id,
     int32_t initial_term_id,
@@ -352,8 +353,8 @@ int aeron_tagged_flow_control_strategy_to_string(
     return snprintf(
         buffer,
         buffer_len - 1,
-        "group_tag: %" PRId64 ", group_min_size: %" PRId32 ", receiver_count: %zu",
+        "group_tag: %" PRId64 ", group_min_size: %" PRId32 ", receiver_count: %" PRIu32,
         strategy_state->group_tag,
         strategy_state->group_min_size,
-        strategy_state->receivers.length);
+        (uint32_t)strategy_state->receivers.length);
 }

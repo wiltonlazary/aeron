@@ -63,7 +63,7 @@ class DynamicJoin implements AutoCloseable
     private final String memberEndpoints;
     private final String memberStatusEndpoint;
     private final String transferEndpoint;
-    private final ArrayList<RecordingLog.Snapshot> leaderSnapshots = new ArrayList<>(4);
+    private final ArrayList<RecordingLog.Snapshot> leaderSnapshots = new ArrayList<>();
     private final Long2LongHashMap leaderSnapshotLengthMap = new Long2LongHashMap(NULL_LENGTH);
     private final long intervalNs;
 
@@ -79,7 +79,6 @@ class DynamicJoin implements AutoCloseable
     private Counter recoveryStateCounter;
     private long timeOfLastActivityNs = 0;
     private long correlationId = NULL_VALUE;
-    private long snapshotRetrieveSubscriptionId = NULL_VALUE;
     private int memberId = NULL_VALUE;
     private int clusterMembersStatusEndpointsCursor = NULL_VALUE;
     private int snapshotCursor = 0;
@@ -186,7 +185,7 @@ class DynamicJoin implements AutoCloseable
                         if (!leaderMember.memberFacingEndpoint().equals(
                             clusterMemberStatusEndpoints[clusterMembersStatusEndpointsCursor]))
                         {
-                            memberStatusPublication.close();
+                            CloseHelper.close(ctx.countedErrorHandler(), memberStatusPublication);
 
                             final ChannelUri memberStatusUri = ChannelUri.parse(ctx.memberStatusChannel());
                             memberStatusUri.put(ENDPOINT_PARAM_NAME, leaderMember.memberFacingEndpoint());
@@ -265,7 +264,7 @@ class DynamicJoin implements AutoCloseable
                 cursor = 0;
             }
 
-            CloseHelper.close(memberStatusPublication);
+            CloseHelper.close(ctx.countedErrorHandler(), memberStatusPublication);
             final ChannelUri uri = ChannelUri.parse(ctx.memberStatusChannel());
             uri.put(ENDPOINT_PARAM_NAME, clusterMemberStatusEndpoints[cursor]);
             memberStatusPublication = ctx.aeron().addExclusivePublication(uri.toString(), ctx.memberStatusStreamId());
@@ -373,8 +372,7 @@ class DynamicJoin implements AutoCloseable
                     consensusModuleAgent.retrievedSnapshot(
                         snapshotReader.recordingId(), leaderSnapshots.get(snapshotCursor));
 
-                    CloseHelper.close(snapshotRetrieveSubscription);
-                    localArchive.stopRecording(snapshotRetrieveSubscriptionId);
+                    CloseHelper.close(ctx.countedErrorHandler(), snapshotRetrieveSubscription);
                     snapshotRetrieveSubscription = null;
                     snapshotRetrieveImage = null;
                     snapshotReader = null;
@@ -433,8 +431,7 @@ class DynamicJoin implements AutoCloseable
                 "aeron:udp?endpoint=" + transferEndpoint + "|session-id=" + snapshotReplaySessionId;
 
             snapshotRetrieveSubscription = ctx.aeron().addSubscription(replaySubscriptionChannel, ctx.replayStreamId());
-            snapshotRetrieveSubscriptionId = localArchive.startRecording(
-                replaySubscriptionChannel, ctx.replayStreamId(), SourceLocation.REMOTE);
+            localArchive.startRecording(replaySubscriptionChannel, ctx.replayStreamId(), SourceLocation.REMOTE, true);
             workCount++;
         }
 
@@ -452,7 +449,7 @@ class DynamicJoin implements AutoCloseable
         }
         else if (consensusModuleAgent.pollForEndOfSnapshotLoad(recoveryStateCounter, nowNs))
         {
-            recoveryStateCounter.close();
+            CloseHelper.close(ctx.countedErrorHandler(), recoveryStateCounter);
             recoveryStateCounter = null;
             state(State.JOIN_CLUSTER);
             workCount++;

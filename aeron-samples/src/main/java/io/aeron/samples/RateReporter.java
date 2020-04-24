@@ -17,10 +17,54 @@ package io.aeron.samples;
 
 import java.util.concurrent.locks.LockSupport;
 
+import static org.agrona.UnsafeAccess.UNSAFE;
+
+@SuppressWarnings("unused")
+class RateReporterLhsPadding
+{
+    byte p000, p001, p002, p003, p004, p005, p006, p007, p008, p009, p010, p011, p012, p013, p014, p015;
+    byte p016, p017, p018, p019, p020, p021, p022, p023, p024, p025, p026, p027, p028, p029, p030, p031;
+    byte p032, p033, p034, p035, p036, p037, p038, p039, p040, p041, p042, p043, p044, p045, p046, p047;
+    byte p048, p049, p050, p051, p052, p053, p054, p055, p056, p057, p058, p059, p060, p061, p062, p063;
+}
+
+class RateReporterValues extends RateReporterLhsPadding
+{
+    static final long TOTAL_BYTES_OFFSET;
+    static final long TOTAL_MESSAGES_OFFSET;
+
+    static
+    {
+        try
+        {
+            TOTAL_BYTES_OFFSET = UNSAFE.objectFieldOffset(
+                RateReporterValues.class.getDeclaredField("totalBytes"));
+            TOTAL_MESSAGES_OFFSET = UNSAFE.objectFieldOffset(
+                RateReporterValues.class.getDeclaredField("totalMessages"));
+        }
+        catch (final Exception ex)
+        {
+            throw new RuntimeException(ex);
+        }
+    }
+
+    volatile long totalBytes;
+    volatile long totalMessages;
+}
+
+@SuppressWarnings("unused")
+class RateReporterRhsPadding extends RateReporterValues
+{
+    byte p064, p065, p066, p067, p068, p069, p070, p071, p072, p073, p074, p075, p076, p077, p078, p079;
+    byte p080, p081, p082, p083, p084, p085, p086, p087, p088, p089, p090, p091, p092, p093, p094, p095;
+    byte p096, p097, p098, p099, p100, p101, p102, p103, p104, p105, p106, p107, p108, p109, p110, p111;
+    byte p112, p113, p114, p115, p116, p117, p118, p119, p120, p121, p122, p123, p124, p125, p126, p127;
+}
+
 /**
  * Tracker and reporter of throughput rates.
  */
-public class RateReporter implements Runnable
+public final class RateReporter extends RateReporterRhsPadding implements Runnable
 {
     /**
      * Interface for reporting of rate information
@@ -44,9 +88,7 @@ public class RateReporter implements Runnable
     private long lastTotalBytes;
     private long lastTotalMessages;
     private long lastTimestamp;
-    private volatile long totalBytes;
-    private volatile long totalMessages;
-    private volatile boolean halt = false;
+    private volatile boolean running = true;
     private final Reporter reportingFunc;
 
     /**
@@ -88,7 +130,7 @@ public class RateReporter implements Runnable
             lastTotalMessages = currentTotalMessages;
             lastTimestamp = currentTimestamp;
         }
-        while (!halt);
+        while (running);
     }
 
     /**
@@ -96,18 +138,17 @@ public class RateReporter implements Runnable
      */
     public void halt()
     {
-        halt = true;
+        running = false;
     }
 
     /**
-     * Notify rate reporter of number of messages and bytes received, sent, etc.
+     * Notify rate reporter of number of messages and length received, sent, etc.
      *
-     * @param messages received, sent, etc.
-     * @param bytes    received, sent, etc.
+     * @param length received, sent, etc.
      */
-    public void onMessage(final long messages, final long bytes)
+    public void onMessage(final long length)
     {
-        totalBytes += bytes;
-        totalMessages += messages;
+        UNSAFE.putOrderedLong(this, TOTAL_BYTES_OFFSET, totalBytes + length);
+        UNSAFE.putOrderedLong(this, TOTAL_MESSAGES_OFFSET, totalMessages + 1);
     }
 }

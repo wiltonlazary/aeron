@@ -17,11 +17,9 @@
 #include <cstdint>
 #include <cstdio>
 #include <thread>
-#include <array>
-#include <signal.h>
+#include <csignal>
 
 #define __STDC_FORMAT_MACROS
-#include <inttypes.h>
 
 extern "C"
 {
@@ -117,7 +115,7 @@ void sendPingAndReceivePong(
 
         do
         {
-            // timestamps in the message are relative to this app, so just send the timepoint directly.
+            // timestamps in the message are relative to this app, so just send the timestamp directly.
             steady_clock::time_point start = steady_clock::now();
 
             srcBuffer.putBytes(0, (std::uint8_t*)&start, sizeof(steady_clock::time_point));
@@ -175,7 +173,7 @@ int main(int argc, char **argv)
     cp.addOption(CommandOption(optFrags,          1, 1, "limit           Fragment Count Limit."));
     cp.addOption(CommandOption(optWarmupMessages, 1, 1, "number          Number of Messages for warmup."));
 
-    signal (SIGINT, sigIntHandler);
+    signal(SIGINT, sigIntHandler);
 
     try
     {

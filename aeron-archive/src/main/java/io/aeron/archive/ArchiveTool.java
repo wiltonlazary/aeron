@@ -27,10 +27,7 @@ import io.aeron.driver.Configuration;
 import io.aeron.exceptions.AeronException;
 import io.aeron.protocol.DataHeaderFlyweight;
 import io.aeron.protocol.HeaderFlyweight;
-import org.agrona.DirectBuffer;
-import org.agrona.IoUtil;
-import org.agrona.PrintBufferUtil;
-import org.agrona.Strings;
+import org.agrona.*;
 import org.agrona.concurrent.EpochClock;
 
 import java.io.File;
@@ -44,6 +41,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
 
+import static io.aeron.archive.Archive.Configuration.MAX_BLOCK_LENGTH;
 import static io.aeron.archive.ArchiveTool.VerifyOption.APPLY_CHECKSUM;
 import static io.aeron.archive.ArchiveTool.VerifyOption.VERIFY_ALL_SEGMENT_FILES;
 import static io.aeron.archive.Catalog.*;
@@ -259,7 +257,7 @@ public class ArchiveTool
         else if (args.length == 2 && args[1].equals("migrate"))
         {
             System.out.print("WARNING: please ensure archive is not running and that a backup has been taken of " +
-                "archive directory before attempting migration(s).");
+                "the archive directory before attempting migration(s).");
 
             if (readContinueAnswer("Continue? (y/n)"))
             {
@@ -291,7 +289,7 @@ public class ArchiveTool
      */
     public static int maxEntries(final File archiveDir, final long newMaxEntries)
     {
-        try (Catalog catalog = new Catalog(archiveDir, null, 0, newMaxEntries, INSTANCE))
+        try (Catalog catalog = new Catalog(archiveDir, null, 0, newMaxEntries, INSTANCE, null, null))
         {
             return catalog.maxEntries();
         }
@@ -636,8 +634,7 @@ public class ArchiveTool
         final EpochClock epochClock,
         final ActionConfirmation<File> truncateFileOnPageStraddle)
     {
-        final ByteBuffer buffer = ByteBuffer.allocateDirect(
-            align(Configuration.MAX_UDP_PAYLOAD_LENGTH, CACHE_LINE_LENGTH));
+        final ByteBuffer buffer = BufferUtil.allocateDirectAligned(MAX_BLOCK_LENGTH, CACHE_LINE_LENGTH);
         buffer.order(LITTLE_ENDIAN);
         final DataHeaderFlyweight headerFlyweight = new DataHeaderFlyweight(buffer);
 
@@ -656,16 +653,16 @@ public class ArchiveTool
 
     private static boolean truncateFileOnPageStraddle(final File maxSegmentFile)
     {
-        return readContinueAnswer(String.format("Last fragment in the segment file: %s straddles the page boundary,%n" +
-                "i.e. it is not possible to verify if it was written correctly.%n%n" +
-                "Please choose the corrective action: (y) - to truncate the file and " +
-                "(n) - to do nothing",
+        return readContinueAnswer(String.format(
+            "Last fragment in segment file: %s straddles a page boundary,%n" +
+            "i.e. it is not possible to verify if it was written correctly.%n%n" +
+            "Please choose the corrective action: (y) to truncate the file or (n) to do nothing",
             maxSegmentFile.getAbsolutePath()));
     }
 
     private static boolean continueOnFrameLimit(final Long frameLimit)
     {
-        return readContinueAnswer(String.format("Specified frame limit %d reached. Continue? (y/n)", frameLimit));
+        return readContinueAnswer("Specified frame limit " + frameLimit + " reached. Continue? (y/n)");
     }
 
     private static boolean readContinueAnswer(final String msg)
@@ -834,6 +831,8 @@ public class ArchiveTool
                 startPosition,
                 termLength,
                 segmentLength,
+                checksum,
+                headerFlyweight,
                 truncateFileOnPageStraddle::confirm);
         }
         catch (final Exception ex)
@@ -1061,8 +1060,16 @@ public class ArchiveTool
     {
         try (Catalog catalog = openCatalogReadOnly(archiveDir, epochClock))
         {
-            if (!catalog.forEntry(recordingId, (headerEncoder, headerDecoder, descriptorEncoder, descriptorDecoder) ->
-                checksum(out, archiveDir, allFiles, checksum, descriptorDecoder)))
+            final CatalogEntryProcessor catalogEntryProcessor =
+                (headerEncoder, headerDecoder, descriptorEncoder, descriptorDecoder) ->
+                {
+                    final ByteBuffer buffer = ByteBuffer.allocateDirect(
+                        align(descriptorDecoder.mtuLength(), CACHE_LINE_LENGTH));
+                    buffer.order(LITTLE_ENDIAN);
+                    checksum(buffer, out, archiveDir, allFiles, checksum, descriptorDecoder);
+                };
+
+            if (!catalog.forEntry(recordingId, catalogEntryProcessor))
             {
                 throw new AeronException("no recording found with recordingId: " + recordingId);
             }
@@ -1070,6 +1077,7 @@ public class ArchiveTool
     }
 
     private static void checksum(
+        final ByteBuffer buffer,
         final PrintStream out,
         final File archiveDir,
         final boolean allFiles,
@@ -1085,21 +1093,24 @@ public class ArchiveTool
 
         final long startPosition = descriptorDecoder.startPosition();
         final int termLength = descriptorDecoder.termBufferLength();
+
         if (allFiles)
         {
             for (final String fileName : segmentFiles)
             {
-                checksumSegmentFile(out, archiveDir, checksum, recordingId, fileName, startPosition, termLength);
+                checksumSegmentFile(
+                    buffer, out, archiveDir, checksum, recordingId, fileName, startPosition, termLength);
             }
         }
         else
         {
             final String lastFile = findSegmentFileWithHighestPosition(segmentFiles);
-            checksumSegmentFile(out, archiveDir, checksum, recordingId, lastFile, startPosition, termLength);
+            checksumSegmentFile(buffer, out, archiveDir, checksum, recordingId, lastFile, startPosition, termLength);
         }
     }
 
     private static void checksumSegmentFile(
+        final ByteBuffer buffer,
         final PrintStream out,
         final File archiveDir,
         final Checksum checksum,
@@ -1115,9 +1126,6 @@ public class ArchiveTool
 
         try (FileChannel channel = FileChannel.open(file.toPath(), READ, WRITE))
         {
-            final ByteBuffer buffer = ByteBuffer.allocateDirect(
-                align(Configuration.MAX_UDP_PAYLOAD_LENGTH, CACHE_LINE_LENGTH));
-            buffer.order(LITTLE_ENDIAN);
             final HeaderFlyweight headerFlyweight = new HeaderFlyweight(buffer);
             final long bufferAddress = headerFlyweight.addressOffset();
             final long size = channel.size();
@@ -1181,19 +1189,24 @@ public class ArchiveTool
     {
         try (Catalog catalog = openCatalogReadOnly(archiveDir, epochClock))
         {
-            catalog.forEach((headerEncoder, headerDecoder, descriptorEncoder, descriptorDecoder) ->
-            {
-                try
+            final ByteBuffer buffer = ByteBuffer.allocateDirect(
+                align(Configuration.MAX_UDP_PAYLOAD_LENGTH, CACHE_LINE_LENGTH));
+            buffer.order(LITTLE_ENDIAN);
+
+            catalog.forEach(
+                (headerEncoder, headerDecoder, descriptorEncoder, descriptorDecoder) ->
                 {
-                    checksum(out, archiveDir, allFiles, checksum, descriptorDecoder);
-                }
-                catch (final Exception ex)
-                {
-                    out.println(
-                        "(recordingId=" + descriptorDecoder.recordingId() + ") ERR: failed to compute checksums");
-                    out.println(ex);
-                }
-            });
+                    try
+                    {
+                        checksum(buffer, out, archiveDir, allFiles, checksum, descriptorDecoder);
+                    }
+                    catch (final Exception ex)
+                    {
+                        out.println(
+                            "(recordingId=" + descriptorDecoder.recordingId() + ") ERR: failed to compute checksums");
+                        out.println(ex);
+                    }
+                });
         }
     }
 

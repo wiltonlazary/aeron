@@ -46,7 +46,11 @@ typedef enum aeron_system_counter_enum_stct
     AERON_SYSTEM_COUNTER_POSSIBLE_TTL_ASYMMETRY = 21,
     AERON_SYSTEM_COUNTER_CONTROLLABLE_IDLE_STRATEGY = 22,
     AERON_SYSTEM_COUNTER_LOSS_GAP_FILLS = 23,
-    AERON_SYSTEM_COUNTER_CLIENT_TIMEOUTS = 24
+    AERON_SYSTEM_COUNTER_CLIENT_TIMEOUTS = 24,
+    AERON_SYSTEM_COUNTER_RESOLUTION_CHANGES = 25,
+
+    // Add all new counters before this one (used for a static assertion).
+    AERON_SYSTEM_COUNTER_DUMMY_LAST,
 }
 aeron_system_counter_enum_t;
 
@@ -72,7 +76,7 @@ void aeron_system_counters_close(aeron_system_counters_t *counters);
 
 inline int64_t *aeron_system_counter_addr(aeron_system_counters_t *counters, aeron_system_counter_enum_t type)
 {
-    return aeron_counter_addr(counters->manager, counters->counter_ids[type]);
+    return aeron_counters_manager_addr(counters->manager, counters->counter_ids[type]);
 }
 
 #endif //AERON_SYSTEM_COUNTERS_H

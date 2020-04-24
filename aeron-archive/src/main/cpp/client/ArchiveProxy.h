@@ -24,7 +24,8 @@
 #include "concurrent/BackOffIdleStrategy.h"
 #include "ArchiveException.h"
 
-namespace aeron { namespace archive { namespace client {
+namespace aeron { namespace archive { namespace client
+{
 
 /// Length of buffer to use in proxy to hold messages for construction.
 constexpr const std::size_t PROXY_REQUEST_BUFFER_LENGTH = 8 * 1024;
@@ -64,7 +65,7 @@ public:
      * @return true if successfully offered otherwise false.
      */
     bool tryConnect(
-        const std::string& responseChannel,
+        const std::string &responseChannel,
         std::int32_t responseStreamId,
         std::pair<const char *, std::uint32_t> encodedCredentials,
         std::int64_t correlationId)
@@ -84,8 +85,8 @@ public:
      * Only one attempt will be made to offer the response.
      *
      * @param encodedCredentials for the response.
-     * @param correlationId    for this response.
-     * @param controlSessionId for this response.
+     * @param correlationId      for this response.
+     * @param controlSessionId   for this response.
      * @return true if successfully offered otherwise false.
      */
     bool tryChallengeResponse(
@@ -146,7 +147,7 @@ public:
      */
     template<typename IdleStrategy = aeron::concurrent::BackoffIdleStrategy>
     bool startRecording(
-        const std::string& channel,
+        const std::string &channel,
         std::int32_t streamId,
         bool localSource,
         std::int64_t correlationId,
@@ -154,6 +155,33 @@ public:
     {
         const util::index_t length = startRecording(
             m_buffer, channel, streamId, localSource, correlationId, controlSessionId);
+
+        return offer<IdleStrategy>(m_buffer, 0, length);
+    }
+
+    /**
+     * Start recording streams for a given channel and stream id pairing.
+     *
+     * @param channel          to be recorded.
+     * @param streamId         to be recorded.
+     * @param sourceLocation   of the publication to be recorded.
+     * @param autoStop         if the recording should be automatically stopped when complete.
+     * @param correlationId    for this request.
+     * @param controlSessionId for this request.
+     * @tparam IdleStrategy to use between Publication::offer attempts.
+     * @return true if successfully offered otherwise false.
+     */
+    template<typename IdleStrategy = aeron::concurrent::BackoffIdleStrategy>
+    bool startRecording(
+        const std::string &channel,
+        std::int32_t streamId,
+        bool localSource,
+        bool autoStop,
+        std::int64_t correlationId,
+        std::int64_t controlSessionId)
+    {
+        const util::index_t length = startRecording(
+            m_buffer, channel, streamId, localSource, autoStop, correlationId, controlSessionId);
 
         return offer<IdleStrategy>(m_buffer, 0, length);
     }
@@ -176,7 +204,7 @@ public:
      */
     template<typename IdleStrategy = aeron::concurrent::BackoffIdleStrategy>
     bool extendRecording(
-        const std::string& channel,
+        const std::string &channel,
         std::int32_t streamId,
         bool localSource,
         std::int64_t recordingId,
@@ -185,6 +213,39 @@ public:
     {
         const util::index_t length = extendRecording(
             m_buffer, channel, streamId, localSource, recordingId, correlationId, controlSessionId);
+
+        return offer<IdleStrategy>(m_buffer, 0, length);
+    }
+
+    /**
+     * Extend an existing, non-active, recorded stream for a the same channel and stream id.
+     *
+     * The channel must be configured for the initial position from which it will be extended. This can be done
+     * with ChannelUriStringBuilder#initialPosition(std::int64_t, std::int32_t, std::int32_t). The details required
+     * to initialise can be found by calling #listRecording(std::int64_t, std::int64_t, std::int64_t).
+     *
+     * @param channel          to be recorded.
+     * @param streamId         to be recorded.
+     * @param sourceLocation   of the publication to be recorded.
+     * @param autoStop         if the recording should be automatically stopped when complete.
+     * @param recordingId      to be extended.
+     * @param correlationId    for this request.
+     * @param controlSessionId for this request.
+     * @tparam IdleStrategy to use between Publication::offer attempts.
+     * @return true if successfully offered otherwise false.
+     */
+    template<typename IdleStrategy = aeron::concurrent::BackoffIdleStrategy>
+    bool extendRecording(
+        const std::string &channel,
+        std::int32_t streamId,
+        bool localSource,
+        bool autoStop,
+        std::int64_t recordingId,
+        std::int64_t correlationId,
+        std::int64_t controlSessionId)
+    {
+        const util::index_t length = extendRecording(
+            m_buffer, channel, streamId, localSource, autoStop, recordingId, correlationId, controlSessionId);
 
         return offer<IdleStrategy>(m_buffer, 0, length);
     }
@@ -201,7 +262,7 @@ public:
      */
     template<typename IdleStrategy = aeron::concurrent::BackoffIdleStrategy>
     bool stopRecording(
-        const std::string& channel, std::int32_t streamId, std::int64_t correlationId, std::int64_t controlSessionId)
+        const std::string &channel, std::int32_t streamId, std::int64_t correlationId, std::int64_t controlSessionId)
     {
         const util::index_t length = stopRecording(m_buffer, channel, streamId, correlationId, controlSessionId);
 
@@ -226,6 +287,23 @@ public:
     }
 
     /**
+     * Stop an active recording by the recording id.
+     *
+     * @param recordingId      that identifies an existing recording.
+     * @param correlationId    for this request.
+     * @param controlSessionId for this request.
+     * @tparam IdleStrategy to use between Publication::offer attempts.
+     * @return true if successfully offered otherwise false.
+     */
+    template<typename IdleStrategy = aeron::concurrent::BackoffIdleStrategy>
+    bool stopRecordingByIdentity(std::int64_t recordingId, std::int64_t correlationId, std::int64_t controlSessionId)
+    {
+        const util::index_t length = stopRecordingByIdentity(m_buffer, recordingId, correlationId, controlSessionId);
+
+        return offer<IdleStrategy>(m_buffer, 0, length);
+    }
+
+    /**
      * Replay a recording from a given position.
      *
      * @param recordingId      to be replayed.
@@ -243,7 +321,7 @@ public:
         std::int64_t recordingId,
         std::int64_t position,
         std::int64_t length,
-        const std::string& replayChannel,
+        const std::string &replayChannel,
         std::int32_t replayStreamId,
         std::int64_t correlationId,
         std::int64_t controlSessionId)
@@ -274,7 +352,7 @@ public:
         std::int64_t position,
         std::int64_t length,
         std::int32_t limitCounterId,
-        const std::string& replayChannel,
+        const std::string &replayChannel,
         std::int32_t replayStreamId,
         std::int64_t correlationId,
         std::int64_t controlSessionId)
@@ -366,7 +444,7 @@ public:
     bool listRecordingsForUri(
         std::int64_t fromRecordingId,
         std::int32_t recordCount,
-        const std::string& channelFragment,
+        const std::string &channelFragment,
         std::int32_t streamId,
         std::int64_t correlationId,
         std::int64_t controlSessionId)
@@ -460,7 +538,7 @@ public:
     template<typename IdleStrategy = aeron::concurrent::BackoffIdleStrategy>
     bool findLastMatchingRecording(
         std::int64_t minRecordingId,
-        const std::string& channelFragment,
+        const std::string &channelFragment,
         std::int32_t streamId,
         std::int32_t sessionId,
         std::int64_t correlationId,
@@ -513,7 +591,7 @@ public:
     bool listRecordingSubscriptions(
         std::int32_t pseudoIndex,
         std::int32_t subscriptionCount,
-        const std::string& channelFragment,
+        const std::string &channelFragment,
         std::int32_t streamId,
         bool applyStreamId,
         std::int64_t correlationId,
@@ -560,8 +638,8 @@ public:
         std::int64_t srcRecordingId,
         std::int64_t dstRecordingId,
         std::int32_t srcControlStreamId,
-        const std::string& srcControlChannel,
-        const std::string& liveDestination,
+        const std::string &srcControlChannel,
+        const std::string &liveDestination,
         std::int64_t correlationId,
         std::int64_t controlSessionId)
     {
@@ -610,8 +688,8 @@ public:
         std::int64_t channelTagId,
         std::int64_t subscriptionTagId,
         std::int32_t srcControlStreamId,
-        const std::string& srcControlChannel,
-        const std::string& liveDestination,
+        const std::string &srcControlChannel,
+        const std::string &liveDestination,
         std::int64_t correlationId,
         std::int64_t controlSessionId)
     {
@@ -774,7 +852,7 @@ private:
     const int m_retryAttempts;
 
     template<typename IdleStrategy = aeron::concurrent::BackoffIdleStrategy>
-    bool offer(AtomicBuffer& buffer, util::index_t offset, util::index_t length)
+    bool offer(AtomicBuffer &buffer, util::index_t offset, util::index_t length)
     {
         IdleStrategy idle;
 
@@ -812,211 +890,236 @@ private:
     }
 
     static util::index_t connectRequest(
-        AtomicBuffer& buffer,
-        const std::string& responseChannel,
+        AtomicBuffer &buffer,
+        const std::string &responseChannel,
         std::int32_t responseStreamId,
         std::pair<const char *, std::uint32_t> encodedCredentials,
         std::int64_t correlationId);
 
-    static util::index_t closeSession(AtomicBuffer& buffer, std::int64_t controlSessionId);
+    static util::index_t closeSession(AtomicBuffer &buffer, std::int64_t controlSessionId);
 
     static util::index_t startRecording(
-        AtomicBuffer& buffer,
-        const std::string& channel,
+        AtomicBuffer &buffer,
+        const std::string &channel,
         std::int32_t streamId,
         bool localSource,
+        std::int64_t correlationId,
+        std::int64_t controlSessionId);
+
+    static util::index_t startRecording(
+        AtomicBuffer &buffer,
+        const std::string &channel,
+        std::int32_t streamId,
+        bool localSource,
+        bool autoStop,
         std::int64_t correlationId,
         std::int64_t controlSessionId);
 
     static util::index_t extendRecording(
-        AtomicBuffer& buffer,
-        const std::string& channel,
+        AtomicBuffer &buffer,
+        const std::string &channel,
         std::int32_t streamId,
         bool localSource,
         std::int64_t recordingId,
         std::int64_t correlationId,
         std::int64_t controlSessionId);
 
+    static util::index_t extendRecording(
+        AtomicBuffer &buffer,
+        const std::string &channel,
+        std::int32_t streamId,
+        bool localSource,
+        bool autoStop,
+        std::int64_t recordingId,
+        std::int64_t correlationId,
+        std::int64_t controlSessionId);
+
     static util::index_t stopRecording(
-        AtomicBuffer& buffer,
-        const std::string& channel,
+        AtomicBuffer &buffer,
+        const std::string &channel,
         std::int32_t streamId,
         std::int64_t correlationId,
         std::int64_t controlSessionId);
 
     static util::index_t stopRecording(
-        AtomicBuffer& buffer,
+        AtomicBuffer &buffer,
         std::int64_t subscriptionId,
         std::int64_t correlationId,
         std::int64_t controlSessionId);
 
+    static util::index_t stopRecordingByIdentity(
+        AtomicBuffer &buffer,
+        std::int64_t recordingId,
+        std::int64_t correlationId,
+        std::int64_t controlSessionId);
+
     static util::index_t replay(
-        AtomicBuffer& buffer,
+        AtomicBuffer &buffer,
         std::int64_t recordingId,
         std::int64_t position,
         std::int64_t length,
-        const std::string& replayChannel,
+        const std::string &replayChannel,
         std::int32_t replayStreamId,
         std::int64_t correlationId,
         std::int64_t controlSessionId);
 
     static util::index_t boundedReplay(
-        AtomicBuffer& buffer,
+        AtomicBuffer &buffer,
         std::int64_t recordingId,
         std::int64_t position,
         std::int64_t length,
         std::int32_t limitCounterId,
-        const std::string& replayChannel,
+        const std::string &replayChannel,
         std::int32_t replayStreamId,
         std::int64_t correlationId,
         std::int64_t controlSessionId);
 
     static util::index_t stopReplay(
-        AtomicBuffer& buffer,
+        AtomicBuffer &buffer,
         std::int64_t replaySessionId,
         std::int64_t correlationId,
         std::int64_t controlSessionId);
 
     static util::index_t stopAllReplays(
-        AtomicBuffer& buffer,
+        AtomicBuffer &buffer,
         std::int64_t recordingId,
         std::int64_t correlationId,
         std::int64_t controlSessionId);
 
     static util::index_t listRecordings(
-        AtomicBuffer& buffer,
+        AtomicBuffer &buffer,
         std::int64_t fromRecordingId,
         std::int32_t recordCount,
         std::int64_t correlationId,
         std::int64_t controlSessionId);
 
     static util::index_t listRecordingsForUri(
-        AtomicBuffer& buffer,
+        AtomicBuffer &buffer,
         std::int64_t fromRecordingId,
         std::int32_t recordCount,
-        const std::string& channelFragment,
+        const std::string &channelFragment,
         std::int32_t streamId,
         std::int64_t correlationId,
         std::int64_t controlSessionId);
 
     static util::index_t listRecording(
-        AtomicBuffer& buffer,
+        AtomicBuffer &buffer,
         std::int64_t recordingId,
         std::int64_t correlationId,
         std::int64_t controlSessionId);
 
     static util::index_t getStartPosition(
-        AtomicBuffer& buffer,
+        AtomicBuffer &buffer,
         std::int64_t recordingId,
         std::int64_t correlationId,
         std::int64_t controlSessionId);
 
     static util::index_t getRecordingPosition(
-        AtomicBuffer& buffer,
+        AtomicBuffer &buffer,
         std::int64_t recordingId,
         std::int64_t correlationId,
         std::int64_t controlSessionId);
 
     static util::index_t getStopPosition(
-        AtomicBuffer& buffer,
+        AtomicBuffer &buffer,
         std::int64_t recordingId,
         std::int64_t correlationId,
         std::int64_t controlSessionId);
 
     static util::index_t findLastMatchingRecording(
-        AtomicBuffer& buffer,
+        AtomicBuffer &buffer,
         std::int64_t minRecordingId,
-        const std::string& channelFragment,
+        const std::string &channelFragment,
         std::int32_t streamId,
         std::int32_t sessionId,
         std::int64_t correlationId,
         std::int64_t controlSessionId);
 
     static util::index_t truncateRecording(
-        AtomicBuffer& buffer,
+        AtomicBuffer &buffer,
         std::int64_t recordingId,
         std::int64_t position,
         std::int64_t correlationId,
         std::int64_t controlSessionId);
 
     static util::index_t listRecordingSubscriptions(
-        AtomicBuffer& buffer,
+        AtomicBuffer &buffer,
         std::int32_t pseudoIndex,
         std::int32_t subscriptionCount,
-        const std::string& channelFragment,
+        const std::string &channelFragment,
         std::int32_t streamId,
         bool applyStreamId,
         std::int64_t correlationId,
         std::int64_t controlSessionId);
 
     static util::index_t replicate(
-        AtomicBuffer& buffer,
+        AtomicBuffer &buffer,
         std::int64_t srcRecordingId,
         std::int64_t dstRecordingId,
         std::int32_t srcControlStreamId,
-        const std::string& srcControlChannel,
-        const std::string& liveDestination,
+        const std::string &srcControlChannel,
+        const std::string &liveDestination,
         std::int64_t correlationId,
         std::int64_t controlSessionId);
 
     static util::index_t taggedReplicate(
-        AtomicBuffer& buffer,
+        AtomicBuffer &buffer,
         std::int64_t srcRecordingId,
         std::int64_t dstRecordingId,
         std::int64_t channelTagId,
         std::int64_t subscriptionTagId,
         std::int32_t srcControlStreamId,
-        const std::string& srcControlChannel,
-        const std::string& liveDestination,
+        const std::string &srcControlChannel,
+        const std::string &liveDestination,
         std::int64_t correlationId,
         std::int64_t controlSessionId);
 
     static util::index_t stopReplication(
-        AtomicBuffer& buffer,
+        AtomicBuffer &buffer,
         std::int64_t replicationId,
         std::int64_t correlationId,
         std::int64_t controlSessionId);
 
     static util::index_t detachSegments(
-        AtomicBuffer& buffer,
+        AtomicBuffer &buffer,
         std::int64_t recordingId,
         std::int64_t newStartPosition,
         std::int64_t correlationId,
         std::int64_t controlSessionId);
 
     static util::index_t deleteDetachedSegments(
-        AtomicBuffer& buffer,
+        AtomicBuffer &buffer,
         std::int64_t recordingId,
         std::int64_t correlationId,
         std::int64_t controlSessionId);
 
     static util::index_t purgeSegments(
-        AtomicBuffer& buffer,
+        AtomicBuffer &buffer,
         std::int64_t recordingId,
         std::int64_t newStartPosition,
         std::int64_t correlationId,
         std::int64_t controlSessionId);
 
     static util::index_t attachSegments(
-        AtomicBuffer& buffer,
+        AtomicBuffer &buffer,
         std::int64_t recordingId,
         std::int64_t correlationId,
         std::int64_t controlSessionId);
 
     static util::index_t migrateSegments(
-        AtomicBuffer& buffer,
+        AtomicBuffer &buffer,
         std::int64_t srcRecordingId,
         std::int64_t dstRecordingId,
         std::int64_t correlationId,
         std::int64_t controlSessionId);
 
     static util::index_t keepAlive(
-        AtomicBuffer& buffer,
+        AtomicBuffer &buffer,
         std::int64_t correlationId,
         std::int64_t controlSessionId);
 
     static util::index_t challengeResponse(
-        AtomicBuffer& buffer,
+        AtomicBuffer &buffer,
         std::pair<const char *, std::uint32_t> encodedCredentials,
         std::int64_t correlationId,
         std::int64_t controlSessionId);

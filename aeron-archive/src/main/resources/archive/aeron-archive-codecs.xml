@@ -61,7 +61,7 @@
         -> [connect | auth-connect],
            *[start-recording | stop-recording | stop-recording-subscription | replay | stop-replay | stop-all-replays |
              list-recordings | list-recordings-by-uri | list-recording | find-last-matching-recording |
-             list-recording-subscriptions |
+             list-recording-subscriptions | stop-recording-by-identity
              extend-recording | truncate-recording | replicate-recording | stop-replication | stop-all-replication |
              start-position | recording-position | stop-position |
              detach-segments | delete-detached-segments | purge-segments | attach-segments | migrate-segments],
@@ -99,6 +99,7 @@
     4. Query
         - Existing recordings can be listed by recording id range and filtered by uri and stream-id.
         - Recording subscriptions can be listed that have been setup by other sessions so they can closed on failures.
+          An active recording subscription can be found by recording id.
         - The start, stop, and active recording position for recordings.
 
     5. Recording Signals
@@ -495,6 +496,37 @@
         <field name="srcControlStreamId"   id="7" type="int32"/>
         <data  name="srcControlChannel"    id="8" type="varAsciiEncoding"/>
         <data  name="liveDestination"      id="9" type="varAsciiEncoding"/>
+    </sbe:message>
+
+    <sbe:message name="StartRecordingRequest2"
+                 id="63"
+                 description="Request a channel:stream be recorded with the option to auto stop when complete.">
+        <field name="controlSessionId"     id="1" type="int64"/>
+        <field name="correlationId"        id="2" type="int64"/>
+        <field name="streamId"             id="3" type="int32"/>
+        <field name="sourceLocation"       id="4" type="SourceLocation"/>
+        <field name="autoStop"             id="5" type="BooleanType"/>
+        <data  name="channel"              id="6" type="varAsciiEncoding"/>
+    </sbe:message>
+
+    <sbe:message name="ExtendRecordingRequest2"
+                 id="64"
+                 description="Request an existing recording be extended.">
+        <field name="controlSessionId"     id="1" type="int64"/>
+        <field name="correlationId"        id="2" type="int64"/>
+        <field name="recordingId"          id="3" type="int64"/>
+        <field name="streamId"             id="4" type="int32"/>
+        <field name="sourceLocation"       id="5" type="SourceLocation"/>
+        <field name="autoStop"             id="6" type="BooleanType"/>
+        <data  name="channel"              id="7" type="varAsciiEncoding"/>
+    </sbe:message>
+
+    <sbe:message name="StopRecordingByIdentityRequest"
+                 id="65"
+                 description="Try and stop an active recording by its identity.">
+        <field name="controlSessionId"     id="1" type="int64"/>
+        <field name="correlationId"        id="2" type="int64"/>
+        <field name="recordingId"          id="3" type="int64"/>
     </sbe:message>
 
 <!-- Archive Recording Progress Events -->

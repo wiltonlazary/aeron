@@ -22,19 +22,18 @@ import java.util.concurrent.TimeUnit;
 /**
  * Aeron client library tracker.
  */
-public class AeronClient implements DriverManagedResource
+final class AeronClient implements DriverManagedResource
 {
     private final long clientId;
     private final long clientLivenessTimeoutMs;
-    private final AtomicCounter clientTimeouts;
-    private final AtomicCounter heartbeatTimestamp;
     private boolean reachedEndOfLife = false;
     private boolean closedByCommand = false;
+    private final AtomicCounter clientTimeouts;
+    private final AtomicCounter heartbeatTimestamp;
 
-    public AeronClient(
+    AeronClient(
         final long clientId,
         final long clientLivenessTimeoutNs,
-        final long nowMs,
         final AtomicCounter clientTimeouts,
         final AtomicCounter heartbeatTimestamp)
     {
@@ -42,31 +41,11 @@ public class AeronClient implements DriverManagedResource
         this.clientLivenessTimeoutMs = Math.max(1, TimeUnit.NANOSECONDS.toMillis(clientLivenessTimeoutNs));
         this.clientTimeouts = clientTimeouts;
         this.heartbeatTimestamp = heartbeatTimestamp;
-
-        heartbeatTimestamp.setOrdered(nowMs);
     }
 
     public void close()
     {
-        if (!heartbeatTimestamp.isClosed())
-        {
-            heartbeatTimestamp.close();
-        }
-    }
-
-    public long clientId()
-    {
-        return clientId;
-    }
-
-    public void timeOfLastKeepaliveMs(final long nowMs)
-    {
-        heartbeatTimestamp.setOrdered(nowMs);
-    }
-
-    public boolean hasTimedOut()
-    {
-        return reachedEndOfLife;
+        heartbeatTimestamp.close();
     }
 
     public void onTimeEvent(final long timeNs, final long timeMs, final DriverConductor conductor)
@@ -80,6 +59,8 @@ public class AeronClient implements DriverManagedResource
                 clientTimeouts.incrementOrdered();
                 conductor.clientTimeout(clientId);
             }
+
+            conductor.unavailableCounter(clientId, heartbeatTimestamp.id());
         }
     }
 
@@ -88,9 +69,24 @@ public class AeronClient implements DriverManagedResource
         return reachedEndOfLife;
     }
 
+    long clientId()
+    {
+        return clientId;
+    }
+
+    boolean hasTimedOut()
+    {
+        return reachedEndOfLife;
+    }
+
+    void timeOfLastKeepaliveMs(final long nowMs)
+    {
+        heartbeatTimestamp.setOrdered(nowMs);
+    }
+
     void onClosedByCommand()
     {
         closedByCommand = true;
-        heartbeatTimestamp.set(0);
+        heartbeatTimestamp.setOrdered(0);
     }
 }

@@ -17,7 +17,6 @@ package io.aeron.samples;
 
 import io.aeron.*;
 import io.aeron.driver.MediaDriver;
-import io.aeron.logbuffer.FragmentHandler;
 import org.agrona.BitUtil;
 import org.agrona.BufferUtil;
 import org.agrona.DirectBuffer;
@@ -54,7 +53,6 @@ public class EmbeddedExclusiveThroughput
 
         final RateReporter reporter = new RateReporter(
             TimeUnit.SECONDS.toNanos(1), EmbeddedExclusiveThroughput::printRate);
-        final FragmentHandler rateReporterHandler = rateReporterHandler(reporter);
         final ExecutorService executor = Executors.newFixedThreadPool(2);
         final AtomicBoolean running = new AtomicBoolean(true);
 
@@ -65,7 +63,7 @@ public class EmbeddedExclusiveThroughput
         {
             executor.execute(reporter);
             executor.execute(() -> SamplesUtil.subscriberLoop(
-                rateReporterHandler, FRAGMENT_COUNT_LIMIT, running).accept(subscription));
+                rateReporterHandler(reporter), FRAGMENT_COUNT_LIMIT, running).accept(subscription));
 
             final ContinueBarrier barrier = new ContinueBarrier("Execute again?");
             final IdleStrategy idleStrategy = SampleConfiguration.newIdleStrategy();
@@ -84,7 +82,7 @@ public class EmbeddedExclusiveThroughput
                     OFFER_BUFFER.putLong(0, i);
 
                     idleStrategy.reset();
-                    while (publication.offer(OFFER_BUFFER, 0, MESSAGE_LENGTH) < 0)
+                    while (publication.offer(OFFER_BUFFER, 0, MESSAGE_LENGTH, null) < 0)
                     {
                         backPressureCount++;
                         idleStrategy.idle();

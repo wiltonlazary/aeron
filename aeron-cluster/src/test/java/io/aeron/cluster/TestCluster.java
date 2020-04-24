@@ -15,18 +15,14 @@
  */
 package io.aeron.cluster;
 
-import io.aeron.Aeron;
-import io.aeron.ChannelUri;
-import io.aeron.CommonContext;
-import io.aeron.Counter;
+import io.aeron.*;
 import io.aeron.archive.Archive;
 import io.aeron.archive.ArchiveThreadingMode;
 import io.aeron.archive.client.AeronArchive;
-import io.aeron.cluster.client.AeronCluster;
-import io.aeron.cluster.client.EgressListener;
+import io.aeron.cluster.client.*;
+import io.aeron.cluster.codecs.EventCode;
 import io.aeron.cluster.service.ClusteredServiceContainer;
 import io.aeron.driver.MediaDriver;
-import io.aeron.driver.MinMulticastFlowControlSupplier;
 import io.aeron.driver.ThreadingMode;
 import io.aeron.logbuffer.Header;
 import io.aeron.test.Tests;
@@ -43,7 +39,6 @@ import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
 import java.util.stream.Stream;
 
@@ -81,6 +76,20 @@ public class TestCluster implements AutoCloseable
             responseCount.value++;
         }
 
+        public void sessionEvent(
+            final long correlationId,
+            final long clusterSessionId,
+            final long leadershipTermId,
+            final int leaderMemberId,
+            final EventCode code,
+            final String detail)
+        {
+            if (EventCode.ERROR == code)
+            {
+                ClusterTests.addError(new ClusterException(detail));
+            }
+        }
+
         public void newLeader(
             final long clusterSessionId,
             final long leadershipTermId,
@@ -109,8 +118,7 @@ public class TestCluster implements AutoCloseable
     {
         if ((staticMemberCount + dynamicMemberCount + 1) >= 10)
         {
-            throw new IllegalArgumentException(
-                "too many members memberCount=" + staticMemberCount + ": max 9");
+            throw new IllegalArgumentException("too many members memberCount=" + staticMemberCount + ": max 9");
         }
 
         this.nodes = new TestNode[staticMemberCount + dynamicMemberCount + 1];
@@ -165,33 +173,12 @@ public class TestCluster implements AutoCloseable
         return node::closeAndDelete;
     }
 
-    static void awaitCount(final AtomicLong counter, final long value)
-    {
-        while (counter.get() < value)
-        {
-            Thread.yield();
-            Tests.checkInterruptStatus();
-        }
-    }
-
     static TestCluster startThreeNodeStaticCluster(final int appointedLeaderId)
     {
         final TestCluster testCluster = new TestCluster(3, 0, appointedLeaderId);
         for (int i = 0; i < 3; i++)
         {
             testCluster.startStaticNode(i, true);
-        }
-
-        return testCluster;
-    }
-
-    static TestCluster startThreeNodeStaticCluster(
-        final int appointedLeaderId, final Supplier<? extends TestNode.TestService> serviceSupplier)
-    {
-        final TestCluster testCluster = new TestCluster(3, 0, appointedLeaderId);
-        for (int i = 0; i < 3; i++)
-        {
-            testCluster.startStaticNode(i, true, serviceSupplier);
         }
 
         return testCluster;
@@ -239,7 +226,6 @@ public class TestCluster implements AutoCloseable
             .aeronDirectoryName(aeronDirName)
             .threadingMode(ThreadingMode.SHARED)
             .termBufferSparseFile(true)
-            .multicastFlowControlSupplier(new MinMulticastFlowControlSupplier())
             .errorHandler(ClusterTests.errorHandler(index))
             .dirDeleteOnShutdown(false)
             .dirDeleteOnStart(true);
@@ -305,7 +291,6 @@ public class TestCluster implements AutoCloseable
             .aeronDirectoryName(aeronDirName)
             .threadingMode(ThreadingMode.SHARED)
             .termBufferSparseFile(true)
-            .multicastFlowControlSupplier(new MinMulticastFlowControlSupplier())
             .errorHandler(ClusterTests.errorHandler(index))
             .dirDeleteOnStart(true)
             .dirDeleteOnShutdown(false);
@@ -366,7 +351,6 @@ public class TestCluster implements AutoCloseable
             .aeronDirectoryName(aeronDirName)
             .threadingMode(ThreadingMode.SHARED)
             .termBufferSparseFile(true)
-            .multicastFlowControlSupplier(new MinMulticastFlowControlSupplier())
             .errorHandler(ClusterTests.errorHandler(index))
             .dirDeleteOnStart(true)
             .dirDeleteOnShutdown(false);
@@ -430,7 +414,6 @@ public class TestCluster implements AutoCloseable
             .aeronDirectoryName(aeronDirName)
             .threadingMode(ThreadingMode.SHARED)
             .termBufferSparseFile(true)
-            .multicastFlowControlSupplier(new MinMulticastFlowControlSupplier())
             .errorHandler(ClusterTests.errorHandler(backupNodeIndex))
             .dirDeleteOnStart(true);
 
@@ -476,15 +459,10 @@ public class TestCluster implements AutoCloseable
         testNode.close();
     }
 
-    void stopBackupNode()
-    {
-        backupNode.close();
-    }
-
     void stopAllNodes()
     {
-        CloseHelper.closeAll(nodes);
         CloseHelper.close(backupNode);
+        CloseHelper.closeAll(nodes);
     }
 
     void restartAllNodes(final boolean cleanStart)
@@ -530,7 +508,7 @@ public class TestCluster implements AutoCloseable
                 .clusterMemberEndpoints(staticClusterMemberEndpoints));
     }
 
-    void connectClient()
+    AeronCluster connectClient()
     {
         final String aeronDirName = CommonContext.getAeronDirectoryName();
 
@@ -548,6 +526,8 @@ public class TestCluster implements AutoCloseable
                 .ingressChannel("aeron:udp?term-length=64k")
                 .egressChannel(CLUSTER_EGRESS_CHANNEL)
                 .clusterMemberEndpoints(staticClusterMemberEndpoints));
+
+        return client;
     }
 
     void closeClient()
@@ -566,7 +546,7 @@ public class TestCluster implements AutoCloseable
 
     void sendPoisonMessages(final int messageCount)
     {
-        final int length = msgBuffer.putStringWithoutLengthAscii(0, TestMessages.POISON_MESSAGE);
+        final int length = msgBuffer.putStringWithoutLengthAscii(0, ClusterTests.POISON_MSG);
         for (int i = 0; i < messageCount; i++)
         {
             sendMessage(length);
@@ -575,8 +555,24 @@ public class TestCluster implements AutoCloseable
 
     void sendMessage(final int messageLength)
     {
-        while (client.offer(msgBuffer, 0, messageLength) < 0)
+        while (true)
         {
+            final long result = client.offer(msgBuffer, 0, messageLength);
+            if (result > 0)
+            {
+                break;
+            }
+
+            if (Publication.CLOSED == result)
+            {
+                throw new ClusterException("client publication is closed");
+            }
+
+            if (Publication.MAX_POSITION_EXCEEDED == result)
+            {
+                throw new ClusterException("max position exceeded");
+            }
+
             Thread.yield();
             Tests.checkInterruptStatus();
             client.pollEgress();
@@ -588,19 +584,26 @@ public class TestCluster implements AutoCloseable
     void awaitResponseMessageCount(final int messageCount)
     {
         final EpochClock epochClock = client.context().aeron().context().epochClock();
-        long deadlineMs = epochClock.time() + TimeUnit.SECONDS.toMillis(1);
+        long heartbeatDeadlineMs = epochClock.time() + TimeUnit.SECONDS.toMillis(1);
+        long count;
 
-        while (responseCount.get() < messageCount)
+        while ((count = responseCount.get()) < messageCount)
         {
             Thread.yield();
-            Tests.checkInterruptStatus();
+            if (Thread.interrupted())
+            {
+                final String message = "count=" + count + " awaiting=" + messageCount;
+                Tests.unexpectedInterruptStackTrace(message);
+                fail(message);
+            }
+
             client.pollEgress();
 
             final long nowMs = epochClock.time();
-            if (nowMs > deadlineMs)
+            if (nowMs > heartbeatDeadlineMs)
             {
                 client.sendKeepAlive();
-                deadlineMs = nowMs + TimeUnit.SECONDS.toMillis(1);
+                heartbeatDeadlineMs = nowMs + TimeUnit.SECONDS.toMillis(1);
             }
         }
     }
@@ -609,8 +612,7 @@ public class TestCluster implements AutoCloseable
     {
         while (newLeaderEvent.get() < count)
         {
-            Thread.yield();
-            Tests.checkInterruptStatus();
+            Tests.sleep(1);
             client.pollEgress();
         }
     }
@@ -626,10 +628,18 @@ public class TestCluster implements AutoCloseable
 
     void awaitCommitPosition(final TestNode node, final long logPosition)
     {
-        while (node.commitPosition() != logPosition)
+        while (node.commitPosition() < logPosition)
         {
             Thread.yield();
             Tests.checkInterruptStatus();
+        }
+    }
+
+    void awaitActiveSessionCount(final TestNode node, final int count)
+    {
+        while (node.service().activeSessionCount() != count)
+        {
+            Tests.sleep(1);
         }
     }
 
@@ -662,7 +672,7 @@ public class TestCluster implements AutoCloseable
         TestNode leaderNode;
         while (null == (leaderNode = findLeader(skipIndex)))
         {
-            Tests.sleep(1000);
+            Tests.sleep(100);
         }
 
         return leaderNode;
@@ -690,32 +700,34 @@ public class TestCluster implements AutoCloseable
 
     void awaitBackupState(final ClusterBackup.State targetState)
     {
-        if (null != backupNode)
+        if (null == backupNode)
         {
-            while (backupNode.state() != targetState)
-            {
-                Tests.sleep(100);
-            }
-
-            return;
+            throw new IllegalStateException("no backup node present");
         }
 
-        throw new IllegalStateException("no backup node present");
+        while (backupNode.backupState() != targetState)
+        {
+            Tests.sleep(10);
+        }
     }
 
     void awaitBackupLiveLogPosition(final long position)
     {
-        if (null != backupNode)
+        if (null == backupNode)
         {
-            while (backupNode.liveLogPosition() != position)
-            {
-                Tests.sleep(100);
-            }
-
-            return;
+            throw new IllegalStateException("no backup node present");
         }
 
-        throw new IllegalStateException("no backup node present");
+        while (true)
+        {
+            final long livePosition = backupNode.liveLogPosition();
+            if (livePosition >= position)
+            {
+                return;
+            }
+
+            Tests.sleep(10, "awaiting position=%d livePosition=%d", position, livePosition);
+        }
     }
 
     TestNode node(final int index)
@@ -763,26 +775,44 @@ public class TestCluster implements AutoCloseable
         }
     }
 
+    void awaitServicesMessageCount(final int messageCount)
+    {
+        for (final TestNode node : nodes)
+        {
+            if (null != node)
+            {
+                awaitServiceMessageCount(node, messageCount);
+            }
+        }
+    }
+
     void awaitServiceMessageCount(final TestNode node, final int messageCount)
     {
+        final TestNode.TestService service = node.service();
         final EpochClock epochClock = client.context().aeron().context().epochClock();
-        long deadlineMs = epochClock.time() + TimeUnit.SECONDS.toMillis(1);
+        long keepAliveDeadlineMs = epochClock.time() + TimeUnit.SECONDS.toMillis(1);
+        long count;
 
-        while (node.service().messageCount() < messageCount)
+        while ((count = service.messageCount()) < messageCount)
         {
             Thread.yield();
-            Tests.checkInterruptStatus();
+            if (Thread.interrupted())
+            {
+                final String message = "count=" + count + " awaiting=" + messageCount;
+                Tests.unexpectedInterruptStackTrace(message);
+                fail(message);
+            }
 
-            if (node.service().hasReceivedUnexpectedMessage())
+            if (service.hasReceivedUnexpectedMessage())
             {
                 fail("service received unexpected message");
             }
 
             final long nowMs = epochClock.time();
-            if (nowMs > deadlineMs)
+            if (nowMs > keepAliveDeadlineMs)
             {
                 client.sendKeepAlive();
-                deadlineMs = nowMs + TimeUnit.SECONDS.toMillis(1);
+                keepAliveDeadlineMs = nowMs + TimeUnit.SECONDS.toMillis(1);
             }
         }
     }
@@ -912,21 +942,11 @@ public class TestCluster implements AutoCloseable
         }
     }
 
-    public long countRecordingLogSnapshots(final TestNode node)
-    {
-        return node.consensusModule().context().recordingLog()
-            .entries()
-            .stream()
-            .filter((e) -> RecordingLog.ENTRY_TYPE_SNAPSHOT == e.type &&
-                ConsensusModule.Configuration.SERVICE_ID == e.serviceId)
-            .count();
-    }
-
     static class ServiceContext
     {
-        public Aeron.Context aeron = new Aeron.Context();
-        AeronArchive.Context aeronArchiveContext = new AeronArchive.Context();
-        ClusteredServiceContainer.Context serviceContainerContext = new ClusteredServiceContainer.Context();
+        final Aeron.Context aeron = new Aeron.Context();
+        final AeronArchive.Context aeronArchiveContext = new AeronArchive.Context();
+        final ClusteredServiceContainer.Context serviceContainerContext = new ClusteredServiceContainer.Context();
         TestNode.TestService service;
     }
 
@@ -984,7 +1004,6 @@ public class TestCluster implements AutoCloseable
             .aeronDirectoryName(aeronDirName)
             .threadingMode(ThreadingMode.SHARED)
             .termBufferSparseFile(true)
-            .multicastFlowControlSupplier(new MinMulticastFlowControlSupplier())
             .errorHandler(ClusterTests.errorHandler(index))
             .dirDeleteOnStart(true)
             .dirDeleteOnShutdown(false);

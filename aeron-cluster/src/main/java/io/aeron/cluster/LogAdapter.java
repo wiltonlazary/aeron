@@ -15,22 +15,25 @@
  */
 package io.aeron.cluster;
 
-import io.aeron.Image;
-import io.aeron.ImageControlledFragmentAssembler;
+import io.aeron.*;
 import io.aeron.cluster.client.ClusterClock;
 import io.aeron.cluster.client.ClusterException;
 import io.aeron.cluster.codecs.*;
 import io.aeron.logbuffer.ControlledFragmentHandler;
 import io.aeron.logbuffer.Header;
-import org.agrona.DirectBuffer;
+import org.agrona.*;
 
-final class LogAdapter implements ControlledFragmentHandler, AutoCloseable
+import static io.aeron.logbuffer.FrameDescriptor.*;
+import static io.aeron.logbuffer.FrameDescriptor.END_FRAG_FLAG;
+
+final class LogAdapter implements ControlledFragmentHandler
 {
     private static final int FRAGMENT_LIMIT = 100;
 
-    private final ImageControlledFragmentAssembler fragmentAssembler = new ImageControlledFragmentAssembler(this);
-    private final Image image;
+    private long logPosition;
+    private Image image;
     private final ConsensusModuleAgent consensusModuleAgent;
+    private final BufferBuilder builder = new BufferBuilder();
     private final MessageHeaderDecoder messageHeaderDecoder = new MessageHeaderDecoder();
     private final SessionOpenEventDecoder sessionOpenEventDecoder = new SessionOpenEventDecoder();
     private final SessionCloseEventDecoder sessionCloseEventDecoder = new SessionCloseEventDecoder();
@@ -40,25 +43,39 @@ final class LogAdapter implements ControlledFragmentHandler, AutoCloseable
     private final NewLeadershipTermEventDecoder newLeadershipTermEventDecoder = new NewLeadershipTermEventDecoder();
     private final MembershipChangeEventDecoder membershipChangeEventDecoder = new MembershipChangeEventDecoder();
 
-    LogAdapter(final Image image, final ConsensusModuleAgent consensusModuleAgent)
+    LogAdapter(final ConsensusModuleAgent consensusModuleAgent)
     {
-        this.image = image;
         this.consensusModuleAgent = consensusModuleAgent;
     }
 
-    public void close()
+    void disconnect(final ErrorHandler errorHandler)
     {
-        image.subscription().close();
+        if (null != image)
+        {
+            logPosition = image.position();
+            CloseHelper.close(errorHandler, image.subscription());
+            image = null;
+        }
+    }
+
+    ConsensusModuleAgent consensusModuleAgent()
+    {
+        return consensusModuleAgent;
     }
 
     long position()
     {
+        if (null == image)
+        {
+            return logPosition;
+        }
+
         return image.position();
     }
 
     int poll(final long boundPosition)
     {
-        return image.boundedControlledPoll(fragmentAssembler, boundPosition, FRAGMENT_LIMIT);
+        return image.boundedControlledPoll(this, boundPosition, FRAGMENT_LIMIT);
     }
 
     boolean isImageClosed()
@@ -71,6 +88,16 @@ final class LogAdapter implements ControlledFragmentHandler, AutoCloseable
         return image;
     }
 
+    void image(final Image image)
+    {
+        if (null != this.image)
+        {
+            logPosition = this.image.position();
+        }
+
+        this.image = image;
+    }
+
     void asyncRemoveDestination(final String destination)
     {
         if (null != image)
@@ -79,8 +106,50 @@ final class LogAdapter implements ControlledFragmentHandler, AutoCloseable
         }
     }
 
-    @SuppressWarnings("MethodLength")
     public Action onFragment(final DirectBuffer buffer, final int offset, final int length, final Header header)
+    {
+        Action action = Action.CONTINUE;
+        final byte flags = header.flags();
+
+        if ((flags & UNFRAGMENTED) == UNFRAGMENTED)
+        {
+            action = onMessage(buffer, offset, header);
+        }
+        else
+        {
+            if ((flags & BEGIN_FRAG_FLAG) == BEGIN_FRAG_FLAG)
+            {
+                builder.reset().append(buffer, offset, length);
+            }
+            else
+            {
+                final int limit = builder.limit();
+                if (limit > 0)
+                {
+                    builder.append(buffer, offset, length);
+
+                    if ((flags & END_FRAG_FLAG) == END_FRAG_FLAG)
+                    {
+                        action = onMessage(builder.buffer(), 0, header);
+
+                        if (Action.ABORT == action)
+                        {
+                            builder.limit(limit);
+                        }
+                        else
+                        {
+                            builder.reset();
+                        }
+                    }
+                }
+            }
+        }
+
+        return action;
+    }
+
+    @SuppressWarnings("MethodLength")
+    private Action onMessage(final DirectBuffer buffer, final int offset, final Header header)
     {
         messageHeaderDecoder.wrap(buffer, offset);
 
@@ -188,7 +257,6 @@ final class LogAdapter implements ControlledFragmentHandler, AutoCloseable
 
                 consensusModuleAgent.onReplayClusterAction(
                     clusterActionRequestDecoder.leadershipTermId(),
-                    clusterActionRequestDecoder.logPosition(),
                     clusterActionRequestDecoder.action());
                 return Action.BREAK;
         }

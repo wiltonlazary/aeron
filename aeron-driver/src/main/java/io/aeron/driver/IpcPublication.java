@@ -194,14 +194,14 @@ public final class IpcPublication implements DriverManagedResource, Subscribable
 
     public void addSubscriber(final SubscriptionLink subscriptionLink, final ReadablePosition subscriberPosition)
     {
-        LogBufferDescriptor.isConnected(metaDataBuffer, true);
         subscriberPositions = ArrayUtil.add(subscriberPositions, subscriberPosition);
-
         if (!subscriptionLink.isTether())
         {
             untetheredSubscriptions.add(new UntetheredSubscription(
                 subscriptionLink, subscriberPosition, timeOfLastConsumerPositionUpdateNs));
         }
+
+        LogBufferDescriptor.isConnected(metaDataBuffer, true);
     }
 
     public void removeSubscriber(final SubscriptionLink subscriptionLink, final ReadablePosition subscriberPosition)
@@ -209,6 +209,11 @@ public final class IpcPublication implements DriverManagedResource, Subscribable
         consumerPosition = Math.max(consumerPosition, subscriberPosition.getVolatile());
         subscriberPositions = ArrayUtil.remove(subscriberPositions, subscriberPosition);
         subscriberPosition.close();
+
+        if (subscriberPositions.length == 0)
+        {
+            LogBufferDescriptor.isConnected(metaDataBuffer, false);
+        }
 
         if (!subscriptionLink.isTether())
         {
@@ -220,11 +225,6 @@ public final class IpcPublication implements DriverManagedResource, Subscribable
                     break;
                 }
             }
-        }
-
-        if (subscriberPositions.length == 0)
-        {
-            LogBufferDescriptor.isConnected(metaDataBuffer, false);
         }
     }
 
@@ -401,9 +401,9 @@ public final class IpcPublication implements DriverManagedResource, Subscribable
                             consumerPosition,
                             rawLog.fileName(),
                             CommonContext.IPC_CHANNEL);
-                        LogBufferDescriptor.isConnected(metaDataBuffer, true);
                         untethered.state = UntetheredSubscription.ACTIVE;
                         untethered.timeOfLastUpdateNs = nowNs;
+                        LogBufferDescriptor.isConnected(metaDataBuffer, true);
                     }
                     break;
             }

@@ -21,6 +21,7 @@ import io.aeron.logbuffer.FragmentHandler;
 import io.aeron.logbuffer.Header;
 import io.aeron.logbuffer.LogBufferDescriptor;
 import io.aeron.protocol.DataHeaderFlyweight;
+import io.aeron.test.CountingFragmentHandler;
 import io.aeron.test.MediaDriverTestWatcher;
 import io.aeron.test.TestMediaDriver;
 import io.aeron.test.Tests;
@@ -28,6 +29,8 @@ import org.agrona.CloseHelper;
 import org.agrona.DirectBuffer;
 import org.agrona.IoUtil;
 import org.agrona.SystemUtil;
+import org.agrona.collections.MutableInteger;
+import org.agrona.collections.MutableLong;
 import org.agrona.concurrent.UnsafeBuffer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -40,7 +43,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.mockito.Mockito.*;
 
 public class MultiDestinationCastTest
@@ -62,7 +65,7 @@ public class MultiDestinationCastTest
     private static final int MESSAGE_LENGTH =
         (TERM_BUFFER_LENGTH / MESSAGES_PER_TERM) - DataHeaderFlyweight.HEADER_LENGTH;
     private static final String ROOT_DIR =
-        SystemUtil.tmpDirName() + "aeron-system-tests-" + UUID.randomUUID().toString() + File.separator;
+        SystemUtil.tmpDirName() + "aeron-system-tests-" + UUID.randomUUID() + File.separator;
 
     private final MediaDriver.Context driverBContext = new MediaDriver.Context();
 
@@ -91,13 +94,13 @@ public class MultiDestinationCastTest
         buffer.putInt(0, 1);
 
         final MediaDriver.Context driverAContext = new MediaDriver.Context()
-            .errorHandler(Throwable::printStackTrace)
+            .errorHandler(Tests::onError)
             .publicationTermBufferLength(TERM_BUFFER_LENGTH)
             .aeronDirectoryName(baseDirA)
             .threadingMode(ThreadingMode.SHARED);
 
         driverBContext.publicationTermBufferLength(TERM_BUFFER_LENGTH)
-            .errorHandler(Throwable::printStackTrace)
+            .errorHandler(Tests::onError)
             .aeronDirectoryName(baseDirB)
             .threadingMode(ThreadingMode.SHARED);
 
@@ -252,7 +255,7 @@ public class MultiDestinationCastTest
 
         for (int i = 0; i < numMessagesToSend; i++)
         {
-            while (publication.offer(buffer, 0, buffer.capacity()) < 0L)
+            while (publication.offer(buffer, 0, MESSAGE_LENGTH) < 0L)
             {
                 Thread.yield();
                 Tests.checkInterruptStatus();
@@ -294,7 +297,7 @@ public class MultiDestinationCastTest
 
         for (int i = 0; i < numMessagesToSend; i++)
         {
-            while (publication.offer(buffer, 0, buffer.capacity()) < 0L)
+            while (publication.offer(buffer, 0, MESSAGE_LENGTH) < 0L)
             {
                 Thread.yield();
                 Tests.checkInterruptStatus();
@@ -330,12 +333,15 @@ public class MultiDestinationCastTest
     {
         final int numMessagesToSend = MESSAGES_PER_TERM * 3;
         final int numMessageForSub2 = 10;
-        final CountingFragmentHandler fragmentHandlerA = new CountingFragmentHandler(
-            "fragmentHandlerA", numMessagesToSend);
-        final CountingFragmentHandler fragmentHandlerB = new CountingFragmentHandler(
-            "fragmentHandlerB", numMessageForSub2);
-
+        final CountingFragmentHandler fragmentHandlerA = new CountingFragmentHandler("fragmentHandlerA");
+        final CountingFragmentHandler fragmentHandlerB = new CountingFragmentHandler("fragmentHandlerB");
+        final Supplier<String> messageSupplierA = fragmentHandlerA::toString;
+        final Supplier<String> messageSupplierB = fragmentHandlerB::toString;
         final CountDownLatch availableImage = new CountDownLatch(1);
+        final MutableLong position = new MutableLong(0);
+        final MutableInteger messagesSent = new MutableInteger(0);
+        final Supplier<String> positionSupplier =
+            () -> "Failed to publish, position: " + position + ", sent: " + messagesSent;
 
         launch();
 
@@ -352,33 +358,36 @@ public class MultiDestinationCastTest
             Tests.checkInterruptStatus();
         }
 
-        for (int i = 0; i < numMessagesToSend; i++)
+        while (messagesSent.value < numMessagesToSend)
         {
-            while (publication.offer(buffer, 0, buffer.capacity()) < 0L)
+            position.value = publication.offer(buffer, 0, MESSAGE_LENGTH);
+
+            if (0 <= position.value)
             {
-                Thread.yield();
-                Tests.checkInterruptStatus();
+                messagesSent.increment();
+            }
+            else
+            {
+                Tests.yieldingWait(positionSupplier);
             }
 
             subscriptionA.poll(fragmentHandlerA, 10);
 
-            if (i > (numMessagesToSend - numMessageForSub2))
+            if (messagesSent.value > (numMessagesToSend - numMessageForSub2))
             {
                 subscriptionB.poll(fragmentHandlerB, 10);
             }
 
-            if (i == (numMessagesToSend - numMessageForSub2 - 1))
+            if (messagesSent.value == (numMessagesToSend - numMessageForSub2))
             {
-                // If we add B before A has reached i number of messages
+                final int published = messagesSent.value;
+                // If we add B before A has reached `published` number of messages
                 // then B will receive more than the expected `numMessageForSub2`.
-                final int published = i + 1;
-                final Supplier<String> message =
-                    () -> "Handler: " + fragmentHandlerA.toString() + ", published: " + published;
-                while (!fragmentHandlerA.hasReached(published))
+                while (fragmentHandlerA.notDone(published))
                 {
                     if (subscriptionA.poll(fragmentHandlerA, 10) <= 0)
                     {
-                        Tests.yieldingWait(message);
+                        Tests.yieldingWait(messageSupplierA);
                     }
                 }
 
@@ -387,23 +396,23 @@ public class MultiDestinationCastTest
             }
         }
 
-        while (!fragmentHandlerA.isComplete() || !fragmentHandlerB.isComplete())
+        while (fragmentHandlerA.notDone(numMessagesToSend) || fragmentHandlerB.notDone(numMessageForSub2))
         {
-            if (!fragmentHandlerA.isComplete() && subscriptionA.poll(fragmentHandlerA, 10) <= 0)
+            if (fragmentHandlerA.notDone(numMessagesToSend) && subscriptionA.poll(fragmentHandlerA, 10) <= 0)
             {
-                Tests.yieldingWait(fragmentHandlerA::toString);
+                Tests.yieldingWait(messageSupplierA);
             }
 
-            if (!fragmentHandlerB.isComplete() && subscriptionB.poll(fragmentHandlerB, 10) <= 0)
+            if (fragmentHandlerB.notDone(numMessageForSub2) && subscriptionB.poll(fragmentHandlerB, 10) <= 0)
             {
-                Tests.yieldingWait(fragmentHandlerB::toString);
+                Tests.yieldingWait(messageSupplierB);
             }
         }
     }
 
-    private static int pollForFragment(final Subscription subscription, final FragmentHandler handler)
+    private static void pollForFragment(final Subscription subscription, final FragmentHandler handler)
     {
-        return Tests.pollForFragments(subscription, handler, 1, TimeUnit.MILLISECONDS.toNanos(500));
+        Tests.pollForFragments(subscription, handler, 1, TimeUnit.MILLISECONDS.toNanos(500));
     }
 
     private void verifyFragments(final FragmentHandler fragmentHandler, final int numMessagesToSend)
@@ -413,42 +422,5 @@ public class MultiDestinationCastTest
             anyInt(),
             eq(MESSAGE_LENGTH),
             any(Header.class));
-    }
-
-    private static final class CountingFragmentHandler implements FragmentHandler
-    {
-        private final String name;
-        private final int expected;
-        private int received = 0;
-
-        private CountingFragmentHandler(final String name, final int expected)
-        {
-            this.name = name;
-            this.expected = expected;
-        }
-
-        public boolean isComplete()
-        {
-            return expected == received;
-        }
-
-        public void onFragment(final DirectBuffer buffer, final int offset, final int length, final Header header)
-        {
-            received++;
-        }
-
-        public String toString()
-        {
-            return "CountingFragmentHandler{" +
-                "name='" + name + '\'' +
-                ", expected=" + expected +
-                ", received=" + received +
-                '}';
-        }
-
-        public boolean hasReached(final int i)
-        {
-            return i == received;
-        }
     }
 }
