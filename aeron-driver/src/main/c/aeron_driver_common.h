@@ -21,9 +21,9 @@
 #include <stddef.h>
 #include <stdbool.h>
 
+#define AERON_MAX_HOSTNAME_LEN (256)
 #define AERON_MAX_PATH (384)
 #define AERON_CHANNEL_STATUS_INDICATOR_NOT_ALLOCATED (-1)
-
 #define AERON_URI_INVALID_TAG (-1)
 
 typedef void (*aeron_idle_strategy_func_t)(void *state, int work_count);
@@ -32,7 +32,7 @@ typedef int (*aeron_idle_strategy_init_func_t)(void **state, const char *env_var
 typedef struct aeron_driver_managed_resource_stct
 {
     int64_t registration_id;
-    int64_t time_of_last_state_change;
+    int64_t time_of_last_state_change_ns;
     void *clientd;
     void (*decref)(void *);
     void (*incref)(void *);
@@ -66,6 +66,20 @@ typedef struct aeron_tetherable_position_stct
     int64_t time_of_last_update_ns;
 }
 aeron_tetherable_position_t;
+
+typedef void (*aeron_untethered_subscription_state_change_func_t)(
+    aeron_tetherable_position_t *tetherable_position,
+    int64_t now_ns,
+    aeron_subscription_tether_state_t new_state,
+    int32_t stream_id,
+    int32_t session_id);
+
+void aeron_untethered_subscription_state_change(
+    aeron_tetherable_position_t *tetherable_position,
+    int64_t now_ns,
+    aeron_subscription_tether_state_t new_state,
+    int32_t stream_id,
+    int32_t session_id);
 
 typedef struct aeron_subscribable_stct
 {

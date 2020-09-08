@@ -17,14 +17,13 @@ package io.aeron.agent;
 
 import org.agrona.concurrent.UnsafeBuffer;
 
-import static io.aeron.agent.CommonEventEncoder.encodeLogHeader;
+import static io.aeron.agent.CommonEventEncoder.*;
 import static java.nio.ByteOrder.LITTLE_ENDIAN;
 import static org.agrona.BitUtil.SIZE_OF_INT;
 import static org.agrona.BitUtil.SIZE_OF_LONG;
 
 final class ClusterEventEncoder
 {
-    static final String SEPARATOR = " -> ";
 
     private ClusterEventEncoder()
     {
@@ -78,13 +77,13 @@ final class ClusterEventEncoder
         return (SIZE_OF_LONG * 5) + (SIZE_OF_INT * 3);
     }
 
-    static <T extends Enum<T>> int encodeStateChange(
+    static <E extends Enum<E>> int encodeStateChange(
         final UnsafeBuffer encodingBuffer,
         final int offset,
         final int captureLength,
         final int length,
-        final T from,
-        final T to,
+        final E from,
+        final E to,
         final int memberId)
     {
         int relativeOffset = encodeLogHeader(encodingBuffer, offset, captureLength, length);
@@ -96,19 +95,14 @@ final class ClusterEventEncoder
         relativeOffset += SIZE_OF_INT;
 
         relativeOffset += encodingBuffer.putStringWithoutLengthAscii(offset + relativeOffset, from.name());
-        relativeOffset += encodingBuffer.putStringWithoutLengthAscii(offset + relativeOffset, SEPARATOR);
+        relativeOffset += encodingBuffer.putStringWithoutLengthAscii(offset + relativeOffset, STATE_SEPARATOR);
         relativeOffset += encodingBuffer.putStringWithoutLengthAscii(offset + relativeOffset, to.name());
 
         return relativeOffset;
     }
 
-    static <T extends Enum<T>> int stateChangeLength(final T from, final T to)
+    static <E extends Enum<E>> int stateChangeLength(final E from, final E to)
     {
-        return stateTransitionStringLength(from, to) + (SIZE_OF_INT * 2);
-    }
-
-    private static <T extends Enum<T>> int stateTransitionStringLength(final T from, final T to)
-    {
-        return from.name().length() + SEPARATOR.length() + to.name().length();
+        return stateTransitionStringLength(from, to) + SIZE_OF_INT;
     }
 }

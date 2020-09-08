@@ -18,7 +18,6 @@
 #define AERON_UDP_CHANNEL_TRANSPORT_H
 
 #include "aeron_socket.h"
-
 #include "aeron_driver_common.h"
 #include "aeron_udp_channel_transport_bindings.h"
 
@@ -28,6 +27,8 @@ typedef struct aeron_udp_channel_transport_stct
     aeron_udp_channel_data_paths_t *data_paths;
     void *dispatch_clientd;
     void *bindings_clientd;
+    void *destination_clientd;
+    void *interceptor_clientds[AERON_UDP_CHANNEL_TRANSPORT_MAX_INTERCEPTORS];
 }
 aeron_udp_channel_transport_t;
 
@@ -68,5 +69,17 @@ int aeron_udp_channel_transport_sendmsg(
 int aeron_udp_channel_transport_get_so_rcvbuf(aeron_udp_channel_transport_t *transport, size_t *so_rcvbuf);
 int aeron_udp_channel_transport_bind_addr_and_port(
     aeron_udp_channel_transport_t *transport, char *buffer, size_t length);
+
+inline void *aeron_udp_channel_transport_get_interceptor_clientd(
+    aeron_udp_channel_transport_t *transport, int interceptor_index)
+{
+    return transport->interceptor_clientds[interceptor_index];
+}
+
+inline void aeron_udp_channel_transport_set_interceptor_clientd(
+    aeron_udp_channel_transport_t *transport, int interceptor_index, void *clientd)
+{
+    transport->interceptor_clientds[interceptor_index] = clientd;
+}
 
 #endif //AERON_UDP_CHANNEL_TRANSPORT_H

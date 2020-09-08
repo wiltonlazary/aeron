@@ -24,6 +24,7 @@ import io.aeron.driver.media.*;
 import io.aeron.driver.reports.LossReport;
 import io.aeron.driver.status.SystemCounters;
 import io.aeron.exceptions.ConcurrentConcludeException;
+import io.aeron.logbuffer.BufferClaim;
 import io.aeron.logbuffer.LogBufferDescriptor;
 import org.agrona.*;
 import org.agrona.concurrent.*;
@@ -244,7 +245,48 @@ public final class MediaDriver implements AutoCloseable
      */
     public static MediaDriver launch(final Context ctx)
     {
-        return new MediaDriver(ctx).start();
+        final MediaDriver mediaDriver = new MediaDriver(ctx);
+
+        if (ctx.useWindowsHighResTimer() && SystemUtil.isWindows())
+        {
+            mediaDriver.wasHighResTimerEnabled = HighResolutionTimer.isEnabled();
+            if (!mediaDriver.wasHighResTimerEnabled)
+            {
+                HighResolutionTimer.enable();
+            }
+        }
+
+        if (null != mediaDriver.conductorRunner)
+        {
+            AgentRunner.startOnThread(mediaDriver.conductorRunner, ctx.conductorThreadFactory());
+        }
+
+        if (null != mediaDriver.senderRunner)
+        {
+            AgentRunner.startOnThread(mediaDriver.senderRunner, ctx.senderThreadFactory());
+        }
+
+        if (null != mediaDriver.receiverRunner)
+        {
+            AgentRunner.startOnThread(mediaDriver.receiverRunner, ctx.receiverThreadFactory());
+        }
+
+        if (null != mediaDriver.sharedNetworkRunner)
+        {
+            AgentRunner.startOnThread(mediaDriver.sharedNetworkRunner, ctx.sharedNetworkThreadFactory());
+        }
+
+        if (null != mediaDriver.sharedRunner)
+        {
+            AgentRunner.startOnThread(mediaDriver.sharedRunner, ctx.sharedThreadFactory());
+        }
+
+        if (null != mediaDriver.sharedInvoker)
+        {
+            mediaDriver.sharedInvoker.start();
+        }
+
+        return mediaDriver;
     }
 
     /**
@@ -293,50 +335,6 @@ public final class MediaDriver implements AutoCloseable
     public String aeronDirectoryName()
     {
         return ctx.aeronDirectoryName();
-    }
-
-    private MediaDriver start()
-    {
-        if (ctx.useWindowsHighResTimer() && SystemUtil.isWindows())
-        {
-            wasHighResTimerEnabled = HighResolutionTimer.isEnabled();
-            if (!wasHighResTimerEnabled)
-            {
-                HighResolutionTimer.enable();
-            }
-        }
-
-        if (null != conductorRunner)
-        {
-            AgentRunner.startOnThread(conductorRunner, ctx.conductorThreadFactory());
-        }
-
-        if (null != senderRunner)
-        {
-            AgentRunner.startOnThread(senderRunner, ctx.senderThreadFactory());
-        }
-
-        if (null != receiverRunner)
-        {
-            AgentRunner.startOnThread(receiverRunner, ctx.receiverThreadFactory());
-        }
-
-        if (null != sharedNetworkRunner)
-        {
-            AgentRunner.startOnThread(sharedNetworkRunner, ctx.sharedNetworkThreadFactory());
-        }
-
-        if (null != sharedRunner)
-        {
-            AgentRunner.startOnThread(sharedRunner, ctx.sharedThreadFactory());
-        }
-
-        if (null != sharedInvoker)
-        {
-            sharedInvoker.start();
-        }
-
-        return this;
     }
 
     private static void ensureDirectoryIsRecreated(final Context ctx)
@@ -587,6 +585,7 @@ public final class MediaDriver implements AutoCloseable
                 LogBufferDescriptor.checkTermLength(ipcTermBufferLength);
                 validateInitialWindowLength(initialWindowLength, mtuLength);
                 validateUnblockTimeout(publicationUnblockTimeoutNs, clientLivenessTimeoutNs, timerIntervalNs);
+                validateUntetheredTimeouts(untetheredWindowLimitTimeoutNs, untetheredRestingTimeoutNs, timerIntervalNs);
 
                 cncByteBuffer = mapNewFile(
                     cncFile(),
@@ -614,6 +613,7 @@ public final class MediaDriver implements AutoCloseable
                 concludeDependantProperties();
                 concludeIdleStrategies();
 
+                toDriverCommands.nextCorrelationId();
                 toDriverCommands.consumerHeartbeatTime(epochClock.time());
                 CncFileDescriptor.signalCncReady(cncMetaDataBuffer);
             }
@@ -1334,6 +1334,10 @@ public final class MediaDriver implements AutoCloseable
         /**
          * Timeout in nanoseconds after which a publication will be unblocked if a offer is partially complete to allow
          * other publishers to make progress.
+         * <p>
+         * A publication can become blocked if the client crashes while publishing or if
+         * {@link io.aeron.Publication#tryClaim(int, BufferClaim)} is used without following up by calling
+         * {@link BufferClaim#commit()} or {@link BufferClaim#abort()}.
          *
          * @return timeout in nanoseconds after which a publication will be unblocked.
          * @see Configuration#PUBLICATION_UNBLOCK_TIMEOUT_PROP_NAME
@@ -1346,6 +1350,10 @@ public final class MediaDriver implements AutoCloseable
         /**
          * Timeout in nanoseconds after which a publication will be unblocked if a offer is partially complete to allow
          * other publishers to make progress.
+         * <p>
+         * A publication can become blocked if the client crashes while publishing or if
+         * {@link io.aeron.Publication#tryClaim(int, BufferClaim)} is used without following up by calling
+         * {@link BufferClaim#commit()} or {@link BufferClaim#abort()}.
          *
          * @param timeoutNs in nanoseconds after which a publication will be unblocked.
          * @return this for a fluent API.
@@ -1385,6 +1393,8 @@ public final class MediaDriver implements AutoCloseable
 
         /**
          * Does a spy subscription simulate a connection to a network publication.
+         * <p>
+         * If true then this will override the min group size of the min and tagged flow control strategies.
          *
          * @return true if a spy subscription should simulate a connection to a network publication.
          * @see Configuration#SPIES_SIMULATE_CONNECTION_PROP_NAME
@@ -1396,6 +1406,8 @@ public final class MediaDriver implements AutoCloseable
 
         /**
          * Does a spy subscription simulate a connection to a network publication.
+         * <p>
+         * If true then this will override the min group size of the min and tagged flow control strategies.
          *
          * @param spiesSimulateConnection true if a spy subscription simulates a connection to a network publication.
          * @return this for a fluent API.
@@ -2509,13 +2521,25 @@ public final class MediaDriver implements AutoCloseable
         }
 
         /**
-         * {@link LossReport}for identifying loss issues on specific connections.
+         * {@link LossReport} for identifying loss issues on specific connections.
          *
          * @return {@link LossReport} for identifying loss issues on specific connections.
          */
         LossReport lossReport()
         {
             return lossReport;
+        }
+
+        /**
+         * {@link LossReport} for identifying loss issues on specific connections.
+         *
+         * @param lossReport for identifying loss issues on specific connections.
+         * @return this for a fluent API.
+         */
+        Context lossReport(final LossReport lossReport)
+        {
+            this.lossReport = lossReport;
+            return this;
         }
 
         /**
@@ -3150,7 +3174,7 @@ public final class MediaDriver implements AutoCloseable
 
             if (null == receiveChannelEndpointThreadLocals)
             {
-                receiveChannelEndpointThreadLocals = new ReceiveChannelEndpointThreadLocals(this);
+                receiveChannelEndpointThreadLocals = new ReceiveChannelEndpointThreadLocals();
             }
 
             if (null == congestionControlSupplier)
@@ -3241,8 +3265,11 @@ public final class MediaDriver implements AutoCloseable
                     aeronDirectoryName(), filePageSize, performStorageChecks, lowStorageWarningThreshold, errorHandler);
             }
 
-            lossReportBuffer = mapLossReport(aeronDirectoryName(), align(lossReportBufferLength, filePageSize));
-            lossReport = new LossReport(new UnsafeBuffer(lossReportBuffer));
+            if (null == lossReport)
+            {
+                lossReportBuffer = mapLossReport(aeronDirectoryName(), align(lossReportBufferLength, filePageSize));
+                lossReport = new LossReport(new UnsafeBuffer(lossReportBuffer));
+            }
         }
 
         private void concludeCounters()
@@ -3259,29 +3286,14 @@ public final class MediaDriver implements AutoCloseable
                     countersValuesBuffer(createCountersValuesBuffer(cncByteBuffer, cncMetaDataBuffer));
                 }
 
-                final EpochClock clock;
-                final long reuseTimeoutMs;
-                if (counterFreeToReuseTimeoutNs > 0)
-                {
-                    clock = epochClock;
-                    reuseTimeoutMs = Math.min(TimeUnit.NANOSECONDS.toMillis(counterFreeToReuseTimeoutNs), 1);
-                }
-                else
-                {
-                    clock = () -> 0;
-                    reuseTimeoutMs = 0;
-                }
+                final long reuseTimeoutMs = counterFreeToReuseTimeoutNs > 0 ?
+                    Math.max(TimeUnit.NANOSECONDS.toMillis(counterFreeToReuseTimeoutNs), 1) : 0;
 
-                if (useConcurrentCountersManager)
-                {
-                    countersManager = new ConcurrentCountersManager(
-                        countersMetaDataBuffer(), countersValuesBuffer(), US_ASCII, clock, reuseTimeoutMs);
-                }
-                else
-                {
-                    countersManager = new CountersManager(
-                        countersMetaDataBuffer(), countersValuesBuffer(), US_ASCII, clock, reuseTimeoutMs);
-                }
+                countersManager = useConcurrentCountersManager ?
+                    new ConcurrentCountersManager(
+                        countersMetaDataBuffer(), countersValuesBuffer(), US_ASCII, cachedEpochClock, reuseTimeoutMs) :
+                    new CountersManager(
+                        countersMetaDataBuffer(), countersValuesBuffer(), US_ASCII, cachedEpochClock, reuseTimeoutMs);
             }
 
             if (null == systemCounters)

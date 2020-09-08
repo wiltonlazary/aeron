@@ -71,49 +71,43 @@ ControlledPollAction RecordingSignalAdapter::onFragment(
     }
 
     const std::uint16_t templateId = msgHeader.templateId();
-    switch (templateId)
+    if (ControlResponse::sbeTemplateId() == templateId)
     {
-        case ControlResponse::sbeTemplateId():
-        {
-            ControlResponse response(
-                buffer.sbeData() + offset + MessageHeader::encodedLength(),
-                static_cast<std::uint64_t>(length) - MessageHeader::encodedLength(),
-                msgHeader.blockLength(),
-                msgHeader.version());
+        ControlResponse response(
+            buffer.sbeData() + offset + MessageHeader::encodedLength(),
+            static_cast<std::uint64_t>(length) - MessageHeader::encodedLength(),
+            msgHeader.blockLength(),
+            msgHeader.version());
 
-            if (response.controlSessionId() == m_controlSessionId)
-            {
-                m_onResponse(
-                    response.controlSessionId(),
-                    response.correlationId(),
-                    response.relevantId(),
-                    response.code(),
-                    response.errorMessage());
-            }
-            break;
+        if (response.controlSessionId() == m_controlSessionId)
+        {
+            m_onResponse(
+                response.controlSessionId(),
+                response.correlationId(),
+                response.relevantId(),
+                response.code(),
+                response.errorMessage());
         }
+    }
+    else if (RecordingSignalEvent::sbeTemplateId() == templateId)
+    {
+        RecordingSignalEvent recordingSignalEvent(
+            buffer.sbeData() + offset + MessageHeader::encodedLength(),
+            static_cast<std::uint64_t>(length) - MessageHeader::encodedLength(),
+            msgHeader.blockLength(),
+            msgHeader.version());
 
-        case RecordingSignalEvent::sbeTemplateId():
+        if (recordingSignalEvent.controlSessionId() == m_controlSessionId)
         {
-            RecordingSignalEvent recordingSignalEvent(
-                buffer.sbeData() + offset + MessageHeader::encodedLength(),
-                static_cast<std::uint64_t>(length) - MessageHeader::encodedLength(),
-                msgHeader.blockLength(),
-                msgHeader.version());
+            m_onRecordingSignal(
+                recordingSignalEvent.controlSessionId(),
+                recordingSignalEvent.recordingId(),
+                recordingSignalEvent.subscriptionId(),
+                recordingSignalEvent.position(),
+                recordingSignalEvent.signal());
 
-            if (recordingSignalEvent.controlSessionId() == m_controlSessionId)
-            {
-                m_onRecordingSignal(
-                    recordingSignalEvent.controlSessionId(),
-                    recordingSignalEvent.recordingId(),
-                    recordingSignalEvent.subscriptionId(),
-                    recordingSignalEvent.position(),
-                    recordingSignalEvent.signal());
-
-                m_isAbort = true;
-                return ControlledPollAction::BREAK;
-            }
-            break;
+            m_isAbort = true;
+            return ControlledPollAction::BREAK;
         }
     }
 

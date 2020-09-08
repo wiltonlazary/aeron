@@ -36,6 +36,7 @@ import org.agrona.DirectBuffer;
 import org.agrona.ExpandableArrayBuffer;
 import org.agrona.collections.LongHashSet;
 import org.agrona.collections.MutableInteger;
+import org.agrona.concurrent.NoOpLock;
 import org.agrona.concurrent.status.AtomicCounter;
 import org.agrona.concurrent.status.CountersReader;
 import org.junit.jupiter.api.AfterEach;
@@ -152,8 +153,8 @@ public class StartFromTruncatedRecordingLogTest
         final Counter electionStateFollowerB = clusteredMediaDrivers[followerMemberIdB]
             .consensusModule().context().electionStateCounter();
 
-        ClusterTests.awaitElectionState(electionStateFollowerA, Election.State.CLOSED);
-        ClusterTests.awaitElectionState(electionStateFollowerB, Election.State.CLOSED);
+        ClusterTests.awaitElectionState(electionStateFollowerA, ElectionState.CLOSED);
+        ClusterTests.awaitElectionState(electionStateFollowerB, ElectionState.CLOSED);
 
         takeSnapshot(leaderMemberId);
         awaitSnapshotCount(1);
@@ -312,6 +313,7 @@ public class StartFromTruncatedRecordingLogTest
         final String aeronDirName = aeronDirName(index);
 
         final AeronArchive.Context archiveCtx = new AeronArchive.Context()
+            .lock(NoOpLock.INSTANCE)
             .controlRequestChannel(memberSpecificPort(ARCHIVE_CONTROL_REQUEST_CHANNEL, index))
             .controlRequestStreamId(100 + index)
             .controlResponseChannel(memberSpecificPort(ARCHIVE_CONTROL_RESPONSE_CHANNEL, index))
@@ -329,7 +331,6 @@ public class StartFromTruncatedRecordingLogTest
                 .dirDeleteOnStart(true),
             new Archive.Context()
                 .maxCatalogEntries(MAX_CATALOG_ENTRIES)
-                .aeronDirectoryName(aeronDirName)
                 .archiveDir(new File(baseDirName, "archive"))
                 .controlChannel(archiveCtx.controlRequestChannel())
                 .controlStreamId(archiveCtx.controlRequestStreamId())
@@ -343,7 +344,6 @@ public class StartFromTruncatedRecordingLogTest
                 .errorHandler(ClusterTests.errorHandler(index))
                 .clusterMemberId(index)
                 .clusterMembers(CLUSTER_MEMBERS)
-                .aeronDirectoryName(aeronDirName)
                 .clusterDir(new File(baseDirName, "consensus-module"))
                 .ingressChannel("aeron:udp?term-length=64k")
                 .logChannel(memberSpecificPort(LOG_CHANNEL, index))
@@ -377,7 +377,7 @@ public class StartFromTruncatedRecordingLogTest
                 .egressListener(egressMessageListener)
                 .ingressChannel("aeron:udp?term-length=64k")
                 .egressChannel("aeron:udp?term-length=64k|endpoint=localhost:9020")
-                .clusterMemberEndpoints("0=localhost:20110,1=localhost:20111,2=localhost:20112"));
+                .ingressEndpoints("0=localhost:20110,1=localhost:20111,2=localhost:20112"));
     }
 
     private void closeClient()
@@ -395,8 +395,7 @@ public class StartFromTruncatedRecordingLogTest
         {
             while (client.offer(msgBuffer, 0, ClusterTests.HELLO_WORLD_MSG.length()) < 0)
             {
-                Thread.yield();
-                Tests.checkInterruptStatus();
+                Tests.yield();
                 client.pollEgress();
             }
 
@@ -408,8 +407,7 @@ public class StartFromTruncatedRecordingLogTest
     {
         while (responseCount.get() < messageCount)
         {
-            Thread.yield();
-            Tests.checkInterruptStatus();
+            Tests.yield();
             client.pollEgress();
         }
 
@@ -417,8 +415,7 @@ public class StartFromTruncatedRecordingLogTest
         {
             while (echoServices[i].messageCount() < messageCount)
             {
-                Thread.yield();
-                Tests.checkInterruptStatus();
+                Tests.yield();
             }
         }
     }
@@ -486,7 +483,7 @@ public class StartFromTruncatedRecordingLogTest
             final Cluster.Role role = Cluster.Role.get(driver.consensusModule().context().clusterNodeRoleCounter());
             final Counter electionStateCounter = driver.consensusModule().context().electionStateCounter();
 
-            if (Cluster.Role.LEADER == role && Election.State.CLOSED.code() == electionStateCounter.get())
+            if (Cluster.Role.LEADER == role && ElectionState.CLOSED.code() == electionStateCounter.get())
             {
                 leaderMemberId = driver.consensusModule().context().clusterMemberId();
             }
@@ -498,8 +495,9 @@ public class StartFromTruncatedRecordingLogTest
     private void takeSnapshot(final int index)
     {
         final ClusteredMediaDriver driver = clusteredMediaDrivers[index];
-        final CountersReader countersReader = driver.consensusModule().context().aeron().countersReader();
-        final AtomicCounter controlToggle = ClusterControl.findControlToggle(countersReader);
+        final CountersReader counters = driver.consensusModule().context().aeron().countersReader();
+        final int clusterId = driver.consensusModule().context().clusterId();
+        final AtomicCounter controlToggle = ClusterControl.findControlToggle(counters, clusterId);
 
         assertNotNull(controlToggle);
         awaitNeutralCounter(index);
@@ -519,9 +517,10 @@ public class StartFromTruncatedRecordingLogTest
     private AtomicCounter getControlToggle(final int index)
     {
         final ClusteredMediaDriver driver = clusteredMediaDrivers[index];
-        final CountersReader countersReader = driver.consensusModule().context().aeron().countersReader();
+        final int clusterId = driver.consensusModule().context().clusterId();
+        final CountersReader counters = driver.consensusModule().context().aeron().countersReader();
 
-        return ClusterControl.findControlToggle(countersReader);
+        return ClusterControl.findControlToggle(counters, clusterId);
     }
 
     private void awaitNeutralCounter(final int index)
@@ -529,8 +528,7 @@ public class StartFromTruncatedRecordingLogTest
         final AtomicCounter controlToggle = getControlToggle(index);
         while (ClusterControl.ToggleState.get(controlToggle) != ClusterControl.ToggleState.NEUTRAL)
         {
-            Thread.yield();
-            Tests.checkInterruptStatus();
+            Tests.yield();
         }
     }
 

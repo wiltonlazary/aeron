@@ -24,11 +24,11 @@ namespace aeron { namespace concurrent { namespace logbuffer
 
 namespace TermRebuilder {
 
-inline void insert(AtomicBuffer& termBuffer, std::int32_t termOffset, AtomicBuffer& packet, std::int32_t length)
+inline void insert(AtomicBuffer &termBuffer, std::int32_t termOffset, AtomicBuffer &packet, std::int32_t length)
 {
     if (0 == termBuffer.getInt32(termOffset))
     {
-        const std::int32_t firstFrameLength = packet.getInt32(0);
+        std::int32_t firstFrameLength = packet.getInt32(0);
         packet.putInt32(0, 0);
         termBuffer.putBytes(termOffset, packet, 0, length);
         FrameDescriptor::frameLengthOrdered(termBuffer, termOffset, firstFrameLength);

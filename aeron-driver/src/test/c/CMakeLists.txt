@@ -19,15 +19,32 @@ endif ()
 
 include_directories(${AERON_DRIVER_SOURCE_PATH})
 
-set(TEST_HEADERS aeron_driver_conductor_test.h EmbeddedMediaDriver.h)
+set(TEST_HEADERS
+    aeron_driver_conductor_test.h
+    aeron_receiver_test.h
+    EmbeddedMediaDriver.h
+    aeron_test_udp_bindings.h)
 
 set(CMAKE_EXTRA_INCLUDE_FILES sys/socket.h)
 check_type_size("struct mmsghdr" STRUCT_MMSGHDR_TYPE_EXISTS)
 set(CMAKE_EXTRA_INCLUDE_FILES)
 
+if (POLL_PROTOTYPE_EXISTS)
+    add_definitions(-DHAVE_POLL)
+endif ()
+
+if (EPOLL_PROTOTYPE_EXISTS)
+    add_definitions(-DHAVE_EPOLL)
+endif ()
+
+if (WSAPOLL_PROTOTYPE_EXISTS)
+    add_definitions(-DHAVE_WSAPOLL)
+endif ()
+
+
 function(aeron_driver_test name file)
     add_executable(${name} ${file} ${TEST_HEADERS})
-    target_link_libraries(${name} aeron_client aeron_driver ${GMOCK_LIBS} ${CMAKE_THREAD_LIBS_INIT} ${AERON_LIB_WINSOCK_LIBS})
+    target_link_libraries(${name} aeron_driver ${GMOCK_LIBS} ${CMAKE_THREAD_LIBS_INIT} ${AERON_LIB_WINSOCK_LIBS})
     target_compile_definitions(${name} PUBLIC "_SILENCE_TR1_NAMESPACE_DEPRECATION_WARNING")
     if (STRUCT_MMSGHDR_TYPE_EXISTS)
         target_compile_definitions(${name} PUBLIC -DHAVE_STRUCT_MMSGHDR)
@@ -38,11 +55,11 @@ endfunction()
 
 aeron_driver_test(spsc_rb_test aeron_spsc_rb_test.cpp)
 aeron_driver_test(mpsc_rb_test aeron_mpsc_rb_test.cpp)
-aeron_driver_test(broadcast_transmitter_test aeron_broadcast_transmitter_test.cpp)
 aeron_driver_test(counters_manager_test aeron_counters_manager_test.cpp)
 aeron_driver_test(distinct_error_log_test aeron_distinct_error_log_test.cpp)
 aeron_driver_test(driver_conductor_ipc_test aeron_driver_conductor_ipc_test.cpp)
 aeron_driver_test(driver_conductor_network_test aeron_driver_conductor_network_test.cpp)
+aeron_driver_test(driver_conductor_pub_sub_test aeron_driver_conductor_pub_sub_test.cpp)
 aeron_driver_test(driver_conductor_spy_test aeron_driver_conductor_spy_test.cpp)
 aeron_driver_test(driver_conductor_counter_test aeron_driver_conductor_counter_test.cpp)
 aeron_driver_test(driver_conductor_clock_test aeron_driver_conductor_clock_test.cpp)
@@ -50,7 +67,9 @@ aeron_driver_test(spsc_queue_test aeron_spsc_concurrent_array_queue_test.cpp)
 aeron_driver_test(mpsc_queue_test aeron_mpsc_concurrent_array_queue_test.cpp)
 aeron_driver_test(uri_test aeron_uri_test.cpp)
 aeron_driver_test(udp_channel_test aeron_udp_channel_test.cpp)
-aeron_driver_test(int64_to_ptr_hash_map_test collections/aeron_int64_to_ptr_hash_masp_test.cpp)
+aeron_driver_test(int64_to_ptr_hash_map_test collections/aeron_int64_to_ptr_hash_map_test.cpp)
+aeron_driver_test(int64_counter_map_test collections/aeron_int64_counter_map_test.cpp)
+aeron_driver_test(int64_to_tagged_ptr_hash_map_test collections/aeron_int64_to_tagged_ptr_hash_map_test.cpp)
 aeron_driver_test(str_to_ptr_hash_map_test collections/aeron_str_to_ptr_hash_map_test.cpp)
 aeron_driver_test(bit_set_test collections/aeron_bit_set_test.cpp)
 aeron_driver_test(bitutil_test util/aeron_bitutil_test.cpp)
@@ -64,12 +83,20 @@ aeron_driver_test(term_gap_filler_test aeron_term_gap_filler_test.cpp)
 aeron_driver_test(parse_util_test aeron_parse_util_test.cpp)
 aeron_driver_test(properties_test aeron_properties_test.cpp)
 aeron_driver_test(driver_configuration_test aeron_driver_configuration_test.cpp)
-
-aeron_driver_test(system_test aeron_system_test.cpp)
-set_tests_properties(system_test PROPERTIES TIMEOUT 10)
-
+aeron_driver_test(driver_agent_test agent/aeron_driver_agent_test.cpp)
 aeron_driver_test(udp_channel_transport_loss_test media/aeron_udp_channel_transport_loss_test.cpp)
 aeron_driver_test(strutil_test aeron_strutil_test.cpp)
 aeron_driver_test(flow_control_test aeron_flow_control_test.cpp)
 aeron_driver_test(name_resolver_test aeron_name_resolver_test.cpp)
 aeron_driver_test(name_resolver_cache_test aeron_name_resolver_cache_test.cpp)
+aeron_driver_test(data_packet_dispatcher_test aeron_data_packet_dispatcher_test.cpp)
+aeron_driver_test(publication_image_test aeron_publication_image_test.cpp)
+set_tests_properties(publication_image_test PROPERTIES RUN_SERIAL TRUE)
+
+aeron_driver_test(c_terminate_test aeron_c_terminate_test.cpp)
+set_tests_properties(c_terminate_test PROPERTIES TIMEOUT 60)
+set_tests_properties(c_terminate_test PROPERTIES RUN_SERIAL TRUE)
+
+aeron_driver_test(c_system_test aeron_c_system_test.cpp)
+set_tests_properties(c_system_test PROPERTIES TIMEOUT 60)
+set_tests_properties(c_system_test PROPERTIES RUN_SERIAL TRUE)

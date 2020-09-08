@@ -32,9 +32,7 @@ public class TestBackupNode implements AutoCloseable
     TestBackupNode(final Context context)
     {
         clusterBackupMediaDriver = ClusterBackupMediaDriver.launch(
-            context.mediaDriverContext,
-            context.archiveContext,
-            context.clusterBackupContext);
+            context.mediaDriverContext, context.archiveContext, context.clusterBackupContext);
     }
 
     public void close()
@@ -74,7 +72,7 @@ public class TestBackupNode implements AutoCloseable
             return null;
         }
 
-        return ClusterBackup.State.get((int)counter.get());
+        return ClusterBackup.State.get(counter.get());
     }
 
     long liveLogPosition()

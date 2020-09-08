@@ -18,7 +18,6 @@
 #include <cstdint>
 #include <thread>
 #include <atomic>
-#include <exception>
 #include <functional>
 
 #include <gtest/gtest.h>
@@ -41,7 +40,7 @@ public:
         }
     }
 
-    virtual ~MpscQueueTest()
+    ~MpscQueueTest() override
     {
         aeron_mpsc_concurrent_array_queue_close(&m_q);
     }
@@ -73,7 +72,7 @@ TEST_F(MpscQueueTest, shouldGetSizeWhenEmpty)
 
 TEST_F(MpscQueueTest, shouldReturnErrorWhenNullOffered)
 {
-    EXPECT_EQ(aeron_mpsc_concurrent_array_queue_offer(&m_q, NULL), AERON_OFFER_ERROR);
+    EXPECT_EQ(aeron_mpsc_concurrent_array_queue_offer(&m_q, nullptr), AERON_OFFER_ERROR);
 }
 
 TEST_F(MpscQueueTest, shouldOfferAndDrainToEmptyQueue)
@@ -83,10 +82,11 @@ TEST_F(MpscQueueTest, shouldOfferAndDrainToEmptyQueue)
     EXPECT_EQ(aeron_mpsc_concurrent_array_queue_offer(&m_q, (void *)element), AERON_OFFER_SUCCESS);
     EXPECT_EQ(aeron_mpsc_concurrent_array_queue_size(&m_q), 1u);
 
-    m_drain = [&](volatile void *e)
-    {
-        ASSERT_EQ(e, (void *)element);
-    };
+    m_drain =
+        [&](volatile void *e)
+        {
+            ASSERT_EQ(e, (void *)element);
+        };
 
     EXPECT_EQ(aeron_mpsc_concurrent_array_queue_drain_all(&m_q, MpscQueueTest::drain_func, this), 1u);
 }
@@ -104,10 +104,11 @@ TEST_F(MpscQueueTest, shouldDrainSingleElementFromFullQueue)
 {
     fillQueue();
 
-    m_drain = [&](volatile void *e)
-    {
-        ASSERT_EQ(e, (void *)1);
-    };
+    m_drain =
+        [&](volatile void *e)
+        {
+            ASSERT_EQ(e, (void *)1);
+        };
 
     EXPECT_EQ(aeron_mpsc_concurrent_array_queue_drain(&m_q, MpscQueueTest::drain_func, this, 1), 1u);
     EXPECT_EQ(aeron_mpsc_concurrent_array_queue_size(&m_q), CAPACITY - 1);
@@ -115,10 +116,11 @@ TEST_F(MpscQueueTest, shouldDrainSingleElementFromFullQueue)
 
 TEST_F(MpscQueueTest, shouldDrainNothingFromEmptyQueue)
 {
-    m_drain = [&](volatile void *e)
-    {
-        FAIL();
-    };
+    m_drain =
+        [&](volatile void *e)
+        {
+            FAIL();
+        };
 
     EXPECT_EQ(aeron_mpsc_concurrent_array_queue_drain_all(&m_q, MpscQueueTest::drain_func, this), 0u);
 }
@@ -128,11 +130,12 @@ TEST_F(MpscQueueTest, shouldDrainFullQueue)
     fillQueue();
 
     int64_t counter = 1;
-    m_drain = [&](volatile void *e)
-    {
-        ASSERT_EQ(e, (void *)counter);
-        counter++;
-    };
+    m_drain =
+        [&](volatile void *e)
+        {
+            ASSERT_EQ(e, (void *)counter);
+            counter++;
+        };
 
     EXPECT_EQ(aeron_mpsc_concurrent_array_queue_drain_all(&m_q, MpscQueueTest::drain_func, this), CAPACITY);
     EXPECT_EQ(aeron_mpsc_concurrent_array_queue_size(&m_q), 0u);
@@ -144,11 +147,12 @@ TEST_F(MpscQueueTest, shouldDrainFullQueueWithLimit)
     fillQueue();
 
     int64_t counter = 1;
-    m_drain = [&](volatile void *e)
-    {
-        ASSERT_EQ(e, (void *)counter);
-        counter++;
-    };
+    m_drain =
+        [&](volatile void *e)
+        {
+            ASSERT_EQ(e, (void *)counter);
+            counter++;
+        };
 
     EXPECT_EQ(aeron_mpsc_concurrent_array_queue_drain(&m_q, MpscQueueTest::drain_func, this, limit), limit);
     EXPECT_EQ(aeron_mpsc_concurrent_array_queue_size(&m_q), CAPACITY - limit);
@@ -162,7 +166,7 @@ typedef struct mpsc_concurrent_test_data_stct
     uint32_t id;
     uint32_t num;
 }
-mpsc_concurrent_test_data_t;
+    mpsc_concurrent_test_data_t;
 
 static void mpsc_queue_concurrent_handler(void *clientd, volatile void *element)
 {
@@ -187,7 +191,7 @@ TEST(MpscQueueConcurrentTest, shouldExchangeMessages)
     size_t msgCount = 0;
     uint32_t counts[NUM_PUBLISHERS];
 
-    for (unsigned int & count : counts)
+    for (unsigned int &count : counts)
     {
         count = 0;
     }

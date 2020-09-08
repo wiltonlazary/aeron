@@ -20,12 +20,11 @@
 #include <cstdint>
 #include <string>
 #include <cstddef>
-#include <command/Flyweight.h>
-#include <concurrent/AtomicBuffer.h>
-#include <util/Index.h>
+#include "command/Flyweight.h"
 #include "HeaderFlyweight.h"
 
-namespace aeron { namespace protocol {
+namespace aeron { namespace protocol
+{
 
 /**
  * HeaderFlyweight for Setup Frames
@@ -53,8 +52,8 @@ class SetupFlyweight : public HeaderFlyweight
 public:
     typedef SetupFlyweight this_t;
 
-    SetupFlyweight(concurrent::AtomicBuffer &buffer, std::int32_t offset)
-        : HeaderFlyweight(buffer, offset), m_struct(overlayStruct<SetupDefn>(0))
+    SetupFlyweight(concurrent::AtomicBuffer &buffer, std::int32_t offset) :
+        HeaderFlyweight(buffer, offset), m_struct(overlayStruct<SetupDefn>(0))
     {
     }
 
@@ -63,7 +62,7 @@ public:
         return m_struct.termOffset;
     }
 
-    inline this_t& termOffset(std::int32_t value)
+    inline this_t &termOffset(std::int32_t value)
     {
         m_struct.termOffset = value;
         return *this;
@@ -74,7 +73,7 @@ public:
         return m_struct.sessionId;
     }
 
-    inline this_t& sessionId(std::int32_t value)
+    inline this_t &sessionId(std::int32_t value)
     {
         m_struct.sessionId = value;
         return *this;
@@ -85,7 +84,7 @@ public:
         return m_struct.streamId;
     }
 
-    inline this_t& streamId(std::int32_t value)
+    inline this_t &streamId(std::int32_t value)
     {
         m_struct.streamId = value;
         return *this;
@@ -96,7 +95,7 @@ public:
         return m_struct.initialTermId;
     }
 
-    inline this_t& initialTermId(std::int32_t value)
+    inline this_t &initialTermId(std::int32_t value)
     {
         m_struct.initialTermId = value;
         return *this;
@@ -107,7 +106,7 @@ public:
         return m_struct.actionTermId;
     }
 
-    inline this_t& actionTermId(std::int32_t value)
+    inline this_t &actionTermId(std::int32_t value)
     {
         m_struct.actionTermId = value;
         return *this;
@@ -118,7 +117,7 @@ public:
         return m_struct.termLength;
     }
 
-    inline this_t& termLength(std::int32_t value)
+    inline this_t &termLength(std::int32_t value)
     {
         m_struct.termLength = value;
         return *this;
@@ -129,13 +128,13 @@ public:
         return m_struct.mtu;
     }
 
-    inline this_t& mtu(std::int32_t value)
+    inline this_t &mtu(std::int32_t value)
     {
         m_struct.mtu = value;
         return *this;
     }
 
-    inline static std::int32_t headerLength()
+    inline static constexpr std::int32_t headerLength()
     {
         return sizeof(SetupDefn);
     }

@@ -37,29 +37,31 @@ final class PublicationParams
     boolean hasPosition = false;
     boolean hasSessionId = false;
     boolean isSessionIdTagged = false;
-    boolean isSparse;
     boolean signalEos = true;
+    boolean isSparse;
+    boolean spiesSimulateConnection;
 
     PublicationParams()
     {
     }
 
     static PublicationParams getPublicationParams(
-        final MediaDriver.Context context,
         final ChannelUri channelUri,
+        final MediaDriver.Context ctx,
         final DriverConductor driverConductor,
         final boolean isExclusive,
         final boolean isIpc)
     {
-        final PublicationParams params = new PublicationParams(context, isIpc);
+        final PublicationParams params = new PublicationParams(ctx, isIpc);
 
         params.getEntityTag(channelUri, driverConductor);
         params.getSessionId(channelUri, driverConductor);
         params.getTermBufferLength(channelUri);
         params.getMtuLength(channelUri);
         params.getLingerTimeoutNs(channelUri);
-        params.getSparse(channelUri);
         params.getEos(channelUri);
+        params.getSparse(channelUri, ctx);
+        params.getSpiesSimulateConnection(channelUri, ctx);
 
         int count = 0;
 
@@ -220,6 +222,16 @@ final class PublicationParams
         }
     }
 
+    static void validateSpiesSimulateConnection(
+        final PublicationParams params, final boolean existingSpiesSimulateConnection)
+    {
+        if (params.spiesSimulateConnection != existingSpiesSimulateConnection)
+        {
+            throw new IllegalStateException("existing publication has different spiesSimulateConnection: existing=" +
+                existingSpiesSimulateConnection + " requested=" + params.spiesSimulateConnection);
+        }
+    }
+
     private void getLingerTimeoutNs(final ChannelUri channelUri)
     {
         final String lingerParam = channelUri.get(LINGER_PARAM_NAME);
@@ -260,22 +272,25 @@ final class PublicationParams
         }
     }
 
-    private void getSparse(final ChannelUri channelUri)
-    {
-        final String sparseStr = channelUri.get(SPARSE_PARAM_NAME);
-        if (null != sparseStr)
-        {
-            isSparse = "true".equals(sparseStr);
-        }
-    }
-
     private void getEos(final ChannelUri channelUri)
     {
         final String eosStr = channelUri.get(EOS_PARAM_NAME);
         if (null != eosStr)
         {
-            signalEos = Boolean.parseBoolean(eosStr);
+            signalEos = "true".equals(eosStr);
         }
+    }
+
+    private void getSparse(final ChannelUri channelUri, final MediaDriver.Context ctx)
+    {
+        final String sparseStr = channelUri.get(SPARSE_PARAM_NAME);
+        isSparse = null != sparseStr ? "true".equals(sparseStr) : ctx.termBufferSparseFile();
+    }
+
+    private void getSpiesSimulateConnection(final ChannelUri channelUri, final MediaDriver.Context ctx)
+    {
+        final String sscStr = channelUri.get(SPIES_SIMULATE_CONNECTION_PARAM_NAME);
+        spiesSimulateConnection = null != sscStr ? "true".equals(sscStr) : ctx.spiesSimulateConnection();
     }
 
     private static void validateEntityTag(final long entityTag, final DriverConductor driverConductor)
@@ -308,6 +323,7 @@ final class PublicationParams
             ", isSessionIdTagged=" + isSessionIdTagged +
             ", isSparse=" + isSparse +
             ", signalEos=" + signalEos +
+            ", spiesSimulateConnection=" + spiesSimulateConnection +
             '}';
     }
 }

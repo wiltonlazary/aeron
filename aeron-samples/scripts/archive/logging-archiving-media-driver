@@ -15,11 +15,12 @@
 ## limitations under the License.
 ##
 
-VERSION=`cat ../../../version.txt`
+VERSION=$(cat ../../../version.txt)
 
 ${JAVA_HOME}/bin/java \
     -cp ../../../aeron-all/build/libs/aeron-all-${VERSION}.jar \
     -javaagent:../../../aeron-agent/build/libs/aeron-agent-${VERSION}.jar \
+    -XX:+UseBiasedLocking \
     -XX:BiasedLockingStartupDelay=0 \
     -Daeron.event.log=admin \
     -Daeron.event.archive.log=all \

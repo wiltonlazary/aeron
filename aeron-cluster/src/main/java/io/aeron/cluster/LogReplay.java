@@ -21,13 +21,6 @@ import org.agrona.CloseHelper;
 
 class LogReplay
 {
-    enum State
-    {
-        INIT,
-        REPLAY,
-        DONE
-    }
-
     private final long recordingId;
     private final long startPosition;
     private final long stopPosition;
@@ -40,8 +33,8 @@ class LogReplay
     private final LogAdapter logAdapter;
     private final Subscription logSubscription;
 
-    private int replaySessionId = Aeron.NULL_VALUE;
-    private State state = State.INIT;
+    private long replaySessionId = Aeron.NULL_VALUE;
+    private boolean isDone = false;
 
     LogReplay(
         final AeronArchive archive,
@@ -79,36 +72,34 @@ class LogReplay
     {
         int workCount = 0;
 
-        if (State.INIT == state)
+        if (Aeron.NULL_VALUE == replaySessionId)
         {
             final String channel = logSubscription.channel();
             consensusModuleAgent.awaitServicesReadyForReplay(
                 channel, replayStreamId, logSessionId, leadershipTermId, startPosition, stopPosition);
 
             final long length = stopPosition - startPosition;
-            replaySessionId = (int)archive.startReplay(recordingId, startPosition, length, channel, replayStreamId);
-            state = State.REPLAY;
-            workCount = 1;
+            replaySessionId = archive.startReplay(recordingId, startPosition, length, channel, replayStreamId);
+            workCount += 1;
         }
-        else if (State.REPLAY == state)
+        else if (!isDone)
         {
             if (null == logAdapter.image())
             {
-                final Image image = logSubscription.imageBySessionId(replaySessionId);
+                final Image image = logSubscription.imageBySessionId((int)replaySessionId);
                 if (null != image)
                 {
                     logAdapter.image(image);
-                    workCount = 1;
+                    workCount += 1;
                 }
             }
             else
             {
-                consensusModuleAgent.replayLogPoll(logAdapter, stopPosition);
+                workCount += consensusModuleAgent.replayLogPoll(logAdapter, stopPosition);
                 if (logAdapter.position() >= stopPosition)
                 {
-                    consensusModuleAgent.awaitServicesReplayPosition(stopPosition);
-                    state = State.DONE;
-                    workCount = 1;
+                    isDone = true;
+                    workCount += 1;
                 }
             }
         }
@@ -118,6 +109,6 @@ class LogReplay
 
     boolean isDone()
     {
-        return State.DONE == state;
+        return isDone;
     }
 }

@@ -21,7 +21,6 @@ import io.aeron.archive.codecs.ControlResponseCode;
 import io.aeron.archive.codecs.RecordingSignal;
 import io.aeron.archive.codecs.SourceLocation;
 import io.aeron.exceptions.TimeoutException;
-import io.aeron.logbuffer.LogBufferDescriptor;
 import org.agrona.CloseHelper;
 import org.agrona.concurrent.CachedEpochClock;
 import org.agrona.concurrent.CountedErrorHandler;
@@ -30,11 +29,11 @@ import java.util.concurrent.TimeUnit;
 
 import static io.aeron.Aeron.NULL_VALUE;
 import static io.aeron.archive.client.AeronArchive.NULL_POSITION;
+import static io.aeron.archive.client.ReplayMerge.LIVE_ADD_MAX_WINDOW;
 import static io.aeron.archive.codecs.RecordingSignal.*;
 
 class ReplicationSession implements Session, RecordingDescriptorConsumer
 {
-    private static final int LIVE_ADD_THRESHOLD = LogBufferDescriptor.TERM_MIN_LENGTH >> 2;
     private static final int REPLAY_REMOVE_THRESHOLD = 0;
     private static final int RETRY_ATTEMPTS = 3;
 
@@ -377,12 +376,9 @@ class ReplicationSession implements Session, RecordingDescriptorConsumer
             if (hasResponse(poller))
             {
                 srcRecordingPosition = poller.relevantId();
-                if (NULL_POSITION == srcRecordingPosition)
+                if (NULL_POSITION == srcRecordingPosition && null != liveDestination)
                 {
-                    if (null != liveDestination)
-                    {
-                        throw new ArchiveException("cannot live merge without active source recording");
-                    }
+                    throw new ArchiveException("cannot live merge without active source recording");
                 }
 
                 state(State.REPLAY);
@@ -448,21 +444,21 @@ class ReplicationSession implements Session, RecordingDescriptorConsumer
 
     private int extend()
     {
+        final boolean isMds = isTagged || null != liveDestination;
         final ChannelUri channelUri = ChannelUri.parse(replicationChannel);
+        final String endpoint = channelUri.get(CommonContext.ENDPOINT_PARAM_NAME);
         final ChannelUriStringBuilder builder = new ChannelUriStringBuilder()
             .media(channelUri)
             .alias(channelUri)
-            .rejoin(false)
-            .sessionId((int)srcReplaySessionId);
+            .rejoin(false);
 
-        if (isTagged || null != liveDestination)
+        if (isMds)
         {
-            builder.tags(channelTagId + "," + subscriptionTagId)
-                .controlMode(CommonContext.MDC_CONTROL_MODE_MANUAL);
+            builder.tags(channelTagId + "," + subscriptionTagId).controlMode(CommonContext.MDC_CONTROL_MODE_MANUAL);
         }
         else
         {
-            builder.endpoint(channelUri);
+            builder.endpoint(endpoint).sessionId((int)srcReplaySessionId);
         }
 
         final String channel = builder.build();
@@ -475,9 +471,9 @@ class ReplicationSession implements Session, RecordingDescriptorConsumer
         }
         else
         {
-            if (isTagged || null != liveDestination)
+            if (isMds)
             {
-                replayDestination = builder.clear().media(channelUri).endpoint(channelUri).build();
+                replayDestination = "aeron:udp?endpoint=" + endpoint + "|session-id=" + ((int)srcReplaySessionId);
                 recordingSubscription.asyncAddDestination(replayDestination);
             }
 
@@ -499,7 +495,9 @@ class ReplicationSession implements Session, RecordingDescriptorConsumer
         }
         else if (epochClock.time() >= (timeOfLastActionMs + actionTimeoutMs))
         {
-            throw new TimeoutException("failed get replay image");
+            throw new TimeoutException(
+                "failed get replay image for sessionId " + (int)srcReplaySessionId +
+                " on channel " + recordingSubscription.channel());
         }
 
         return workCount;
@@ -577,12 +575,9 @@ class ReplicationSession implements Session, RecordingDescriptorConsumer
                 retryAttempts = RETRY_ATTEMPTS;
                 srcRecordingPosition = poller.relevantId();
 
-                if (NULL_POSITION == srcRecordingPosition)
+                if (NULL_POSITION == srcRecordingPosition && null != liveDestination)
                 {
-                    if (null != liveDestination)
-                    {
-                        throw new ArchiveException("cannot live merge without active source recording");
-                    }
+                    throw new ArchiveException("cannot live merge without active source recording");
                 }
 
                 final long position = image.position();
@@ -651,10 +646,15 @@ class ReplicationSession implements Session, RecordingDescriptorConsumer
     {
         if (NULL_VALUE != srcReplaySessionId)
         {
-            final long correlationId = aeron.nextCorrelationId();
-            CloseHelper.close(countedErrorHandler,
-                () -> srcArchive.archiveProxy()
-                .stopReplay(srcReplaySessionId, correlationId, srcArchive.controlSessionId()));
+            try
+            {
+                srcArchive.archiveProxy().stopReplay(
+                    srcReplaySessionId, aeron.nextCorrelationId(), srcArchive.controlSessionId());
+            }
+            catch (final Exception ex)
+            {
+                countedErrorHandler.onError(ex);
+            }
             srcReplaySessionId = NULL_VALUE;
         }
     }
@@ -671,7 +671,8 @@ class ReplicationSession implements Session, RecordingDescriptorConsumer
 
     private boolean shouldAddLiveDestination(final long position)
     {
-        return !isLiveAdded && (srcRecordingPosition - position) <= LIVE_ADD_THRESHOLD;
+        return !isLiveAdded &&
+            (srcRecordingPosition - position) <= Math.min(image.termBufferLength() >> 2, LIVE_ADD_MAX_WINDOW);
     }
 
     private boolean shouldStopReplay(final long position)
@@ -691,8 +692,14 @@ class ReplicationSession implements Session, RecordingDescriptorConsumer
     private void state(final State newState)
     {
         timeOfLastActionMs = epochClock.time();
-        //System.out.println("ReplicationSession: " + timeOfLastActionMs + ": " + state + " -> " + newState);
+        stateChange(state, newState, replicationId);
         state = newState;
         activeCorrelationId = NULL_VALUE;
+    }
+
+    @SuppressWarnings("unused")
+    void stateChange(final State oldState, final State newState, final long replicationId)
+    {
+//        System.out.println("ReplicationSession: " + timeOfLastActionMs + ": " + oldState + " -> " + newState);
     }
 }

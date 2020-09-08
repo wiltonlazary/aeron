@@ -60,6 +60,11 @@ public abstract class SubscriptionLink implements DriverManagedResource
         positionBySubscribableMap = new IdentityHashMap<>(hasSessionId ? 1 : 8);
     }
 
+    public AeronClient aeronClient()
+    {
+        return aeronClient;
+    }
+
     public final long registrationId()
     {
         return registrationId;
@@ -187,7 +192,7 @@ public abstract class SubscriptionLink implements DriverManagedResource
 
     public String toString()
     {
-        return "SubscriptionLink{" +
+        return this.getClass().getSimpleName() + "{" +
             "registrationId=" + registrationId +
             ", streamId=" + streamId +
             ", sessionId=" + sessionId +
@@ -315,11 +320,14 @@ class SpySubscriptionLink extends SubscriptionLink
 
 class UntetheredSubscription
 {
-    static final int ACTIVE = 0;
-    static final int LINGER = 1;
-    static final int RESTING = 2;
+    enum State
+    {
+        ACTIVE,
+        LINGER,
+        RESTING
+    }
 
-    int state = ACTIVE;
+    State state = State.ACTIVE;
     long timeOfLastUpdateNs;
     final SubscriptionLink subscriptionLink;
     final ReadablePosition position;
@@ -329,5 +337,24 @@ class UntetheredSubscription
         this.subscriptionLink = subscriptionLink;
         this.position = position;
         this.timeOfLastUpdateNs = timeNs;
+    }
+
+    void state(final State newState, final long nowNs, final int streamId, final int sessionId)
+    {
+        stateChange(state, newState, subscriptionLink.registrationId, streamId, sessionId, nowNs);
+        state = newState;
+        timeOfLastUpdateNs = nowNs;
+    }
+
+    void stateChange(
+        final State oldState,
+        final State newState,
+        final long subscriptionId,
+        final int streamId,
+        final int sessionId,
+        final long nowNs)
+    {
+//        System.out.println(nowNs + ": subscriptionId=" + subscriptionId + ", streamId=" + streamId +
+//            ", sessionId=" + sessionId + ", " + oldState + " -> " + newState);
     }
 }

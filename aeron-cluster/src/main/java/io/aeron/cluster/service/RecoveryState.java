@@ -18,9 +18,7 @@ package io.aeron.cluster.service;
 import io.aeron.Aeron;
 import io.aeron.Counter;
 import io.aeron.cluster.client.ClusterException;
-import org.agrona.BitUtil;
-import org.agrona.DirectBuffer;
-import org.agrona.MutableDirectBuffer;
+import org.agrona.*;
 import org.agrona.concurrent.status.CountersReader;
 
 import static io.aeron.Aeron.NULL_VALUE;
@@ -29,7 +27,7 @@ import static org.agrona.BitUtil.SIZE_OF_LONG;
 import static org.agrona.concurrent.status.CountersReader.*;
 
 /**
- * Counter representing the Recovery state for the cluster.
+ * Counter representing the Recovery State for the cluster.
  * <p>
  * Key layout as follows:
  * <pre>
@@ -45,7 +43,7 @@ import static org.agrona.concurrent.status.CountersReader.*;
  *  |              Timestamp at beginning of Recovery               |
  *  |                                                               |
  *  +---------------------------------------------------------------+
- *  |                    Replay required flag                       |
+ *  |                         Cluster ID                            |
  *  +---------------------------------------------------------------+
  *  |                     Count of Services                         |
  *  +---------------------------------------------------------------+
@@ -67,43 +65,43 @@ public class RecoveryState
     /**
      * Human readable name for the counter.
      */
-    public static final String NAME = "cluster recovery: leadershipTermId=";
+    public static final String NAME = "Cluster recovery: leadershipTermId=";
 
     public static final int LEADERSHIP_TERM_ID_OFFSET = 0;
     public static final int LOG_POSITION_OFFSET = LEADERSHIP_TERM_ID_OFFSET + SIZE_OF_LONG;
     public static final int TIMESTAMP_OFFSET = LOG_POSITION_OFFSET + SIZE_OF_LONG;
-    public static final int REPLAY_FLAG_OFFSET = TIMESTAMP_OFFSET + SIZE_OF_LONG;
-    public static final int SERVICE_COUNT_OFFSET = REPLAY_FLAG_OFFSET + SIZE_OF_INT;
+    public static final int CLUSTER_ID_OFFSET = TIMESTAMP_OFFSET + SIZE_OF_LONG;
+    public static final int SERVICE_COUNT_OFFSET = CLUSTER_ID_OFFSET + SIZE_OF_INT;
     public static final int SNAPSHOT_RECORDING_IDS_OFFSET = SERVICE_COUNT_OFFSET + SIZE_OF_INT;
 
     /**
      * Allocate a counter to represent the snapshot services should load on start.
      *
      * @param aeron                to allocate the counter.
-     * @param tempBuffer           to use for building the key and label without allocation.
      * @param leadershipTermId     at which the snapshot was taken.
      * @param logPosition          at which the snapshot was taken.
      * @param timestamp            the snapshot was taken.
-     * @param hasReplay            flag is true if all or part of the log must be replayed.
+     * @param clusterId            which identifies the cluster instance.
      * @param snapshotRecordingIds for the services to use during recovery indexed by service id.
      * @return the {@link Counter} for the recovery state.
      */
     public static Counter allocate(
         final Aeron aeron,
-        final MutableDirectBuffer tempBuffer,
         final long leadershipTermId,
         final long logPosition,
         final long timestamp,
-        final boolean hasReplay,
+        final int clusterId,
         final long... snapshotRecordingIds)
     {
-        tempBuffer.putLong(LEADERSHIP_TERM_ID_OFFSET, leadershipTermId);
-        tempBuffer.putLong(LOG_POSITION_OFFSET, logPosition);
-        tempBuffer.putLong(TIMESTAMP_OFFSET, timestamp);
-        tempBuffer.putInt(REPLAY_FLAG_OFFSET, hasReplay ? 1 : 0);
+        final ExpandableArrayBuffer buffer = new ExpandableArrayBuffer(256);
+
+        buffer.putLong(LEADERSHIP_TERM_ID_OFFSET, leadershipTermId);
+        buffer.putLong(LOG_POSITION_OFFSET, logPosition);
+        buffer.putLong(TIMESTAMP_OFFSET, timestamp);
+        buffer.putInt(CLUSTER_ID_OFFSET, clusterId);
 
         final int serviceCount = snapshotRecordingIds.length;
-        tempBuffer.putInt(SERVICE_COUNT_OFFSET, serviceCount);
+        buffer.putInt(SERVICE_COUNT_OFFSET, serviceCount);
 
         final int keyLength = SNAPSHOT_RECORDING_IDS_OFFSET + (serviceCount * SIZE_OF_LONG);
         if (keyLength > MAX_KEY_LENGTH)
@@ -113,40 +111,45 @@ public class RecoveryState
 
         for (int i = 0; i < serviceCount; i++)
         {
-            tempBuffer.putLong(SNAPSHOT_RECORDING_IDS_OFFSET + (i * SIZE_OF_LONG), snapshotRecordingIds[i]);
+            buffer.putLong(SNAPSHOT_RECORDING_IDS_OFFSET + (i * SIZE_OF_LONG), snapshotRecordingIds[i]);
         }
 
         final int labelOffset = BitUtil.align(keyLength, SIZE_OF_INT);
         int labelLength = 0;
-        labelLength += tempBuffer.putStringWithoutLengthAscii(labelOffset + labelLength, NAME);
-        labelLength += tempBuffer.putLongAscii(keyLength + labelLength, leadershipTermId);
-        labelLength += tempBuffer.putStringWithoutLengthAscii(labelOffset + labelLength, " logPosition=");
-        labelLength += tempBuffer.putLongAscii(labelOffset + labelLength, logPosition);
-        labelLength += tempBuffer.putStringWithoutLengthAscii(labelOffset + labelLength, " hasReplay=" + hasReplay);
+        labelLength += buffer.putStringWithoutLengthAscii(labelOffset + labelLength, NAME);
+        labelLength += buffer.putLongAscii(keyLength + labelLength, leadershipTermId);
+        labelLength += buffer.putStringWithoutLengthAscii(labelOffset + labelLength, " logPosition=");
+        labelLength += buffer.putLongAscii(labelOffset + labelLength, logPosition);
+        labelLength += buffer.putStringWithoutLengthAscii(labelOffset + labelLength, " clusterId=");
+        labelLength += buffer.putIntAscii(labelOffset + labelLength, clusterId);
 
-        return aeron.addCounter(RECOVERY_STATE_TYPE_ID, tempBuffer, 0, keyLength, tempBuffer, labelOffset, labelLength);
+        return aeron.addCounter(RECOVERY_STATE_TYPE_ID, buffer, 0, keyLength, buffer, labelOffset, labelLength);
     }
 
     /**
      * Find the active counter id for recovery state.
      *
-     * @param counters to search within.
+     * @param counters  to search within.
+     * @param clusterId to constrain the search.
      * @return the counter id if found otherwise {@link CountersReader#NULL_COUNTER_ID}.
      */
-    public static int findCounterId(final CountersReader counters)
+    public static int findCounterId(final CountersReader counters, final int clusterId)
     {
         final DirectBuffer buffer = counters.metaDataBuffer();
 
         for (int i = 0, size = counters.maxCounterId(); i < size; i++)
         {
-            if (counters.getCounterState(i) == RECORD_ALLOCATED)
+            final int counterState = counters.getCounterState(i);
+            if (counterState == RECORD_ALLOCATED && counters.getCounterTypeId(i) == RECOVERY_STATE_TYPE_ID)
             {
-                final int recordOffset = CountersReader.metaDataOffset(i);
-
-                if (buffer.getInt(recordOffset + TYPE_ID_OFFSET) == RECOVERY_STATE_TYPE_ID)
+                if (buffer.getInt(CountersReader.metaDataOffset(i) + KEY_OFFSET + CLUSTER_ID_OFFSET) == clusterId)
                 {
                     return i;
                 }
+            }
+            else if (RECORD_UNUSED == counterState)
+            {
+                break;
             }
         }
 
@@ -164,14 +167,10 @@ public class RecoveryState
     {
         final DirectBuffer buffer = counters.metaDataBuffer();
 
-        if (counters.getCounterState(counterId) == RECORD_ALLOCATED)
+        if (counters.getCounterState(counterId) == RECORD_ALLOCATED &&
+            counters.getCounterTypeId(counterId) == RECOVERY_STATE_TYPE_ID)
         {
-            final int recordOffset = CountersReader.metaDataOffset(counterId);
-
-            if (buffer.getInt(recordOffset + TYPE_ID_OFFSET) == RECOVERY_STATE_TYPE_ID)
-            {
-                return buffer.getLong(recordOffset + KEY_OFFSET + LEADERSHIP_TERM_ID_OFFSET);
-            }
+            return buffer.getLong(CountersReader.metaDataOffset(counterId) + KEY_OFFSET + LEADERSHIP_TERM_ID_OFFSET);
         }
 
         return NULL_VALUE;
@@ -188,14 +187,10 @@ public class RecoveryState
     {
         final DirectBuffer buffer = counters.metaDataBuffer();
 
-        if (counters.getCounterState(counterId) == RECORD_ALLOCATED)
+        if (counters.getCounterState(counterId) == RECORD_ALLOCATED &&
+            counters.getCounterTypeId(counterId) == RECOVERY_STATE_TYPE_ID)
         {
-            final int recordOffset = CountersReader.metaDataOffset(counterId);
-
-            if (buffer.getInt(recordOffset + TYPE_ID_OFFSET) == RECOVERY_STATE_TYPE_ID)
-            {
-                return buffer.getLong(recordOffset + KEY_OFFSET + LOG_POSITION_OFFSET);
-            }
+            return buffer.getLong(CountersReader.metaDataOffset(counterId) + KEY_OFFSET + LOG_POSITION_OFFSET);
         }
 
         return NULL_VALUE;
@@ -212,41 +207,13 @@ public class RecoveryState
     {
         final DirectBuffer buffer = counters.metaDataBuffer();
 
-        if (counters.getCounterState(counterId) == RECORD_ALLOCATED)
+        if (counters.getCounterState(counterId) == RECORD_ALLOCATED &&
+            counters.getCounterTypeId(counterId) == RECOVERY_STATE_TYPE_ID)
         {
-            final int recordOffset = CountersReader.metaDataOffset(counterId);
-
-            if (buffer.getInt(recordOffset + TYPE_ID_OFFSET) == RECOVERY_STATE_TYPE_ID)
-            {
-                return buffer.getLong(recordOffset + KEY_OFFSET + TIMESTAMP_OFFSET);
-            }
+            return buffer.getLong(CountersReader.metaDataOffset(counterId) + KEY_OFFSET + TIMESTAMP_OFFSET);
         }
 
         return NULL_VALUE;
-    }
-
-    /**
-     * Has the recovery process got a log to replay?
-     *
-     * @param counters  to search within.
-     * @param counterId for the active recovery counter.
-     * @return true if a replay is required.
-     */
-    public static boolean hasReplay(final CountersReader counters, final int counterId)
-    {
-        final DirectBuffer buffer = counters.metaDataBuffer();
-
-        if (counters.getCounterState(counterId) == RECORD_ALLOCATED)
-        {
-            final int recordOffset = CountersReader.metaDataOffset(counterId);
-
-            if (buffer.getInt(recordOffset + TYPE_ID_OFFSET) == RECOVERY_STATE_TYPE_ID)
-            {
-                return buffer.getInt(recordOffset + KEY_OFFSET + REPLAY_FLAG_OFFSET) == 1;
-            }
-        }
-
-        return false;
     }
 
     /**
@@ -261,23 +228,21 @@ public class RecoveryState
     {
         final DirectBuffer buffer = counters.metaDataBuffer();
 
-        if (counters.getCounterState(counterId) == RECORD_ALLOCATED)
+        if (counters.getCounterState(counterId) == RECORD_ALLOCATED &&
+            counters.getCounterTypeId(counterId) == RECOVERY_STATE_TYPE_ID)
         {
             final int recordOffset = CountersReader.metaDataOffset(counterId);
 
-            if (buffer.getInt(recordOffset + TYPE_ID_OFFSET) == RECOVERY_STATE_TYPE_ID)
+            final int serviceCount = buffer.getInt(recordOffset + KEY_OFFSET + SERVICE_COUNT_OFFSET);
+            if (serviceId < 0 || serviceId >= serviceCount)
             {
-                final int serviceCount = buffer.getInt(recordOffset + KEY_OFFSET + SERVICE_COUNT_OFFSET);
-                if (serviceId < 0 || serviceId >= serviceCount)
-                {
-                    throw new ClusterException("invalid serviceId " + serviceId + " for count of " + serviceCount);
-                }
-
-                return buffer.getLong(
-                    recordOffset + KEY_OFFSET + SNAPSHOT_RECORDING_IDS_OFFSET + (serviceId * SIZE_OF_LONG));
+                throw new ClusterException("invalid serviceId " + serviceId + " for count of " + serviceCount);
             }
+
+            return buffer.getLong(
+                recordOffset + KEY_OFFSET + SNAPSHOT_RECORDING_IDS_OFFSET + (serviceId * SIZE_OF_LONG));
         }
 
-        throw new ClusterException("Active counter not found " + counterId);
+        throw new ClusterException("active counter not found " + counterId);
     }
 }

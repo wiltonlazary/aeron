@@ -15,8 +15,9 @@
  */
 package io.aeron.test;
 
-import io.aeron.Subscription;
+import io.aeron.*;
 import io.aeron.exceptions.AeronException;
+import io.aeron.exceptions.RegistrationException;
 import io.aeron.exceptions.TimeoutException;
 import io.aeron.logbuffer.FragmentHandler;
 import org.agrona.LangUtil;
@@ -179,6 +180,16 @@ public class Tests
     }
 
     /**
+     * Yield the thread then check for interrupt in a test.
+     * @see #checkInterruptStatus()
+     */
+    public static void yield()
+    {
+        Thread.yield();
+        checkInterruptStatus();
+    }
+
+    /**
      * Helper method to mock {@link AutoCloseable#close()} method to throw exception.
      *
      * @param mock      to have it's method mocked
@@ -303,8 +314,15 @@ public class Tests
                 throw new TimeoutException();
             }
 
-            Thread.yield();
-            checkInterruptStatus();
+            Tests.yield();
+        }
+    }
+
+    public static void await(final BooleanSupplier conditionSupplier)
+    {
+        while (!conditionSupplier.getAsBoolean())
+        {
+            Tests.yield();
         }
     }
 
@@ -312,7 +330,7 @@ public class Tests
     {
         if (ex instanceof AeronException && ((AeronException)ex).category() == AeronException.Category.WARN)
         {
-            System.out.println("Warning: " + ex.getMessage());
+            //System.out.println("Warning: " + ex.getMessage());
             return;
         }
 
@@ -344,6 +362,11 @@ public class Tests
                 unexpectedInterruptStackTrace("awaiting=" + value + " counter=" + counterValue);
                 fail("unexpected interrupt");
             }
+
+            if (counter.isClosed())
+            {
+                unexpectedInterruptStackTrace("awaiting=" + value + " counter=" + counterValue);
+            }
         }
     }
 
@@ -366,6 +389,52 @@ public class Tests
         while (reader.getCounterValue(counterId) < expectedValue)
         {
             wait(SLEEP_1_MS, counterMessage);
+        }
+    }
+
+    public static Subscription reAddSubscription(final Aeron aeron, final String channel, final int streamId)
+    {
+        // In cases where a subscription is added immediately after closing one it is possible that
+        // the second one can fail, so retry in that case.
+        while (true)
+        {
+            try
+            {
+                return aeron.addSubscription(channel, streamId);
+            }
+            catch (final RegistrationException ex)
+            {
+                if (ex.category() != AeronException.Category.WARN)
+                {
+                    throw ex;
+                }
+
+                yieldingWait(ex.getMessage());
+            }
+        }
+    }
+
+    public static void awaitConnected(final Publication publication)
+    {
+        while (!publication.isConnected())
+        {
+            Tests.yield();
+        }
+    }
+
+    public static void awaitConnected(final Subscription subscription)
+    {
+        while (!subscription.isConnected())
+        {
+            Tests.yield();
+        }
+    }
+
+    public static void awaitConnections(final Subscription subscription, final int connectionCount)
+    {
+        while (subscription.imageCount() < connectionCount)
+        {
+            Tests.yield();
         }
     }
 }

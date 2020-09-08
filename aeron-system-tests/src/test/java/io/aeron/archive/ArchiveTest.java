@@ -23,10 +23,11 @@ import io.aeron.archive.client.RecordingEventsAdapter;
 import io.aeron.archive.codecs.SourceLocation;
 import io.aeron.driver.MediaDriver;
 import io.aeron.driver.ThreadingMode;
-import io.aeron.driver.status.SystemCounterDescriptor;
 import io.aeron.logbuffer.FragmentHandler;
 import io.aeron.logbuffer.FrameDescriptor;
 import io.aeron.logbuffer.Header;
+import io.aeron.test.MediaDriverTestWatcher;
+import io.aeron.test.TestMediaDriver;
 import io.aeron.test.Tests;
 import org.agrona.*;
 import org.agrona.collections.MutableBoolean;
@@ -43,7 +44,6 @@ import org.junit.jupiter.params.provider.MethodSource;
 import java.io.File;
 import java.util.Random;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
 import static io.aeron.archive.ArchiveTests.awaitConnectedReply;
@@ -63,7 +63,6 @@ public class ArchiveTest
             arguments(ThreadingMode.DEDICATED, ArchiveThreadingMode.DEDICATED));
     }
 
-    private static final long TIMEOUT_NS = TimeUnit.SECONDS.toNanos(5);
     private static final long MAX_CATALOG_ENTRIES = 1024;
     private static final String CONTROL_RESPONSE_URI = CommonContext.IPC_CHANNEL;
     private static final int CONTROL_RESPONSE_STREAM_ID = 100;
@@ -79,13 +78,16 @@ public class ArchiveTest
     private final long seed = System.nanoTime();
 
     @RegisterExtension
-    public final TestWatcher testWatcher = ArchiveTests.newWatcher(seed);
+    public final TestWatcher randomSeedWatcher = ArchiveTests.newWatcher(seed);
+
+    @RegisterExtension
+    public final MediaDriverTestWatcher testWatcher = new MediaDriverTestWatcher();
 
     private long controlSessionId;
     private String publishUri;
     private Aeron client;
     private Archive archive;
-    private MediaDriver driver;
+    private TestMediaDriver driver;
     private long recordingId;
     private long remaining;
     private int messageCount;
@@ -107,6 +109,11 @@ public class ArchiveTest
 
     private void before(final ThreadingMode threadingMode, final ArchiveThreadingMode archiveThreadingMode)
     {
+        if (threadingMode == ThreadingMode.INVOKER)
+        {
+            TestMediaDriver.notSupportedOnCMediaDriver("C driver does not integrate with Java Invoker");
+        }
+
         rnd.setSeed(seed);
         requestedInitialTermId = rnd.nextInt(1234);
 
@@ -129,50 +136,68 @@ public class ArchiveTest
         requestedStartPosition =
             ((requestedStartTermId - requestedInitialTermId) * (long)termLength) + requestedStartTermOffset;
 
-        driver = MediaDriver.launch(
+        driver = TestMediaDriver.launch(
             new MediaDriver.Context()
                 .termBufferSparseFile(true)
                 .threadingMode(threadingMode)
                 .sharedIdleStrategy(YieldingIdleStrategy.INSTANCE)
                 .spiesSimulateConnection(true)
                 .errorHandler(Tests::onError)
-                .dirDeleteOnStart(true));
+                .dirDeleteOnStart(true),
+            testWatcher);
 
-        archive = Archive.launch(
-            new Archive.Context()
-                .maxCatalogEntries(MAX_CATALOG_ENTRIES)
-                .fileSyncLevel(SYNC_LEVEL)
-                .mediaDriverAgentInvoker(driver.sharedAgentInvoker())
-                .deleteArchiveOnStart(true)
-                .archiveDir(new File(SystemUtil.tmpDirName(), "archive-test"))
-                .segmentFileLength(segmentFileLength)
-                .threadingMode(archiveThreadingMode)
-                .idleStrategySupplier(YieldingIdleStrategy::new)
-                .errorCounter(driver.context().systemCounters().get(SystemCounterDescriptor.ERRORS))
-                .errorHandler(driver.context().errorHandler()));
+        final Archive.Context archiveContext = new Archive.Context()
+            .maxCatalogEntries(MAX_CATALOG_ENTRIES)
+            .fileSyncLevel(SYNC_LEVEL)
+            .deleteArchiveOnStart(true)
+            .archiveDir(new File(SystemUtil.tmpDirName(), "archive-test"))
+            .segmentFileLength(segmentFileLength)
+            .threadingMode(archiveThreadingMode)
+            .idleStrategySupplier(YieldingIdleStrategy::new)
+            .errorHandler(Tests::onError);
 
+        if (threadingMode == ThreadingMode.INVOKER)
+        {
+            archiveContext.mediaDriverAgentInvoker(driver.sharedAgentInvoker());
+        }
+
+        archive = Archive.launch(archiveContext);
         client = Aeron.connect();
 
         recorded = 0;
     }
 
     @AfterEach
-    public void after()
+    public void after() throws Exception
     {
-        if (null != replayConsumer)
+        try
         {
-            replayConsumer.interrupt();
-        }
+            if (null != replayConsumer)
+            {
+                replayConsumer.interrupt();
+                replayConsumer.join();
+            }
 
-        if (null != progressTracker)
+            if (null != progressTracker)
+            {
+                progressTracker.interrupt();
+                progressTracker.join();
+            }
+        }
+        finally
         {
-            progressTracker.interrupt();
+            CloseHelper.closeAll(client, archive, driver);
+
+            if (null != archive)
+            {
+                archive.context().deleteDirectory();
+            }
+
+            if (null != driver)
+            {
+                driver.context().deleteDirectory();
+            }
         }
-
-        CloseHelper.closeAll(client, archive, driver);
-
-        archive.context().deleteDirectory();
-        driver.context().deleteDirectory();
     }
 
     @ParameterizedTest
@@ -191,13 +216,12 @@ public class ArchiveTest
 
         final Publication controlPublication = client.addPublication(controlChannel, controlStreamId);
         final Subscription recordingEvents = client.addSubscription(recordingChannel, recordingStreamId);
-        Tests.await(recordingEvents::isConnected, TIMEOUT_NS);
+        Tests.awaitConnected(recordingEvents);
         final ArchiveProxy archiveProxy = new ArchiveProxy(controlPublication);
 
         prePublicationActionsAndVerifications(archiveProxy, controlPublication, recordingEvents);
 
-        final ExclusivePublication recordedPublication =
-            client.addExclusivePublication(publishUri, PUBLISH_STREAM_ID);
+        final ExclusivePublication recordedPublication = client.addExclusivePublication(publishUri, PUBLISH_STREAM_ID);
 
         final int sessionId = recordedPublication.sessionId();
         final int termBufferLength = recordedPublication.termBufferLength();
@@ -236,13 +260,12 @@ public class ArchiveTest
 
         final Publication controlPublication = client.addPublication(controlChannel, controlStreamId);
         final Subscription recordingEvents = client.addSubscription(recordingChannel, recordingStreamId);
-        Tests.await(recordingEvents::isConnected, TIMEOUT_NS);
+        Tests.awaitConnected(recordingEvents);
         final ArchiveProxy archiveProxy = new ArchiveProxy(controlPublication);
 
         prePublicationActionsAndVerifications(archiveProxy, controlPublication, recordingEvents);
 
-        final ExclusivePublication recordedPublication =
-            client.addExclusivePublication(publishUri, PUBLISH_STREAM_ID);
+        final ExclusivePublication recordedPublication = client.addExclusivePublication(publishUri, PUBLISH_STREAM_ID);
 
         final int sessionId = recordedPublication.sessionId();
         final int termBufferLength = recordedPublication.termBufferLength();
@@ -285,14 +308,12 @@ public class ArchiveTest
         final int recordingStreamId = archive.context().recordingEventsStreamId();
 
         final Publication controlPublication = client.addPublication(controlChannel, controlStreamId);
-        final Subscription recordingEvents = client.addSubscription(recordingChannel, recordingStreamId);
-        Tests.await(recordingEvents::isConnected, TIMEOUT_NS);
         final ArchiveProxy archiveProxy = new ArchiveProxy(controlPublication);
 
+        final Subscription recordingEvents = client.addSubscription(recordingChannel, recordingStreamId);
         prePublicationActionsAndVerifications(archiveProxy, controlPublication, recordingEvents);
 
         final Publication recordedPublication = client.addExclusivePublication(publishUri, PUBLISH_STREAM_ID);
-
         final int sessionId = recordedPublication.sessionId();
         final int termBufferLength = recordedPublication.termBufferLength();
         final int initialTermId = recordedPublication.initialTermId();
@@ -345,8 +366,7 @@ public class ArchiveTest
         {
             if (recordingEventsAdapter.poll() == 0)
             {
-                Thread.yield();
-                Tests.checkInterruptStatus();
+                Tests.yield();
             }
         }
 
@@ -367,7 +387,7 @@ public class ArchiveTest
         final long requestStopCorrelationId = correlationId++;
         if (!archiveProxy.stopRecording(publishUri, PUBLISH_STREAM_ID, requestStopCorrelationId, controlSessionId))
         {
-            throw new IllegalStateException("Failed to stop recording");
+            throw new IllegalStateException("failed to send stop recording");
         }
 
         ArchiveTests.awaitOk(controlResponse, requestStopCorrelationId);
@@ -389,8 +409,7 @@ public class ArchiveTest
         {
             if (recordingEventsAdapter.poll() == 0)
             {
-                Thread.yield();
-                Tests.checkInterruptStatus();
+                Tests.yield();
             }
         }
 
@@ -400,18 +419,15 @@ public class ArchiveTest
     }
 
     private void prePublicationActionsAndVerifications(
-        final ArchiveProxy archiveProxy,
-        final Publication controlPublication,
-        final Subscription recordingEvents)
+        final ArchiveProxy archiveProxy, final Publication controlPublication, final Subscription recordingEvents)
     {
-        Tests.await(controlPublication::isConnected, TIMEOUT_NS);
-        Tests.await(recordingEvents::isConnected, TIMEOUT_NS);
+        Tests.awaitConnected(controlPublication);
+        Tests.awaitConnected(recordingEvents);
 
         controlResponse = client.addSubscription(CONTROL_RESPONSE_URI, CONTROL_RESPONSE_STREAM_ID);
         final long connectCorrelationId = correlationId++;
         assertTrue(archiveProxy.connect(CONTROL_RESPONSE_URI, CONTROL_RESPONSE_STREAM_ID, connectCorrelationId));
 
-        Tests.await(controlResponse::isConnected, TIMEOUT_NS);
         awaitConnectedReply(controlResponse, connectCorrelationId, (sessionId) -> controlSessionId = sessionId);
         verifyEmptyDescriptorList(archiveProxy);
 
@@ -423,7 +439,7 @@ public class ArchiveTest
             startRecordingCorrelationId,
             controlSessionId))
         {
-            throw new IllegalStateException("Failed to start recording");
+            throw new IllegalStateException("failed to start recording");
         }
 
         ArchiveTests.awaitOk(controlResponse, startRecordingCorrelationId);
@@ -481,8 +497,7 @@ public class ArchiveTest
         {
             if (controlResponseAdapter.poll() == 0)
             {
-                Thread.yield();
-                Tests.checkInterruptStatus();
+                Tests.yield();
             }
         }
     }
@@ -560,8 +575,7 @@ public class ArchiveTest
                     throw new IllegalStateException("Publication not connected: result=" + result);
                 }
 
-                Thread.yield();
-                Tests.checkInterruptStatus();
+                Tests.yield();
             }
         }
 
@@ -590,11 +604,11 @@ public class ArchiveTest
                 replayCorrelationId,
                 controlSessionId))
             {
-                throw new IllegalStateException("Failed to replay");
+                throw new IllegalStateException("failed to replay");
             }
 
             ArchiveTests.awaitOk(controlResponse, replayCorrelationId);
-            Tests.await(replay::isConnected, TIMEOUT_NS);
+            Tests.awaitConnected(replay);
 
             final Image image = replay.images().get(0);
             assertEquals(initialTermId, image.initialTermId());
@@ -610,8 +624,7 @@ public class ArchiveTest
                 final int fragments = replay.poll(this::validateFragment, 10);
                 if (0 == fragments)
                 {
-                    Thread.yield();
-                    Tests.checkInterruptStatus();
+                    Tests.yield();
                 }
             }
 
@@ -629,8 +642,7 @@ public class ArchiveTest
 
         while (catalog.stopPosition(recordingId) != stopPosition)
         {
-            Thread.yield();
-            Tests.checkInterruptStatus();
+            Tests.yield();
         }
 
         try (RecordingReader recordingReader = new RecordingReader(
@@ -641,8 +653,10 @@ public class ArchiveTest
         {
             while (!recordingReader.isDone())
             {
-                recordingReader.poll(this::validateRecordingFragment, messageCount);
-                Tests.checkInterruptStatus();
+                if (0 == recordingReader.poll(this::validateRecordingFragment, messageCount))
+                {
+                    Tests.yield();
+                }
             }
         }
 
@@ -663,7 +677,7 @@ public class ArchiveTest
             final int expectedLength = messageLengths[messageCount] - HEADER_LENGTH;
             if (length != expectedLength)
             {
-                fail("Message length=" + length + " expected=" + expectedLength + " messageCount=" + messageCount);
+                fail("messageLength=" + length + " expected=" + expectedLength + " messageCount=" + messageCount);
             }
 
             assertEquals(messageCount, buffer.getInt(offset));
@@ -711,7 +725,6 @@ public class ArchiveTest
                         if (recordingEventsAdapter.poll() == 0)
                         {
                             Tests.sleep(1);
-                            Tests.checkInterruptStatus();
                         }
                     }
                 }
@@ -764,7 +777,7 @@ public class ArchiveTest
                     }
 
                     ArchiveTests.awaitOk(controlResponse, replayCorrelationId);
-                    Tests.await(replay::isConnected, TIMEOUT_NS);
+                    Tests.awaitConnected(replay);
 
                     final Image image = replay.images().get(0);
                     assertEquals(initialTermId, image.initialTermId());
@@ -781,8 +794,7 @@ public class ArchiveTest
                         final int fragments = replay.poll(fragmentHandler, 10);
                         if (0 == fragments)
                         {
-                            Thread.yield();
-                            Tests.checkInterruptStatus();
+                            Tests.yield();
                         }
                     }
                 }

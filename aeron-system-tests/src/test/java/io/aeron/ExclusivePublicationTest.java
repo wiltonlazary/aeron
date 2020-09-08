@@ -19,6 +19,7 @@ import io.aeron.driver.MediaDriver;
 import io.aeron.driver.ThreadingMode;
 import io.aeron.logbuffer.FragmentHandler;
 import io.aeron.logbuffer.RawBlockHandler;
+import io.aeron.test.MediaDriverTestWatcher;
 import io.aeron.test.TestMediaDriver;
 import io.aeron.test.Tests;
 import org.agrona.CloseHelper;
@@ -28,6 +29,7 @@ import org.agrona.concurrent.YieldingIdleStrategy;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.extension.RegisterExtension;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
@@ -58,10 +60,15 @@ public class ExclusivePublicationTest
 
     private final UnsafeBuffer srcBuffer = new UnsafeBuffer(new byte[65 * 1024]);
 
-    private final TestMediaDriver driver = TestMediaDriver.launch(new MediaDriver.Context()
+    @RegisterExtension
+    public final MediaDriverTestWatcher testWatcher = new MediaDriverTestWatcher();
+
+    private final MediaDriver.Context driverContext = new MediaDriver.Context()
         .errorHandler(Tests::onError)
         .sharedIdleStrategy(YieldingIdleStrategy.INSTANCE)
-        .threadingMode(ThreadingMode.SHARED));
+        .threadingMode(ThreadingMode.SHARED);
+
+    private final TestMediaDriver driver = TestMediaDriver.launch(driverContext, testWatcher);
 
     private final Aeron aeron = Aeron.connect();
 
@@ -91,21 +98,19 @@ public class ExclusivePublicationTest
                     messageCount.value++;
                 };
 
-            awaitConnection(subscription, 2);
+            Tests.awaitConnections(subscription, 2);
 
             for (int i = 0; i < expectedNumberOfFragments; i += 2)
             {
                 while (publicationOne.offer(srcBuffer, 0, MESSAGE_LENGTH) < 0L)
                 {
-                    Thread.yield();
-                    Tests.checkInterruptStatus();
+                    Tests.yield();
                     totalFragmentsRead += pollFragments(subscription, fragmentHandler);
                 }
 
                 while (publicationTwo.offer(srcBuffer, 0, MESSAGE_LENGTH) < 0L)
                 {
-                    Thread.yield();
-                    Tests.checkInterruptStatus();
+                    Tests.yield();
                     totalFragmentsRead += pollFragments(subscription, fragmentHandler);
                 }
 
@@ -132,8 +137,7 @@ public class ExclusivePublicationTest
         {
             while (publication.offer(srcBuffer, 0, MESSAGE_LENGTH) < 0L)
             {
-                Thread.yield();
-                Tests.checkInterruptStatus();
+                Tests.yield();
             }
 
             final int termBufferLength = publication.termBufferLength();
@@ -180,8 +184,7 @@ public class ExclusivePublicationTest
 
             while (publication.availableWindow() <= 0)
             {
-                Thread.yield();
-                Tests.checkInterruptStatus();
+                Tests.yield();
             }
 
             final IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
@@ -227,11 +230,10 @@ public class ExclusivePublicationTest
             srcBuffer.putInt(offset + TERM_ID_FIELD_OFFSET, currentTermId, LITTLE_ENDIAN);
             srcBuffer.setMemory(offset + DATA_OFFSET, termBufferLength - HEADER_LENGTH, (byte)13);
 
-            awaitConnection(subscription, 1);
+            Tests.awaitConnections(subscription, 1);
             while (publication.availableWindow() <= 0)
             {
-                Thread.yield();
-                Tests.checkInterruptStatus();
+                Tests.yield();
             }
 
             final long position = publication.position();
@@ -270,21 +272,11 @@ public class ExclusivePublicationTest
 
             while (publication.offerBlock(srcBuffer, offset, length) < 0)
             {
-                Thread.yield();
-                Tests.checkInterruptStatus();
+                Tests.yield();
             }
 
             final long result = publication.offerBlock(srcBuffer, 0, offset);
             assertEquals(BACK_PRESSURED, result);
-        }
-    }
-
-    private static void awaitConnection(final Subscription subscription, final int imageCount)
-    {
-        while (subscription.imageCount() < imageCount)
-        {
-            Thread.yield();
-            Tests.checkInterruptStatus();
         }
     }
 
@@ -293,8 +285,7 @@ public class ExclusivePublicationTest
         final int fragmentsRead = subscription.poll(fragmentHandler, FRAGMENT_COUNT_LIMIT);
         if (0 == fragmentsRead)
         {
-            Thread.yield();
-            Tests.checkInterruptStatus();
+            Tests.yield();
         }
 
         return fragmentsRead;

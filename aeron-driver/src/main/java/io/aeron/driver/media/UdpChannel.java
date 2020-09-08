@@ -44,6 +44,7 @@ public final class UdpChannel
     private final boolean isManualControlMode;
     private final boolean isDynamicControlMode;
     private final boolean hasExplicitControl;
+    private final boolean hasExplicitEndpoint;
     private final boolean isMulticast;
     private final boolean hasMulticastTtl;
     private final boolean hasTag;
@@ -63,6 +64,7 @@ public final class UdpChannel
     {
         isManualControlMode = context.isManualControlMode;
         isDynamicControlMode = context.isDynamicControlMode;
+        hasExplicitEndpoint = context.hasExplicitEndpoint;
         hasExplicitControl = context.hasExplicitControl;
         isMulticast = context.isMulticast;
         hasTag = context.hasTagId;
@@ -116,6 +118,11 @@ public final class UdpChannel
             final boolean isManualControlMode = CommonContext.MDC_CONTROL_MODE_MANUAL.equals(controlMode);
             final boolean isDynamicControlMode = CommonContext.MDC_CONTROL_MODE_DYNAMIC.equals(controlMode);
 
+            final boolean requiresAdditionalSuffix =
+                null == endpointAddress && null == explicitControlAddress ||
+                (null != endpointAddress && endpointAddress.getPort() == 0) ||
+                (null != explicitControlAddress && explicitControlAddress.getPort() == 0);
+
             final boolean hasNoDistinguishingCharacteristic =
                 null == endpointAddress && null == explicitControlAddress && null == tagIdStr;
 
@@ -142,21 +149,24 @@ public final class UdpChannel
                 throw new UnknownHostException("could not resolve control address: " + explicitControlAddress);
             }
 
+            boolean hasExplicitEndpoint = true;
+            if (null == endpointAddress)
+            {
+                hasExplicitEndpoint = false;
+                endpointAddress = new InetSocketAddress("0.0.0.0", 0);
+            }
+
             final Context context = new Context()
                 .uriStr(channelUriString)
                 .channelUri(channelUri)
                 .isManualControlMode(isManualControlMode)
                 .isDynamicControlMode(isDynamicControlMode)
+                .hasExplicitEndpoint(hasExplicitEndpoint)
                 .hasNoDistinguishingCharacteristic(hasNoDistinguishingCharacteristic);
 
             if (null != tagIdStr)
             {
                 context.hasTagId(true).tagId(Long.parseLong(tagIdStr));
-            }
-
-            if (null == endpointAddress)
-            {
-                endpointAddress = new InetSocketAddress("0.0.0.0", 0);
             }
 
             if (endpointAddress.getAddress().isMulticastAddress())
@@ -187,6 +197,15 @@ public final class UdpChannel
                 final String controlVal = channelUri.get(CommonContext.MDC_CONTROL_PARAM_NAME);
                 final String endpointVal = channelUri.get(CommonContext.ENDPOINT_PARAM_NAME);
 
+                String suffix = "";
+                if (requiresAdditionalSuffix)
+                {
+                    suffix = (null != tagIdStr) ? "#" + tagIdStr : ("-" + UNIQUE_CANONICAL_FORM_VALUE.getAndAdd(1));
+                }
+
+                final String canonicalForm = canonicalise(
+                    controlVal, explicitControlAddress, endpointVal, endpointAddress) + suffix;
+
                 context
                     .hasExplicitControl(true)
                     .remoteControlAddress(endpointAddress)
@@ -194,7 +213,7 @@ public final class UdpChannel
                     .localControlAddress(explicitControlAddress)
                     .localDataAddress(explicitControlAddress)
                     .protocolFamily(getProtocolFamily(endpointAddress.getAddress()))
-                    .canonicalForm(canonicalise(controlVal, explicitControlAddress, endpointVal, endpointAddress));
+                    .canonicalForm(canonicalForm);
             }
             else
             {
@@ -205,8 +224,11 @@ public final class UdpChannel
                     resolveToAddressOfInterface(findInterface(searchAddress), searchAddress);
 
                 final String endpointVal = channelUri.get(CommonContext.ENDPOINT_PARAM_NAME);
-                final String suffix = hasNoDistinguishingCharacteristic ?
-                    ("-" + UNIQUE_CANONICAL_FORM_VALUE.getAndAdd(1)) : "";
+                String suffix = "";
+                if (requiresAdditionalSuffix)
+                {
+                    suffix = (null != tagIdStr) ? "#" + tagIdStr : ("-" + UNIQUE_CANONICAL_FORM_VALUE.getAndAdd(1));
+                }
 
                 context
                     .remoteControlAddress(endpointAddress)
@@ -435,6 +457,16 @@ public final class UdpChannel
     public boolean isDynamicControlMode()
     {
         return isDynamicControlMode;
+    }
+
+    /**
+     * Does the channel have an explicit endpoint address?
+     *
+     * @return does channel have an explicit endpoint address or not?
+     */
+    public boolean hasExplicitEndpoint()
+    {
+        return hasExplicitEndpoint;
     }
 
     /**
@@ -744,6 +776,7 @@ public final class UdpChannel
         ChannelUri channelUri;
         boolean isManualControlMode = false;
         boolean isDynamicControlMode = false;
+        boolean hasExplicitEndpoint = false;
         boolean hasExplicitControl = false;
         boolean isMulticast = false;
         boolean hasMulticastTtl = false;
@@ -831,6 +864,12 @@ public final class UdpChannel
         Context isDynamicControlMode(final boolean isDynamicControlMode)
         {
             this.isDynamicControlMode = isDynamicControlMode;
+            return this;
+        }
+
+        Context hasExplicitEndpoint(final boolean hasExplicitEndpoint)
+        {
+            this.hasExplicitEndpoint = hasExplicitEndpoint;
             return this;
         }
 

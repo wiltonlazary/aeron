@@ -21,6 +21,7 @@ import io.aeron.logbuffer.FragmentHandler;
 import io.aeron.logbuffer.Header;
 import io.aeron.logbuffer.LogBufferDescriptor;
 import io.aeron.protocol.DataHeaderFlyweight;
+import io.aeron.test.MediaDriverTestWatcher;
 import io.aeron.test.SlowTest;
 import io.aeron.test.TestMediaDriver;
 import io.aeron.test.Tests;
@@ -32,6 +33,7 @@ import org.agrona.concurrent.UnsafeBuffer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.RegisterExtension;
 
 import java.util.concurrent.TimeUnit;
 
@@ -56,6 +58,9 @@ public class PongTest
     private final UnsafeBuffer buffer = new UnsafeBuffer(new byte[4096]);
     private final FragmentHandler pongHandler = mock(FragmentHandler.class);
 
+    @RegisterExtension
+    public final MediaDriverTestWatcher testWatcher = new MediaDriverTestWatcher();
+
     @BeforeEach
     public void before()
     {
@@ -63,7 +68,8 @@ public class PongTest
             new MediaDriver.Context()
                 .errorHandler(Tests::onError)
                 .publicationTermBufferLength(LogBufferDescriptor.TERM_MIN_LENGTH)
-                .threadingMode(ThreadingMode.SHARED));
+                .threadingMode(ThreadingMode.SHARED),
+            testWatcher);
 
         pingClient = Aeron.connect();
         pongClient = Aeron.connect();
@@ -89,8 +95,7 @@ public class PongTest
 
         while (pingPublication.offer(buffer, 0, BitUtil.SIZE_OF_INT) < 0L)
         {
-            Thread.yield();
-            Tests.checkInterruptStatus();
+            Tests.yield();
         }
 
         final MutableInteger fragmentsRead = new MutableInteger();
@@ -132,8 +137,7 @@ public class PongTest
 
         while (pingPublication.offer(buffer, 0, BitUtil.SIZE_OF_INT) < 0L)
         {
-            Thread.yield();
-            Tests.checkInterruptStatus();
+            Tests.yield();
         }
 
         final MutableInteger fragmentsRead = new MutableInteger();
@@ -167,7 +171,7 @@ public class PongTest
         // wait for disconnect to ensure we stay in lock step
         while (pingPublication.isConnected())
         {
-            Tests.sleep(100);
+            Tests.sleep(10);
         }
 
         // restart Pong side
@@ -178,8 +182,7 @@ public class PongTest
 
         while (pingPublication.offer(buffer, 0, BitUtil.SIZE_OF_INT) < 0L)
         {
-            Thread.yield();
-            Tests.checkInterruptStatus();
+            Tests.yield();
         }
 
         Tests.executeUntil(
@@ -216,8 +219,7 @@ public class PongTest
     {
         while (pongPublication.offer(buffer, offset, length) < 0L)
         {
-            Thread.yield();
-            Tests.checkInterruptStatus();
+            Tests.yield();
         }
     }
 }

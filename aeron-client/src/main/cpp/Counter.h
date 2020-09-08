@@ -17,15 +17,13 @@
 #ifndef AERON_COUNTER_H
 #define AERON_COUNTER_H
 
-#include <cstdint>
 #include <memory>
-#include <atomic>
 
-#include <util/Index.h>
 #include "concurrent/AtomicCounter.h"
 #include "concurrent/CountersReader.h"
 
-namespace aeron {
+namespace aeron
+{
 
 using namespace aeron::concurrent;
 
@@ -36,13 +34,13 @@ class Counter : public AtomicCounter
 public:
     /// @cond HIDDEN_SYMBOLS
     Counter(
-        ClientConductor* clientConductor,
-        AtomicBuffer& buffer,
+        ClientConductor *clientConductor,
+        AtomicBuffer &buffer,
         std::int64_t registrationId,
         std::int32_t counterId);
     /// @endcond
 
-    Counter(CountersReader& countersReader, std::int64_t registrationId, std::int32_t counterId) :
+    Counter(CountersReader &countersReader, std::int64_t registrationId, std::int32_t counterId) :
         AtomicCounter(countersReader.valuesBuffer(), counterId),
         m_clientConductor(nullptr),
         m_registrationId(registrationId)
@@ -57,6 +55,7 @@ public:
     }
 
     std::int32_t state() const;
+
     std::string label() const;
 
     inline bool isClosed() const
@@ -72,7 +71,7 @@ public:
     /// @endcond
 
 private:
-    ClientConductor* m_clientConductor;
+    ClientConductor *m_clientConductor;
     std::int64_t m_registrationId;
     std::atomic<bool> m_isClosed = { false };
 };

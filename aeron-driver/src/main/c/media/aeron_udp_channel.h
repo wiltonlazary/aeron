@@ -36,10 +36,12 @@ typedef struct aeron_udp_channel_stct
     size_t uri_length;
     size_t canonical_length;
     uint8_t multicast_ttl;
+    bool has_explicit_endpoint;
     bool has_explicit_control;
     bool is_manual_control_mode;
     bool is_dynamic_control_mode;
     bool is_multicast;
+    aeron_uri_ats_status_t ats_status;
 }
 aeron_udp_channel_t;
 
@@ -55,6 +57,11 @@ inline bool aeron_udp_channel_is_wildcard(aeron_udp_channel_t *channel)
 {
     return aeron_is_wildcard_addr(&channel->remote_data) && aeron_is_wildcard_port(&channel->remote_data) &&
         aeron_is_wildcard_addr(&channel->local_data) && aeron_is_wildcard_port(&channel->local_data);
+}
+
+inline bool aeron_udp_channel_equals(aeron_udp_channel_t *a, aeron_udp_channel_t *b)
+{
+    return a == b || (a != NULL && 0 == strncmp(a->canonical_form, b->canonical_form, AERON_MAX_PATH));
 }
 
 #endif //AERON_UDP_CHANNEL_H

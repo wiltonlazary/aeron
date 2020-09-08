@@ -16,7 +16,7 @@
 package io.aeron.cluster;
 
 import io.aeron.*;
-import io.aeron.cluster.client.ClusterClock;
+import io.aeron.cluster.service.ClusterClock;
 import io.aeron.cluster.codecs.*;
 import io.aeron.exceptions.AeronException;
 import io.aeron.logbuffer.BufferClaim;
@@ -66,6 +66,16 @@ class LogPublisher
             CloseHelper.close(errorHandler, publication);
             this.publication = null;
         }
+    }
+
+    boolean isConnected()
+    {
+        if (null == publication)
+        {
+            return false;
+        }
+
+        return publication.isConnected();
     }
 
     long position()
@@ -353,9 +363,7 @@ class LogPublisher
 
     private static void checkResult(final long result)
     {
-        if (result == Publication.NOT_CONNECTED ||
-            result == Publication.CLOSED ||
-            result == Publication.MAX_POSITION_EXCEEDED)
+        if (result == Publication.CLOSED || result == Publication.MAX_POSITION_EXCEEDED)
         {
             throw new AeronException("unexpected publication state: " + result);
         }

@@ -17,24 +17,16 @@
 #ifndef INCLUDED_AERON_H
 #define INCLUDED_AERON_H
 
-#include <util/Exceptions.h>
-#include <iostream>
-#include <thread>
 #include <random>
-#include <concurrent/logbuffer/TermReader.h>
-#include <util/MemoryMappedFile.h>
-#include <concurrent/broadcast/CopyBroadcastReceiver.h>
 #include "ClientConductor.h"
 #include "concurrent/SleepingIdleStrategy.h"
 #include "concurrent/AgentRunner.h"
 #include "concurrent/AgentInvoker.h"
-#include "Publication.h"
-#include "Subscription.h"
-#include "Context.h"
 #include "util/Export.h"
 
 /// Top namespace for Aeron C++ API
-namespace aeron {
+namespace aeron
+{
 
 using namespace aeron::util;
 using namespace aeron::concurrent;
@@ -64,7 +56,7 @@ public:
      *
      * @param context for configuration of the client.
      */
-    explicit Aeron(Context& context);
+    explicit Aeron(Context &context);
 
     ~Aeron();
 
@@ -86,7 +78,7 @@ public:
      * @param context for configuration of the client.
      * @return the new Aeron instance connected to the Media Driver.
      */
-    inline static std::shared_ptr<Aeron> connect(Context& context)
+    inline static std::shared_ptr<Aeron> connect(Context &context)
     {
         return std::make_shared<Aeron>(context);
     }
@@ -115,7 +107,7 @@ public:
      * @param streamId within the channel scope.
      * @return registration id for the publication
      */
-    inline std::int64_t addPublication(const std::string& channel, std::int32_t streamId)
+    inline std::int64_t addPublication(const std::string &channel, std::int32_t streamId)
     {
         return m_conductor.addPublication(channel, streamId);
     }
@@ -149,7 +141,7 @@ public:
      * @param streamId within the channel scope.
      * @return registration id for the publication
      */
-    inline std::int64_t addExclusivePublication(const std::string& channel, std::int32_t streamId)
+    inline std::int64_t addExclusivePublication(const std::string &channel, std::int32_t streamId)
     {
         return m_conductor.addExclusivePublication(channel, streamId);
     }
@@ -186,7 +178,7 @@ public:
      * @param streamId within the channel scope.
      * @return registration id for the subscription
      */
-    inline std::int64_t addSubscription(const std::string& channel, std::int32_t streamId)
+    inline std::int64_t addSubscription(const std::string &channel, std::int32_t streamId)
     {
         return m_conductor.addSubscription(
             channel, streamId, m_context.m_onAvailableImageHandler, m_context.m_onUnavailableImageHandler);
@@ -204,7 +196,7 @@ public:
      * @return registration id for the subscription
      */
     inline std::int64_t addSubscription(
-        const std::string& channel,
+        const std::string &channel,
         std::int32_t streamId,
         const on_available_image_t &onAvailableImageHandler,
         const on_unavailable_image_t &onUnavailableImageHandler)
@@ -263,7 +255,7 @@ public:
         std::int32_t typeId,
         const std::uint8_t *keyBuffer,
         std::size_t keyLength,
-        const std::string& label)
+        const std::string &label)
     {
         return m_conductor.addCounter(typeId, keyBuffer, keyLength, label);
     }
@@ -294,60 +286,96 @@ public:
      * Add a handler to the list to be called when a counter becomes available.
      *
      * @param handler to be added to the available counters list.
+     * @return registration id to use to remove the handler.
      */
-    inline void addAvailableCounterHandler(const on_available_counter_t& handler)
+    inline std::int64_t addAvailableCounterHandler(const on_available_counter_t &handler)
     {
-        m_conductor.addAvailableCounterHandler(handler);
+        return m_conductor.addAvailableCounterHandler(handler);
     }
 
     /**
      * Remove a handler from the list to be called when a counter becomes available.
      *
-     * @param handler to be removed from the available counters list.
+     * @param handler to be removed from the available counter handlers list.
+     * @deprecated Use Aeron::removeAvailableCounterHandler(int64_t)
      */
-    inline void removeAvailableCounterHandler(const on_available_counter_t& handler)
+    inline void removeAvailableCounterHandler(const on_available_counter_t &handler)
     {
         m_conductor.removeAvailableCounterHandler(handler);
+    }
+
+    /**
+     * Remove a handler from the list to be called when a counter becomes available.
+     *
+     * @param registrationId id for the handler to be removed from the available counters list.
+     */
+    inline void removeAvailableCounterHandler(std::int64_t registrationId)
+    {
+        m_conductor.removeAvailableCounterHandler(registrationId);
     }
 
     /**
      * Add a handler to the list to be called when a counter becomes unavailable.
      *
      * @param handler to be added to the unavailable counters list.
+     * @return registration id to use to remove the handler.
      */
-    inline void addUnavailableCounterHandler(const on_unavailable_counter_t& handler)
+    inline std::int64_t addUnavailableCounterHandler(const on_unavailable_counter_t &handler)
     {
-        m_conductor.addUnavailableCounterHandler(handler);
+        return m_conductor.addUnavailableCounterHandler(handler);
     }
 
     /**
      * Remove a handler from the list to be called when a counter becomes unavailable.
      *
      * @param handler to be removed from the unavailable counters list.
+     * @deprecated Use Aeron::removeUnavailableCounterHandler(int64_t)
      */
-    inline void removeUnavailableCounterHandler(const on_unavailable_counter_t& handler)
+    inline void removeUnavailableCounterHandler(const on_unavailable_counter_t &handler)
     {
         m_conductor.removeUnavailableCounterHandler(handler);
+    }
+
+    /**
+     * Remove a handler from the list to be called when a counter becomes unavailable.
+     *
+     * @param registrationId id for the handler to be removed from the unavailable counter handlers list.
+     */
+    inline void removeUnavailableCounterHandler(std::int64_t registrationId)
+    {
+        m_conductor.removeUnavailableCounterHandler(registrationId);
     }
 
     /**
      * Add a handler to the list to be called when the client is closed.
      *
      * @param handler to be added to the close client handlers list.
+     * @return registration id to use to remove the handler.
      */
-    inline void addCloseClientHandler(const on_close_client_t & handler)
+    inline std::int64_t addCloseClientHandler(const on_close_client_t &handler)
     {
-        m_conductor.addCloseClientHandler(handler);
+        return m_conductor.addCloseClientHandler(handler);
     }
 
     /**
      * Remove a handler from the list to be called when the client is closed.
      *
      * @param handler to be removed from the close client handlers list.
+     * @deprecated Use Aeron::removeCloseClientHandler(int64_t)
      */
-    inline void removeCloseClientHandler(const on_close_client_t & handler)
+    inline void removeCloseClientHandler(const on_close_client_t &handler)
     {
         m_conductor.removeCloseClientHandler(handler);
+    }
+
+    /**
+     * Remove a handler from the list to be called when the client is closed.
+     *
+     * @param registrationId id for the handler to be removed from the close client handlers list.
+     */
+    inline void removeCloseClientHandler(std::int64_t registrationId)
+    {
+        m_conductor.removeCloseClientHandler(registrationId);
     }
 
     /**
@@ -355,7 +383,7 @@ public:
      *
      * @return AgentInvoker for the conductor.
      */
-    inline AgentInvoker<ClientConductor>& conductorAgentInvoker()
+    inline AgentInvoker<ClientConductor> &conductorAgentInvoker()
     {
         return m_conductorInvoker;
     }
@@ -375,7 +403,7 @@ public:
      *
      * @return CountersReader for the Aeron media driver in use.
      */
-    inline CountersReader& countersReader()
+    inline CountersReader &countersReader()
     {
         return m_conductor.countersReader();
     }
@@ -395,12 +423,12 @@ public:
      *
      * @return Context instance in use.
      */
-    inline Context& context()
+    inline Context &context()
     {
         return m_context;
     }
 
-    inline const Context& context() const
+    inline const Context &context() const
     {
         return m_context;
     }
@@ -418,7 +446,6 @@ private:
     std::uniform_int_distribution<std::int32_t> m_sessionIdDistribution;
 
     Context m_context;
-
     MemoryMappedFile::ptr_t m_cncBuffer;
 
     AtomicBuffer m_toDriverAtomicBuffer;
@@ -428,7 +455,6 @@ private:
 
     ManyToOneRingBuffer m_toDriverRingBuffer;
     DriverProxy m_driverProxy;
-
     BroadcastReceiver m_toClientsBroadcastReceiver;
     CopyBroadcastReceiver m_toClientsCopyReceiver;
 
@@ -437,7 +463,7 @@ private:
     AgentRunner<ClientConductor, SleepingIdleStrategy> m_conductorRunner;
     AgentInvoker<ClientConductor> m_conductorInvoker;
 
-    MemoryMappedFile::ptr_t mapCncFile(Context& context);
+    static MemoryMappedFile::ptr_t mapCncFile(Context &context);
 };
 
 }

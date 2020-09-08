@@ -17,6 +17,8 @@ package io.aeron.test;
 
 import org.agrona.IoUtil;
 import org.agrona.collections.Object2ObjectHashMap;
+import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.extension.AfterTestExecutionCallback;
 import org.junit.jupiter.api.extension.ExtensionContext;
 import org.junit.jupiter.api.extension.TestWatcher;
 
@@ -26,11 +28,16 @@ import java.io.PrintStream;
 import java.nio.file.Files;
 import java.util.Map;
 
-public class MediaDriverTestWatcher implements TestWatcher, DriverOutputConsumer
+public class MediaDriverTestWatcher implements TestWatcher, DriverOutputConsumer, AfterTestExecutionCallback
 {
     private final Map<String, ProcessDetails> outputFilesByAeronDirectoryName = new Object2ObjectHashMap<>();
 
     public void testFailed(final ExtensionContext context, final Throwable cause)
+    {
+        dumpMediaDriverDiagnostics();
+    }
+
+    private void dumpMediaDriverDiagnostics()
     {
         if (TestMediaDriver.shouldRunCMediaDriver())
         {
@@ -59,15 +66,15 @@ public class MediaDriverTestWatcher implements TestWatcher, DriverOutputConsumer
         }
     }
 
-    private void printEnvironment(final Map<String, String> environment, final PrintStream ps)
+    private void printEnvironment(final Map<String, String> environment, final PrintStream out)
     {
         environment.forEach(
             (name, value) ->
             {
-                ps.print(name);
-                ps.print('=');
-                ps.print(value);
-                ps.println();
+                out.print(name);
+                out.print('=');
+                out.print(value);
+                out.println();
             });
     }
 
@@ -76,6 +83,14 @@ public class MediaDriverTestWatcher implements TestWatcher, DriverOutputConsumer
         if (TestMediaDriver.shouldRunCMediaDriver())
         {
             deleteFiles();
+        }
+    }
+
+    public void afterTestExecution(final ExtensionContext context)
+    {
+        if (null == context.getRequiredTestMethod().getAnnotation(IgnoreStdErr.class))
+        {
+            verifyNoStdError();
         }
     }
 
@@ -102,6 +117,12 @@ public class MediaDriverTestWatcher implements TestWatcher, DriverOutputConsumer
     public void environmentVariables(final String aeronDirectoryName, final Map<String, String> environment)
     {
         outputFilesByAeronDirectoryName.get(aeronDirectoryName).environment(environment);
+    }
+
+    public void verifyNoStdError()
+    {
+        outputFilesByAeronDirectoryName.values().forEach(
+            processDetails -> Assertions.assertEquals(0, processDetails.stderr.length(), "stderr contains data"));
     }
 
     static final class ProcessDetails

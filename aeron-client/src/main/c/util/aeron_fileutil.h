@@ -18,8 +18,6 @@
 #define AERON_FILEUTIL_H
 
 #include <stddef.h>
-#include <stdbool.h>
-#include <stdint.h>
 #include <sys/types.h>
 
 #include "util/aeron_platform.h"
@@ -39,8 +37,8 @@ typedef struct aeron_mapped_buffer_stct
 }
 aeron_mapped_buffer_t;
 
-int aeron_is_directory(const char* path);
-int aeron_delete_directory(const char* directory);
+int aeron_is_directory(const char *path);
+int aeron_delete_directory(const char *directory);
 
 int aeron_map_new_file(aeron_mapped_file_t *mapped_file, const char *path, bool fill_with_zeroes);
 int aeron_map_existing_file(aeron_mapped_file_t *mapped_file, const char *path);
@@ -51,7 +49,7 @@ int aeron_unmap(aeron_mapped_file_t *mapped_file);
 
 #define aeron_mkdir mkdir
 #define aeron_ftruncate ftruncate
-#elif defined(AERON_COMPILER_MSVC) && defined(AERON_CPU_X64)
+#elif defined(AERON_COMPILER_MSVC)
 #define _CRT_RAND_S
 #include <io.h>
 #include <direct.h>
@@ -104,6 +102,8 @@ int aeron_publication_image_location(
     size_t length,
     const char *aeron_dir,
     int64_t correlation_id);
+
+size_t aeron_temp_filename(char *filename, size_t length);
 
 typedef int (*aeron_map_raw_log_func_t)(aeron_mapped_raw_log_t *, const char *, bool, uint64_t, uint64_t);
 typedef int (*aeron_map_raw_log_close_func_t)(aeron_mapped_raw_log_t *, const char *filename);

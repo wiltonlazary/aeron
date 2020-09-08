@@ -16,8 +16,11 @@
 
 #include "Subscription.h"
 #include "ClientConductor.h"
+#include "ChannelUri.h"
+#include "concurrent/status/LocalSocketAddressStatus.h"
 
-namespace aeron {
+using namespace aeron;
+using namespace aeron::concurrent::status;
 
 Subscription::Subscription(
     ClientConductor &conductor,
@@ -28,10 +31,10 @@ Subscription::Subscription(
     m_conductor(conductor),
     m_channel(channel),
     m_channelStatusId(channelStatusId),
-    m_imageArray(),
-    m_isClosed(false),
+    m_streamId(streamId),
     m_registrationId(registrationId),
-    m_streamId(streamId)
+    m_imageArray(),
+    m_isClosed(false)
 {
     static_cast<void>(m_paddingBefore);
     static_cast<void>(m_paddingAfter);
@@ -44,7 +47,7 @@ Subscription::~Subscription()
     m_conductor.releaseSubscription(m_registrationId, imageArrayPair.first, imageArrayPair.second);
 }
 
-std::int64_t Subscription::addDestination(const std::string& endpointChannel)
+std::int64_t Subscription::addDestination(const std::string &endpointChannel)
 {
     if (isClosed())
     {
@@ -54,7 +57,7 @@ std::int64_t Subscription::addDestination(const std::string& endpointChannel)
     return m_conductor.addRcvDestination(m_registrationId, endpointChannel);
 }
 
-std::int64_t Subscription::removeDestination(const std::string& endpointChannel)
+std::int64_t Subscription::removeDestination(const std::string &endpointChannel)
 {
     if (isClosed())
     {
@@ -79,4 +82,40 @@ std::int64_t Subscription::channelStatus() const
     return m_conductor.channelStatus(m_channelStatusId);
 }
 
+std::vector<std::string> Subscription::localSocketAddresses() const
+{
+    return LocalSocketAddressStatus::findAddresses(
+        m_conductor.countersReader(), channelStatus(), channelStatusId());
+}
+
+std::string Subscription::tryResolveChannelEndpointPort() const
+{
+    const int64_t currentChannelStatus = channelStatus();
+
+    if (ChannelEndpointStatus::CHANNEL_ENDPOINT_ACTIVE == currentChannelStatus)
+    {
+        std::vector<std::string> localSocketAddresses = LocalSocketAddressStatus::findAddresses(
+            m_conductor.countersReader(), currentChannelStatus, m_channelStatusId);
+
+        if (1 == localSocketAddresses.size())
+        {
+            std::shared_ptr<ChannelUri> channelUriPtr = ChannelUri::parse(m_channel);
+            std::string endpoint = channelUriPtr->get(ENDPOINT_PARAM_NAME);
+
+            if (!endpoint.empty() && endsWith(endpoint, std::string(":0")))
+            {
+                std::string &resolvedEndpoint = localSocketAddresses.at(0);
+                std::size_t i = resolvedEndpoint.find_last_of(':');
+                std::string newEndpoint = endpoint.substr(0, endpoint.length() - 2) + resolvedEndpoint.substr(i);
+
+                channelUriPtr->put(ENDPOINT_PARAM_NAME, newEndpoint);
+
+                return channelUriPtr->toString();
+            }
+        }
+
+        return m_channel;
+    }
+
+    return {};
 }

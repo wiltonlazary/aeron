@@ -20,6 +20,8 @@ import io.aeron.archive.client.AeronArchive;
 import io.aeron.archive.status.RecordingPos;
 import io.aeron.driver.MediaDriver;
 import io.aeron.driver.ThreadingMode;
+import io.aeron.test.MediaDriverTestWatcher;
+import io.aeron.test.TestMediaDriver;
 import io.aeron.test.Tests;
 import org.agrona.CloseHelper;
 import org.agrona.SystemUtil;
@@ -28,6 +30,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.extension.RegisterExtension;
 
 import java.io.File;
 
@@ -52,16 +55,20 @@ public class BasicArchiveTest
         .endpoint("localhost:6666")
         .build();
 
-    private ArchivingMediaDriver archivingMediaDriver;
+    private TestMediaDriver mediaDriver;
+    private Archive archive;
     private Aeron aeron;
     private AeronArchive aeronArchive;
+
+    @RegisterExtension
+    public final MediaDriverTestWatcher testWatcher = new MediaDriverTestWatcher();
 
     @BeforeEach
     public void before()
     {
         final String aeronDirectoryName = CommonContext.generateRandomDirName();
 
-        archivingMediaDriver = ArchivingMediaDriver.launch(
+        mediaDriver = TestMediaDriver.launch(
             new MediaDriver.Context()
                 .aeronDirectoryName(aeronDirectoryName)
                 .termBufferSparseFile(true)
@@ -69,6 +76,9 @@ public class BasicArchiveTest
                 .errorHandler(Tests::onError)
                 .spiesSimulateConnection(false)
                 .dirDeleteOnStart(true),
+            testWatcher);
+
+        archive = Archive.launch(
             new Archive.Context()
                 .maxCatalogEntries(Common.MAX_CATALOG_ENTRIES)
                 .aeronDirectoryName(aeronDirectoryName)
@@ -89,10 +99,10 @@ public class BasicArchiveTest
     @AfterEach
     public void after()
     {
-        CloseHelper.closeAll(aeronArchive, aeron, archivingMediaDriver);
+        CloseHelper.closeAll(aeronArchive, aeron, archive, mediaDriver);
 
-        archivingMediaDriver.archive().context().deleteDirectory();
-        archivingMediaDriver.mediaDriver().context().deleteDirectory();
+        archive.context().deleteDirectory();
+        mediaDriver.context().deleteDirectory();
     }
 
     @Test
@@ -202,8 +212,7 @@ public class BasicArchiveTest
 
             while (NULL_POSITION != aeronArchive.getRecordingPosition(recordingId))
             {
-                Thread.yield();
-                Tests.checkInterruptStatus();
+                Tests.yield();
             }
         }
 

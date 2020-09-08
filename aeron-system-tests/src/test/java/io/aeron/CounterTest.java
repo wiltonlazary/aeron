@@ -18,15 +18,15 @@ package io.aeron;
 import io.aeron.driver.MediaDriver;
 import io.aeron.driver.ThreadingMode;
 import io.aeron.status.ReadableCounter;
+import io.aeron.test.MediaDriverTestWatcher;
 import io.aeron.test.TestMediaDriver;
 import io.aeron.test.Tests;
 import org.agrona.CloseHelper;
 import org.agrona.concurrent.UnsafeBuffer;
 import org.agrona.concurrent.status.CountersReader;
 import org.junit.jupiter.api.*;
+import org.junit.jupiter.api.extension.RegisterExtension;
 
-import static org.agrona.concurrent.status.CountersReader.TYPE_ID_OFFSET;
-import static org.agrona.concurrent.status.CountersReader.metaDataOffset;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.mockito.Mockito.*;
@@ -43,6 +43,9 @@ public class CounterTest
     private Aeron clientB;
     private TestMediaDriver driver;
 
+    @RegisterExtension
+    public final MediaDriverTestWatcher testWatcher = new MediaDriverTestWatcher();
+
     private volatile ReadableCounter readableCounter;
 
     @BeforeEach
@@ -53,7 +56,8 @@ public class CounterTest
         driver = TestMediaDriver.launch(
             new MediaDriver.Context()
                 .errorHandler(Tests::onError)
-                .threadingMode(ThreadingMode.SHARED));
+                .threadingMode(ThreadingMode.SHARED),
+            testWatcher);
 
         clientA = Aeron.connect();
         clientB = Aeron.connect();
@@ -85,6 +89,8 @@ public class CounterTest
             COUNTER_LABEL.length());
 
         assertFalse(counter.isClosed());
+        assertEquals(counter.registrationId(), clientA.countersReader().getCounterRegistrationId(counter.id()));
+        assertEquals(clientA.clientId(), clientA.countersReader().getCounterOwnerId(counter.id()));
 
         verify(availableCounterHandlerClientA, timeout(5000L))
             .onAvailableCounter(any(CountersReader.class), eq(counter.registrationId()), eq(counter.id()));
@@ -145,19 +151,23 @@ public class CounterTest
         {
             Tests.sleep(1);
         }
+
+        while (clientA.hasActiveCommands())
+        {
+            Tests.sleep(1);
+        }
     }
 
-    private void createReadableCounter(
-        final CountersReader countersReader, final long registrationId, final int counterId)
+    private void createReadableCounter(final CountersReader counters, final long registrationId, final int counterId)
     {
-        if (COUNTER_TYPE_ID == countersReader.metaDataBuffer().getInt(metaDataOffset(counterId) + TYPE_ID_OFFSET))
+        if (COUNTER_TYPE_ID == counters.getCounterTypeId(counterId))
         {
-            readableCounter = new ReadableCounter(countersReader, registrationId, counterId);
+            readableCounter = new ReadableCounter(counters, registrationId, counterId);
         }
     }
 
     private void unavailableCounterHandler(
-        @SuppressWarnings("unused") final CountersReader countersReader, final long registrationId, final int counterId)
+        @SuppressWarnings("unused") final CountersReader counters, final long registrationId, final int counterId)
     {
         if (null != readableCounter && readableCounter.registrationId() == registrationId)
         {

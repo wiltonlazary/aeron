@@ -20,6 +20,7 @@ import io.aeron.driver.ThreadingMode;
 import io.aeron.logbuffer.FragmentHandler;
 import io.aeron.logbuffer.Header;
 import io.aeron.logbuffer.LogBufferDescriptor;
+import io.aeron.test.MediaDriverTestWatcher;
 import io.aeron.test.TestMediaDriver;
 import io.aeron.test.Tests;
 import org.agrona.CloseHelper;
@@ -27,6 +28,7 @@ import org.agrona.DirectBuffer;
 import org.agrona.concurrent.UnsafeBuffer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.extension.RegisterExtension;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
@@ -51,12 +53,17 @@ public class FragmentedMessageTest
     private static final int STREAM_ID = 1001;
     private static final int FRAGMENT_COUNT_LIMIT = 10;
 
+    @RegisterExtension
+    public final MediaDriverTestWatcher testWatcher = new MediaDriverTestWatcher();
+
     private final FragmentHandler mockFragmentHandler = mock(FragmentHandler.class);
 
-    private final TestMediaDriver driver = TestMediaDriver.launch(new MediaDriver.Context()
+    private final MediaDriver.Context driverContext = new MediaDriver.Context()
         .publicationTermBufferLength(LogBufferDescriptor.TERM_MIN_LENGTH)
         .errorHandler(Tests::onError)
-        .threadingMode(ThreadingMode.SHARED));
+        .threadingMode(ThreadingMode.SHARED);
+
+    private final TestMediaDriver driver = TestMediaDriver.launch(driverContext, testWatcher);
 
     private final Aeron aeron = Aeron.connect();
 
@@ -88,8 +95,7 @@ public class FragmentedMessageTest
 
             while (publication.offer(srcBuffer, offset, srcBuffer.capacity()) < 0L)
             {
-                Thread.yield();
-                Tests.checkInterruptStatus();
+                Tests.yield();
             }
 
             final int expectedFragmentsBecauseOfHeader = 5;
@@ -99,8 +105,7 @@ public class FragmentedMessageTest
                 final int fragments = subscription.poll(assembler, FRAGMENT_COUNT_LIMIT);
                 if (0 == fragments)
                 {
-                    Thread.yield();
-                    Tests.checkInterruptStatus();
+                    Tests.yield();
                 }
                 numFragments += fragments;
             }

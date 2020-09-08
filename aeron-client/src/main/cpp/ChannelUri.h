@@ -59,6 +59,7 @@ constexpr const char REJOIN_PARAM_NAME[] = "rejoin";
 constexpr const char CONGESTION_CONTROL_PARAM_NAME[] = "cc";
 constexpr const char FLOW_CONTROL_PARAM_NAME[] = "fc";
 constexpr const char GROUP_TAG_PARAM_NAME[] = "gtag";
+constexpr const char SPIES_SIMULATE_CONNECTION_PARAM_NAME[] = "ssc";
 
 using namespace aeron::util;
 
@@ -67,7 +68,7 @@ class ChannelUri
 public:
     using this_t = ChannelUri;
 
-    enum State: int
+    enum State : int
     {
         MEDIA,
         PARAMS_KEY,
@@ -75,8 +76,8 @@ public:
     };
 
     ChannelUri(
-        const std::string& prefix,
-        const std::string& media,
+        const std::string &prefix,
+        const std::string &media,
         std::unique_ptr<std::unordered_map<std::string, std::string>> params) :
         m_prefix(prefix),
         m_media(media),
@@ -89,7 +90,7 @@ public:
         return m_prefix;
     }
 
-    inline this_t& prefix(const std::string& prefix)
+    inline this_t &prefix(const std::string &prefix)
     {
         m_prefix = prefix;
         return *this;
@@ -100,7 +101,7 @@ public:
         return m_media;
     }
 
-    inline this_t& media(const std::string& media)
+    inline this_t &media(const std::string &media)
     {
         if (media != IPC_MEDIA && media != UDP_MEDIA)
         {
@@ -115,7 +116,7 @@ public:
         return AERON_SCHEME;
     }
 
-    inline std::string get(const std::string& key)
+    inline std::string get(const std::string &key)
     {
         auto it = m_params->find(key);
 
@@ -127,7 +128,7 @@ public:
         return std::string();
     }
 
-    inline std::string get(const std::string& key, const std::string& defaultValue)
+    inline std::string get(const std::string &key, const std::string &defaultValue)
     {
         auto it = m_params->find(key);
 
@@ -139,12 +140,12 @@ public:
         return defaultValue;
     }
 
-    inline void put(const std::string& key, const std::string& value)
+    inline void put(const std::string &key, const std::string &value)
     {
         (*m_params)[key] = value;
     }
 
-    inline std::string remove(const std::string& key)
+    inline std::string remove(const std::string &key)
     {
         std::string result;
         auto it = m_params->find(key);
@@ -158,7 +159,7 @@ public:
         return result;
     }
 
-    inline bool containsKey(const std::string& key)
+    inline bool containsKey(const std::string &key)
     {
         return m_params->find(key) != m_params->end();
     }
@@ -187,7 +188,7 @@ public:
         {
             sb += '?';
 
-            for (const auto& i : *m_params)
+            for (const auto &i : *m_params)
             {
                 sb += i.first;
                 sb += '=';
@@ -201,7 +202,7 @@ public:
         return sb;
     }
 
-    static std::shared_ptr<ChannelUri> parse(const std::string& uri)
+    static std::shared_ptr<ChannelUri> parse(const std::string &uri)
     {
         std::size_t position = 0;
         std::string prefix;
@@ -251,7 +252,7 @@ public:
                         case '=':
                             throw IllegalStateException(
                                 "encountered '" + std::to_string(c) + "' within media definition at index " +
-                                std::to_string(i) + " in " + uri, SOURCEINFO);
+                                    std::to_string(i) + " in " + uri, SOURCEINFO);
 
                         default:
                             builder += c;
@@ -276,7 +277,7 @@ public:
                         if (c == '|')
                         {
                             throw IllegalStateException(
-                                "invalid en of key at index " + std::to_string(i) + " in " + uri, SOURCEINFO);
+                                "invalid end of key at index " + std::to_string(i) + " in " + uri, SOURCEINFO);
                         }
 
                         builder += c;
@@ -319,7 +320,7 @@ public:
         return std::make_shared<ChannelUri>(prefix, media, std::move(params));
     }
 
-    inline static std::string addSessionId(const std::string& channel, std::int32_t sessionId)
+    inline static std::string addSessionId(const std::string &channel, std::int32_t sessionId)
     {
         std::shared_ptr<ChannelUri> channelUri = ChannelUri::parse(channel);
 

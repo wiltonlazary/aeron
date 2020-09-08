@@ -57,60 +57,49 @@ void RecordingEventsPoller::onFragment(
     }
 
     const std::uint16_t templateId = msgHeader.templateId();
-    switch (templateId)
+    if (RecordingStarted::sbeTemplateId() == templateId)
     {
-        case RecordingStarted::sbeTemplateId():
-        {
-            RecordingStarted event(
-                buffer.sbeData() + offset + MessageHeader::encodedLength(),
-                static_cast<std::uint64_t>(length) - MessageHeader::encodedLength(),
-                msgHeader.blockLength(),
-                msgHeader.version());
+        RecordingStarted event(
+            buffer.sbeData() + offset + MessageHeader::encodedLength(),
+            static_cast<std::uint64_t>(length) - MessageHeader::encodedLength(),
+            msgHeader.blockLength(),
+            msgHeader.version());
 
-            m_eventType = EventType::RECORDING_STARTED;
-            m_recordingId = event.recordingId();
-            m_recordingStartPosition = event.startPosition();
-            m_recordingPosition = m_recordingStartPosition;
-            m_recordingStopPosition = aeron::NULL_VALUE;
-            m_pollComplete = true;
-            break;
-        }
+        m_eventType = EventType::RECORDING_STARTED;
+        m_recordingId = event.recordingId();
+        m_recordingStartPosition = event.startPosition();
+        m_recordingPosition = m_recordingStartPosition;
+        m_recordingStopPosition = aeron::NULL_VALUE;
+        m_pollComplete = true;
+    }
+    else if (RecordingProgress::sbeTemplateId() == templateId)
+    {
+        RecordingProgress event(
+            buffer.sbeData() + offset + MessageHeader::encodedLength(),
+            static_cast<std::uint64_t>(length) - MessageHeader::encodedLength(),
+            msgHeader.blockLength(),
+            msgHeader.version());
 
-        case RecordingProgress::sbeTemplateId():
-        {
-            RecordingProgress event(
-                buffer.sbeData() + offset + MessageHeader::encodedLength(),
-                static_cast<std::uint64_t>(length) - MessageHeader::encodedLength(),
-                msgHeader.blockLength(),
-                msgHeader.version());
+        m_eventType = EventType::RECORDING_PROGRESS;
+        m_recordingId = event.recordingId();
+        m_recordingStartPosition = event.startPosition();
+        m_recordingPosition = event.position();
+        m_recordingStopPosition = aeron::NULL_VALUE;
+        m_pollComplete = true;
+    }
+    else if (RecordingStopped::sbeTemplateId() == templateId)
+    {
+        RecordingStopped event(
+            buffer.sbeData() + offset + MessageHeader::encodedLength(),
+            static_cast<std::uint64_t>(length) - MessageHeader::encodedLength(),
+            msgHeader.blockLength(),
+            msgHeader.version());
 
-            m_eventType = EventType::RECORDING_PROGRESS;
-            m_recordingId = event.recordingId();
-            m_recordingStartPosition = event.startPosition();
-            m_recordingPosition = event.position();
-            m_recordingStopPosition = aeron::NULL_VALUE;
-            m_pollComplete = true;
-            break;
-        }
-
-        case RecordingStopped::sbeTemplateId():
-        {
-            RecordingStopped event(
-                buffer.sbeData() + offset + MessageHeader::encodedLength(),
-                static_cast<std::uint64_t>(length) - MessageHeader::encodedLength(),
-                msgHeader.blockLength(),
-                msgHeader.version());
-
-            m_eventType = EventType::RECORDING_STOPPED;
-            m_recordingId = event.recordingId();
-            m_recordingStartPosition = event.startPosition();
-            m_recordingPosition = event.stopPosition();
-            m_recordingStopPosition = m_recordingPosition;
-            m_pollComplete = true;
-            break;
-        }
-
-        default:
-            break;
+        m_eventType = EventType::RECORDING_STOPPED;
+        m_recordingId = event.recordingId();
+        m_recordingStartPosition = event.startPosition();
+        m_recordingPosition = event.stopPosition();
+        m_recordingStopPosition = m_recordingPosition;
+        m_pollComplete = true;
     }
 }

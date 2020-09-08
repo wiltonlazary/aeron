@@ -60,7 +60,7 @@ import static org.agrona.SystemUtil.getDurationInNanos;
  *                list-members: print leader memberId, active members list, and passive members list.
  *               remove-member: [memberId] requests removal of a member specified in memberId.
  *              remove-passive: [memberId] requests removal of passive member specified in memberId.
- *                backup-query: [delay] schedules (or displays) time of next backup query for cluster backup.
+ *                backup-query: [delay] get time of next backup query or set time of next backup query.
  *  invalidate-latest-snapshot: Mark the latest snapshot as invalid so previous is loaded.
  *                    snapshot: Trigger a snapshot on the leader.
  *                     suspend: Suspend reading from the ingress channel.
@@ -71,7 +71,14 @@ import static org.agrona.SystemUtil.getDurationInNanos;
  */
 public class ClusterTool
 {
+    /**
+     * Timeout in nanoseconds for the tool to wait while trying to perform an operation.
+     */
     public static final String AERON_CLUSTER_TOOL_TIMEOUT_PROP_NAME = "aeron.cluster.tool.timeout";
+
+    /**
+     * Delay in nanoseconds to be applied to an operation such as when the new cluster backup query will occur.
+     */
     public static final String AERON_CLUSTER_TOOL_DELAY_PROP_NAME = "aeron.cluster.tool.delay";
 
     private static final long TIMEOUT_MS =
@@ -255,6 +262,10 @@ public class ClusterTool
             {
                 printTypeAndActivityTimestamp(out, markFile);
                 printErrors(out, markFile);
+
+                final String aeronDirectory = markFile.decoder().aeronDirectory();
+                out.println();
+                printDriverErrors(out, aeronDirectory);
             }
         }
         else
@@ -418,7 +429,7 @@ public class ClusterTool
         final ClusterMembership clusterMembership)
     {
         final MutableLong id = new MutableLong(NULL_VALUE);
-        final MemberServiceAdapter.MemberServiceHandler handler = new MemberServiceAdapter.MemberServiceHandler()
+        final ClusterControlAdapter.Listener listener = new ClusterControlAdapter.Listener()
         {
             public void onClusterMembersResponse(
                 final long correlationId,
@@ -465,9 +476,9 @@ public class ClusterTool
 
         try (Aeron aeron = Aeron.connect(new Aeron.Context().aeronDirectoryName(controlProperties.aeronDirectoryName));
             ConsensusModuleProxy consensusModuleProxy = new ConsensusModuleProxy(aeron.addPublication(
-                controlProperties.serviceControlChannel, controlProperties.toConsensusModuleStreamId));
-            MemberServiceAdapter memberServiceAdapter = new MemberServiceAdapter(aeron.addSubscription(
-                controlProperties.serviceControlChannel, controlProperties.toServiceStreamId), handler))
+                controlProperties.controlChannel, controlProperties.consensusModuleStreamId));
+            ClusterControlAdapter clusterControlAdapter = new ClusterControlAdapter(aeron.addSubscription(
+                controlProperties.controlChannel, controlProperties.serviceStreamId), listener))
         {
             id.set(aeron.nextCorrelationId());
             if (consensusModuleProxy.clusterMembersQuery(id.longValue()))
@@ -475,7 +486,7 @@ public class ClusterTool
                 final long startTime = System.currentTimeMillis();
                 do
                 {
-                    if (memberServiceAdapter.poll() == 0)
+                    if (clusterControlAdapter.poll() == 0)
                     {
                         if ((System.currentTimeMillis() - startTime) > timeoutMs)
                         {
@@ -507,13 +518,12 @@ public class ClusterTool
     public static boolean removeMember(final ClusterMarkFile markFile, final int memberId, final boolean isPassive)
     {
         final String aeronDirectoryName = markFile.decoder().aeronDirectory();
-        markFile.decoder().archiveChannel();
-        final String channel = markFile.decoder().serviceControlChannel();
-        final int toConsensusModuleStreamId = markFile.decoder().consensusModuleStreamId();
+        final String controlChannel = markFile.decoder().controlChannel();
+        final int consensusModuleStreamId = markFile.decoder().consensusModuleStreamId();
 
         try (Aeron aeron = Aeron.connect(new Aeron.Context().aeronDirectoryName(aeronDirectoryName));
             ConsensusModuleProxy consensusModuleProxy = new ConsensusModuleProxy(
-                aeron.addPublication(channel, toConsensusModuleStreamId)))
+                aeron.addPublication(controlChannel, consensusModuleStreamId)))
         {
             if (consensusModuleProxy.removeMember(memberId, isPassive ? BooleanType.TRUE : BooleanType.FALSE))
             {
@@ -676,9 +686,11 @@ public class ClusterTool
             return false;
         }
 
+        final int clusterId;
         final ClusterNodeControlProperties clusterNodeControlProperties;
         try (ClusterMarkFile markFile = openMarkFile(clusterDir, out::println))
         {
+            clusterId = markFile.clusterId();
             clusterNodeControlProperties = markFile.loadControlProperties();
         }
 
@@ -711,22 +723,21 @@ public class ClusterTool
         final CountersReader countersReader = ClusterControl.mapCounters(cncFile);
         try
         {
-            final ConsensusModule.State consensusModuleState = ConsensusModule.findState(countersReader);
-
-            if (null == consensusModuleState)
+            final ConsensusModule.State moduleState = ConsensusModule.State.find(countersReader, clusterId);
+            if (null == moduleState)
             {
                 out.println(prefix + "Unable to resolve state of consensus module.");
                 return false;
             }
 
-            if (expectedState != consensusModuleState)
+            if (expectedState != moduleState)
             {
                 out.println(prefix + "Unable to " + toggleState + " as the state of the consensus module is " +
-                    consensusModuleState + ", but needs to be " + expectedState);
+                    moduleState + ", but needs to be " + expectedState);
                 return false;
             }
 
-            final AtomicCounter controlToggle = ClusterControl.findControlToggle(countersReader);
+            final AtomicCounter controlToggle = ClusterControl.findControlToggle(countersReader, clusterId);
             if (null == controlToggle)
             {
                 out.println(prefix + "Failed to find control toggle");
@@ -829,9 +840,10 @@ public class ClusterTool
     {
         out.println("Cluster component error log:");
         CommonContext.printErrorLog(markFile.errorBuffer(), out);
+    }
 
-        final String aeronDirectory = markFile.decoder().aeronDirectory();
-        out.println();
+    private static void printDriverErrors(final PrintStream out, final String aeronDirectory)
+    {
         out.println("Aeron driver error log (directory: " + aeronDirectory + "):");
         final File cncFile = new File(aeronDirectory, CncFileDescriptor.CNC_FILE);
 
@@ -845,36 +857,23 @@ public class ClusterTool
 
     private static void printHelp(final PrintStream out)
     {
-        out.println("Usage: <cluster-dir> <command> [options]");
-        out.println(
-            "                   describe: prints out all descriptors in the file.");
-        out.println(
-            "                        pid: prints PID of cluster component.");
-        out.println(
-            "              recovery-plan: [service count] prints recovery plan of cluster component.");
-        out.println(
-            "              recording-log: prints recording log of cluster component.");
-        out.println(
-            "                     errors: prints Aeron and cluster component error logs.");
-        out.println(
-            "               list-members: print leader memberId, active members list, and passive members list.");
-        out.println(
-            "              remove-member: [memberId] requests removal of a member specified in memberId.");
-        out.println(
-            "             remove-passive: [memberId] requests removal of passive member specified in memberId.");
-        out.println(
-            "               backup-query: [delay] display time of next backup query or set time of next backup query.");
-        out.println(
-            " invalidate-latest-snapshot: Mark the latest snapshot as a invalid so previous is loaded.");
-        out.println(
-            "                   snapshot: Trigger a snapshot on the leader.");
-        out.println(
-            "                    suspend: Suspend reading from the ingress channel.");
-        out.println(
-            "                     resume: Resume reading from the ingress channel.");
-        out.println(
-            "                   shutdown: Do an orderly stop of the cluster with a snapshot.");
-        out.println(
-            "                      abort: Stop the cluster without a snapshot.");
+        out.format(
+            "Usage: <cluster-dir> <command> [options]%n" +
+            "                   describe: prints out all descriptors in the file%n" +
+            "                        pid: prints PID of cluster component%n" +
+            "              recovery-plan: [service count] prints recovery plan of cluster component%n" +
+            "              recording-log: prints recording log of cluster component%n" +
+            "                     errors: prints Aeron and cluster component error logs%n" +
+            "               list-members: print leader memberId, active members list, and passive members list%n" +
+            "              remove-member: [memberId] requests removal of a member specified in memberId%n" +
+            "             remove-passive: [memberId] requests removal of passive member specified in memberId%n" +
+            "               backup-query: [delay] get time of next backup query or set time of next backup query%n" +
+            " invalidate-latest-snapshot: Mark the latest snapshot as a invalid so previous is loaded%n" +
+            "                   snapshot: Trigger a snapshot on the leader%n" +
+            "                    suspend: Suspend reading from the ingress channel%n" +
+            "                     resume: Resume reading from the ingress channel%n" +
+            "                   shutdown: Do an orderly stop of the cluster with a snapshot%n" +
+            "                      abort: Stop the cluster without a snapshot.%n");
+        out.flush();
     }
 }

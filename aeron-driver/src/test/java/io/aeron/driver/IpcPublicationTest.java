@@ -51,19 +51,18 @@ public class IpcPublicationTest
     private DriverProxy driverProxy;
     private DriverConductor driverConductor;
 
-    private long currentTime = 0;
-    private final NanoClock nanoClock = () -> currentTime;
-
     @SuppressWarnings("unchecked")
     @BeforeEach
     public void setUp()
     {
         final RingBuffer toDriverCommands = new ManyToOneRingBuffer(new UnsafeBuffer(
-            ByteBuffer.allocateDirect(Configuration.CONDUCTOR_BUFFER_LENGTH_DEFAULT)));
+            ByteBuffer.allocate(Configuration.CONDUCTOR_BUFFER_LENGTH_DEFAULT)));
 
-        final UnsafeBuffer counterBuffer = new UnsafeBuffer(ByteBuffer.allocateDirect(BUFFER_LENGTH));
+        final UnsafeBuffer counterBuffer = new UnsafeBuffer(ByteBuffer.allocate(BUFFER_LENGTH));
+        final UnsafeBuffer metaDataBuffer = new UnsafeBuffer(
+            ByteBuffer.allocate(Configuration.countersMetadataBufferLength(BUFFER_LENGTH)));
         final CountersManager countersManager = new CountersManager(
-            new UnsafeBuffer(ByteBuffer.allocateDirect(BUFFER_LENGTH * 2)), counterBuffer, StandardCharsets.US_ASCII);
+            metaDataBuffer, counterBuffer, StandardCharsets.US_ASCII);
         final SystemCounters systemCounters = new SystemCounters(countersManager);
 
         final MediaDriver.Context ctx = new MediaDriver.Context()
@@ -79,7 +78,7 @@ public class IpcPublicationTest
             .countersManager(countersManager)
             .systemCounters(systemCounters)
             .nameResolver(DefaultNameResolver.INSTANCE)
-            .nanoClock(nanoClock);
+            .nanoClock(new CachedNanoClock());
 
         ctx.countersValuesBuffer(counterBuffer);
 

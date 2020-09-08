@@ -86,22 +86,22 @@ public class ClusteredMediaDriver implements AutoCloseable
 
         try
         {
-            driver = MediaDriver.launch(driverCtx
-                .spiesSimulateConnection(true));
+            driver = MediaDriver.launch(driverCtx);
 
             final int errorCounterId = SystemCounterDescriptor.ERRORS.id();
             final AtomicCounter errorCounter = null == archiveCtx.errorCounter() ?
                 new AtomicCounter(driverCtx.countersValuesBuffer(), errorCounterId) : archiveCtx.errorCounter();
-
             final ErrorHandler errorHandler = null == archiveCtx.errorHandler() ?
                 driverCtx.errorHandler() : archiveCtx.errorHandler();
 
             archive = Archive.launch(archiveCtx
                 .mediaDriverAgentInvoker(driver.sharedAgentInvoker())
+                .aeronDirectoryName(driver.aeronDirectoryName())
                 .errorHandler(errorHandler)
                 .errorCounter(errorCounter));
 
-            consensusModule = ConsensusModule.launch(consensusModuleCtx);
+            consensusModule = ConsensusModule.launch(consensusModuleCtx
+                .aeronDirectoryName(driverCtx.aeronDirectoryName()));
 
             return new ClusteredMediaDriver(driver, archive, consensusModule);
         }
@@ -142,6 +142,9 @@ public class ClusteredMediaDriver implements AutoCloseable
         return consensusModule;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     public void close()
     {
         CloseHelper.closeAll(consensusModule, archive, driver);

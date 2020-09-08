@@ -30,7 +30,7 @@ extern "C"
 class StrToPtrHashMapTest : public testing::Test
 {
 public:
-    ~StrToPtrHashMapTest()
+    ~StrToPtrHashMapTest() override
     {
         aeron_str_to_ptr_hash_map_delete(&m_map);
     }
@@ -43,20 +43,20 @@ protected:
         t->m_for_each(key, key_len, value);
     }
 
-    void for_each(const std::function<void(const char *, size_t, void *)>& func)
+    void for_each(const std::function<void(const char *, size_t, void *)> &func)
     {
         m_for_each = func;
         aeron_str_to_ptr_hash_map_for_each(&m_map, StrToPtrHashMapTest::for_each, this);
     }
 
     aeron_str_to_ptr_hash_map_t m_map;
-    std::function<void(const char *, size_t, void*)> m_for_each;
+    std::function<void(const char *, size_t, void *)> m_for_each;
 };
 
 TEST_F(StrToPtrHashMapTest, shouldDoPutAndThenGetOnEmptyMap)
 {
     int value = 42;
-    ASSERT_EQ(aeron_str_to_ptr_hash_map_init(&m_map, 8, AERON_STR_TO_PTR_HASH_MAP_DEFAULT_LOAD_FACTOR), 0);
+    ASSERT_EQ(aeron_str_to_ptr_hash_map_init(&m_map, 8, AERON_MAP_DEFAULT_LOAD_FACTOR), 0);
 
     EXPECT_EQ(aeron_str_to_ptr_hash_map_put(&m_map, "key", 3, (void *)&value), 0);
     EXPECT_EQ(aeron_str_to_ptr_hash_map_get(&m_map, "key", 3), &value);
@@ -66,7 +66,7 @@ TEST_F(StrToPtrHashMapTest, shouldDoPutAndThenGetOnEmptyMap)
 TEST_F(StrToPtrHashMapTest, shouldReplaceExistingValueForTheSameKey)
 {
     int value = 42, new_value = 43;
-    ASSERT_EQ(aeron_str_to_ptr_hash_map_init(&m_map, 8, AERON_STR_TO_PTR_HASH_MAP_DEFAULT_LOAD_FACTOR), 0);
+    ASSERT_EQ(aeron_str_to_ptr_hash_map_init(&m_map, 8, AERON_MAP_DEFAULT_LOAD_FACTOR), 0);
 
     EXPECT_EQ(aeron_str_to_ptr_hash_map_put(&m_map, "key", 3, (void *)&value), 0);
     EXPECT_EQ(aeron_str_to_ptr_hash_map_put(&m_map, "key", 3, (void *)&new_value), 0);
@@ -116,18 +116,19 @@ TEST_F(StrToPtrHashMapTest, shouldRemoveEntry)
     EXPECT_EQ(aeron_str_to_ptr_hash_map_put(&m_map, "key", 3, (void *)&value), 0);
     EXPECT_EQ(aeron_str_to_ptr_hash_map_remove(&m_map, "key", 3), &value);
     EXPECT_EQ(m_map.size, 0u);
-    EXPECT_EQ(aeron_str_to_ptr_hash_map_get(&m_map, "key", 3), (void *)NULL);
+    EXPECT_EQ(aeron_str_to_ptr_hash_map_get(&m_map, "key", 3), (void *)nullptr);
 }
 
 TEST_F(StrToPtrHashMapTest, shouldNotForEachEmptyMap)
 {
-    ASSERT_EQ(aeron_str_to_ptr_hash_map_init(&m_map, 8, AERON_STR_TO_PTR_HASH_MAP_DEFAULT_LOAD_FACTOR), 0);
+    ASSERT_EQ(aeron_str_to_ptr_hash_map_init(&m_map, 8, AERON_MAP_DEFAULT_LOAD_FACTOR), 0);
 
     size_t called = 0;
-    for_each([&](const char *key, size_t key_len, void *value_ptr)
-         {
-             called++;
-         });
+    for_each(
+        [&](const char *key, size_t key_len, void *value_ptr)
+        {
+            called++;
+        });
 
     ASSERT_EQ(called, 0u);
 }
@@ -135,17 +136,18 @@ TEST_F(StrToPtrHashMapTest, shouldNotForEachEmptyMap)
 TEST_F(StrToPtrHashMapTest, shouldForEachNonEmptyMap)
 {
     int value = 42;
-    ASSERT_EQ(aeron_str_to_ptr_hash_map_init(&m_map, 8, AERON_STR_TO_PTR_HASH_MAP_DEFAULT_LOAD_FACTOR), 0);
+    ASSERT_EQ(aeron_str_to_ptr_hash_map_init(&m_map, 8, AERON_MAP_DEFAULT_LOAD_FACTOR), 0);
 
     EXPECT_EQ(aeron_str_to_ptr_hash_map_put(&m_map, "key", 3, (void *)&value), 0);
 
     size_t called = 0;
-    for_each([&](const char *key, size_t key_len, void *value_ptr)
-         {
-             EXPECT_EQ(std::string(key, key_len), std::string("key"));
-             EXPECT_EQ(value_ptr, &value);
-             called++;
-         });
+    for_each(
+        [&](const char *key, size_t key_len, void *value_ptr)
+        {
+            EXPECT_EQ(std::string(key, key_len), std::string("key"));
+            EXPECT_EQ(value_ptr, &value);
+            called++;
+        });
 
     ASSERT_EQ(called, 1u);
 }

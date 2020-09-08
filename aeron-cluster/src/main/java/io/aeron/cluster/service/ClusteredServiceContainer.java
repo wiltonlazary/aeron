@@ -48,17 +48,8 @@ import static org.agrona.SystemUtil.loadPropertiesFiles;
  * loaded via {@link ClusteredServiceContainer.Configuration#SERVICE_CLASS_NAME_PROP_NAME} or
  * {@link ClusteredServiceContainer.Context#clusteredService(ClusteredService)}.
  */
-@SuppressWarnings("unused")
 public final class ClusteredServiceContainer implements AutoCloseable
 {
-    /**
-     * Type of snapshot for this service.
-     */
-    public static final long SNAPSHOT_TYPE_ID = 2;
-
-    private final Context ctx;
-    private final AgentRunner serviceAgentRunner;
-
     /**
      * Launch the clustered service container and await a shutdown signal.
      *
@@ -75,6 +66,9 @@ public final class ClusteredServiceContainer implements AutoCloseable
             System.out.println("Shutdown ClusteredServiceContainer...");
         }
     }
+
+    private final Context ctx;
+    private final AgentRunner serviceAgentRunner;
 
     private ClusteredServiceContainer(final Context ctx)
     {
@@ -99,12 +93,6 @@ public final class ClusteredServiceContainer implements AutoCloseable
         serviceAgentRunner = new AgentRunner(ctx.idleStrategy(), ctx.errorHandler(), ctx.errorCounter(), agent);
     }
 
-    private ClusteredServiceContainer start()
-    {
-        AgentRunner.startOnThread(serviceAgentRunner, ctx.threadFactory());
-        return this;
-    }
-
     /**
      * Launch an ClusteredServiceContainer using a default configuration.
      *
@@ -123,7 +111,10 @@ public final class ClusteredServiceContainer implements AutoCloseable
      */
     public static ClusteredServiceContainer launch(final Context ctx)
     {
-        return new ClusteredServiceContainer(ctx).start();
+        final ClusteredServiceContainer clusteredServiceContainer = new ClusteredServiceContainer(ctx);
+        AgentRunner.startOnThread(clusteredServiceContainer.serviceAgentRunner, ctx.threadFactory());
+
+        return clusteredServiceContainer;
     }
 
     /**
@@ -136,6 +127,9 @@ public final class ClusteredServiceContainer implements AutoCloseable
         return ctx;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     public void close()
     {
         CloseHelper.close(serviceAgentRunner);
@@ -147,9 +141,24 @@ public final class ClusteredServiceContainer implements AutoCloseable
     public static class Configuration
     {
         /**
+         * Type of snapshot for this service.
+         */
+        public static final long SNAPSHOT_TYPE_ID = 2;
+
+        /**
          * Update interval for cluster mark file.
          */
         public static final long MARK_FILE_UPDATE_INTERVAL_NS = TimeUnit.SECONDS.toNanos(1);
+
+        /**
+         * Property name for the identity of the cluster instance.
+         */
+        public static final String CLUSTER_ID_PROP_NAME = "aeron.cluster.id";
+
+        /**
+         * Default identity for a clustered instance.
+         */
+        public static final int CLUSTER_ID_DEFAULT = 0;
 
         /**
          * Identity for a clustered service. Services should be numbered from 0 and be contiguous.
@@ -198,27 +207,27 @@ public final class ClusteredServiceContainer implements AutoCloseable
         public static final int REPLAY_STREAM_ID_DEFAULT = 103;
 
         /**
-         * Channel for communications between the local consensus module and services.
+         * Channel for control communications between the local consensus module and services.
          */
-        public static final String SERVICE_CONTROL_CHANNEL_PROP_NAME = "aeron.cluster.service.control.channel";
+        public static final String CONTROL_CHANNEL_PROP_NAME = "aeron.cluster.control.channel";
 
         /**
          * Default channel for communications between the local consensus module and services. This should be IPC.
          */
-        public static final String SERVICE_CONTROL_CHANNEL_DEFAULT = "aeron:ipc?term-length=64k|mtu=8k";
+        public static final String CONTROL_CHANNEL_DEFAULT = "aeron:ipc?term-length=128k";
 
         /**
-         * Stream id within a channel for communications from the consensus module to the services.
+         * Stream id within the control channel for communications from the consensus module to the services.
          */
         public static final String SERVICE_STREAM_ID_PROP_NAME = "aeron.cluster.service.stream.id";
 
         /**
-         * Default stream id within a channel for communications from the consensus module to the services.
+         * Default stream id within the control channel for communications from the consensus module.
          */
-        public static final int SERVICE_CONTROL_STREAM_ID_DEFAULT = 104;
+        public static final int SERVICE_STREAM_ID_DEFAULT = 104;
 
         /**
-         * Stream id within a channel for communications from the services to the consensus module.
+         * Stream id within the control channel for communications from the services to the consensus module.
          */
         public static final String CONSENSUS_MODULE_STREAM_ID_PROP_NAME = "aeron.cluster.consensus.module.stream.id";
 
@@ -235,7 +244,7 @@ public final class ClusteredServiceContainer implements AutoCloseable
         /**
          * Default channel to be used for archiving snapshots.
          */
-        public static final String SNAPSHOT_CHANNEL_DEFAULT = CommonContext.IPC_CHANNEL + "?alias=snapshot";
+        public static final String SNAPSHOT_CHANNEL_DEFAULT = "aeron:ipc?alias=snapshot";
 
         /**
          * Stream id within a channel for archiving snapshots.
@@ -285,9 +294,29 @@ public final class ClusteredServiceContainer implements AutoCloseable
             "aeron.cluster.service.delegating.error.handler";
 
         /**
+         * Counter type id for the cluster node role.
+         */
+        public static final int CLUSTER_NODE_ROLE_TYPE_ID = 201;
+
+        /**
+         * Counter type id of the commit position.
+         */
+        public static final int COMMIT_POSITION_TYPE_ID = 203;
+
+        /**
          * Counter type id for the clustered service error count.
          */
         public static final int CLUSTERED_SERVICE_ERROR_COUNT_TYPE_ID = 215;
+
+        /**
+         * The value {@link #CLUSTER_ID_DEFAULT} or system property {@link #CLUSTER_ID_PROP_NAME} if set.
+         *
+         * @return {@link #CLUSTER_ID_DEFAULT} or system property {@link #CLUSTER_ID_PROP_NAME} if set.
+         */
+        public static int clusterId()
+        {
+            return Integer.getInteger(CLUSTER_ID_PROP_NAME, CLUSTER_ID_DEFAULT);
+        }
 
         /**
          * The value {@link #SERVICE_ID_DEFAULT} or system property {@link #SERVICE_ID_PROP_NAME} if set.
@@ -332,15 +361,15 @@ public final class ClusteredServiceContainer implements AutoCloseable
         }
 
         /**
-         * The value {@link #SERVICE_CONTROL_CHANNEL_DEFAULT} or system property
-         * {@link #SERVICE_CONTROL_CHANNEL_PROP_NAME} if set.
+         * The value {@link #CONTROL_CHANNEL_DEFAULT} or system property
+         * {@link #CONTROL_CHANNEL_PROP_NAME} if set.
          *
-         * @return {@link #SERVICE_CONTROL_CHANNEL_DEFAULT} or system property
-         * {@link #SERVICE_CONTROL_CHANNEL_PROP_NAME} if set.
+         * @return {@link #CONTROL_CHANNEL_DEFAULT} or system property
+         * {@link #CONTROL_CHANNEL_PROP_NAME} if set.
          */
-        public static String serviceControlChannel()
+        public static String controlChannel()
         {
-            return System.getProperty(SERVICE_CONTROL_CHANNEL_PROP_NAME, SERVICE_CONTROL_CHANNEL_DEFAULT);
+            return System.getProperty(CONTROL_CHANNEL_PROP_NAME, CONTROL_CHANNEL_DEFAULT);
         }
 
         /**
@@ -356,15 +385,15 @@ public final class ClusteredServiceContainer implements AutoCloseable
         }
 
         /**
-         * The value {@link #SERVICE_CONTROL_STREAM_ID_DEFAULT} or system property
+         * The value {@link #SERVICE_STREAM_ID_DEFAULT} or system property
          * {@link #SERVICE_STREAM_ID_PROP_NAME} if set.
          *
-         * @return {@link #SERVICE_CONTROL_STREAM_ID_DEFAULT} or system property
+         * @return {@link #SERVICE_STREAM_ID_DEFAULT} or system property
          * {@link #SERVICE_STREAM_ID_PROP_NAME} if set.
          */
         public static int serviceStreamId()
         {
-            return Integer.getInteger(SERVICE_STREAM_ID_PROP_NAME, SERVICE_CONTROL_STREAM_ID_DEFAULT);
+            return Integer.getInteger(SERVICE_STREAM_ID_PROP_NAME, SERVICE_STREAM_ID_DEFAULT);
         }
 
         /**
@@ -513,11 +542,12 @@ public final class ClusteredServiceContainer implements AutoCloseable
         private volatile int isConcluded;
 
         private int appVersion = SemanticVersion.compose(0, 0, 1);
+        private int clusterId = Configuration.clusterId();
         private int serviceId = Configuration.serviceId();
         private String serviceName = Configuration.serviceName();
         private String replayChannel = Configuration.replayChannel();
         private int replayStreamId = Configuration.replayStreamId();
-        private String serviceControlChannel = Configuration.serviceControlChannel();
+        private String controlChannel = Configuration.controlChannel();
         private int consensusModuleStreamId = Configuration.consensusModuleStreamId();
         private int serviceStreamId = Configuration.serviceStreamId();
         private String snapshotChannel = Configuration.snapshotChannel();
@@ -648,8 +678,8 @@ public final class ClusteredServiceContainer implements AutoCloseable
 
             if (null == errorCounter)
             {
-                errorCounter = aeron.addCounter(
-                    CLUSTERED_SERVICE_ERROR_COUNT_TYPE_ID, "Cluster errors - service " + serviceId);
+                final String label = "Cluster Container Errors - clusterId=" + clusterId + " serviceId=" + serviceId;
+                errorCounter = aeron.addCounter(CLUSTERED_SERVICE_ERROR_COUNT_TYPE_ID, label);
             }
 
             if (null == countedErrorHandler)
@@ -672,8 +702,8 @@ public final class ClusteredServiceContainer implements AutoCloseable
             archiveContext
                 .aeron(aeron)
                 .ownsAeronClient(false)
-                .errorHandler(countedErrorHandler)
-                .lock(NoOpLock.INSTANCE);
+                .lock(NoOpLock.INSTANCE)
+                .errorHandler(countedErrorHandler);
 
             if (null == shutdownSignalBarrier)
             {
@@ -682,7 +712,7 @@ public final class ClusteredServiceContainer implements AutoCloseable
 
             if (null == terminationHook)
             {
-                terminationHook = () -> shutdownSignalBarrier.signal();
+                terminationHook = () -> shutdownSignalBarrier.signalAll();
             }
 
             if (null == clusteredService)
@@ -720,6 +750,30 @@ public final class ClusteredServiceContainer implements AutoCloseable
         public int appVersion()
         {
             return appVersion;
+        }
+
+        /**
+         * Set the id for this cluster instance. This must match with the Consensus Module.
+         *
+         * @param clusterId for this clustered instance.
+         * @return this for a fluent API
+         * @see Configuration#CLUSTER_ID_PROP_NAME
+         */
+        public Context clusterId(final int clusterId)
+        {
+            this.clusterId = clusterId;
+            return this;
+        }
+
+        /**
+         * Get the id for this cluster instance. This must match with the Consensus Module.
+         *
+         * @return the id for this cluster instance.
+         * @see Configuration#CLUSTER_ID_PROP_NAME
+         */
+        public int clusterId()
+        {
+            return clusterId;
         }
 
         /**
@@ -823,11 +877,11 @@ public final class ClusteredServiceContainer implements AutoCloseable
          *
          * @param channel parameter for sending messages to the Consensus Module.
          * @return this for a fluent API.
-         * @see Configuration#SERVICE_CONTROL_CHANNEL_PROP_NAME
+         * @see Configuration#CONTROL_CHANNEL_PROP_NAME
          */
-        public Context serviceControlChannel(final String channel)
+        public Context controlChannel(final String channel)
         {
-            serviceControlChannel = channel;
+            controlChannel = channel;
             return this;
         }
 
@@ -835,11 +889,11 @@ public final class ClusteredServiceContainer implements AutoCloseable
          * Get the channel parameter for bi-directional communications between the consensus module and services.
          *
          * @return the channel parameter for sending messages to the Consensus Module.
-         * @see Configuration#SERVICE_CONTROL_CHANNEL_PROP_NAME
+         * @see Configuration#CONTROL_CHANNEL_PROP_NAME
          */
-        public String serviceControlChannel()
+        public String controlChannel()
         {
-            return serviceControlChannel;
+            return controlChannel;
         }
 
         /**
@@ -1428,8 +1482,7 @@ public final class ClusteredServiceContainer implements AutoCloseable
         {
             ClusterMarkFile.checkHeaderLength(
                 aeron.context().aeronDirectoryName(),
-                archiveContext.controlRequestChannel(),
-                serviceControlChannel(),
+                controlChannel(),
                 null,
                 serviceName,
                 null);
@@ -1440,15 +1493,15 @@ public final class ClusteredServiceContainer implements AutoCloseable
                 .archiveStreamId(archiveContext.controlRequestStreamId())
                 .serviceStreamId(serviceStreamId)
                 .consensusModuleStreamId(consensusModuleStreamId)
-                .ingressStreamId(0)
+                .ingressStreamId(Aeron.NULL_VALUE)
                 .memberId(Aeron.NULL_VALUE)
                 .serviceId(serviceId)
+                .clusterId(clusterId)
                 .aeronDirectory(aeron.context().aeronDirectoryName())
-                .archiveChannel(archiveContext.controlRequestChannel())
-                .serviceControlChannel(serviceControlChannel)
-                .ingressChannel("")
+                .controlChannel(controlChannel)
+                .ingressChannel(null)
                 .serviceName(serviceName)
-                .authenticator("");
+                .authenticator(null);
 
             markFile.updateActivityTimestamp(epochClock.time());
             markFile.signalReady();

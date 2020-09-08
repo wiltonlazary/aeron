@@ -20,6 +20,7 @@ import io.aeron.driver.ThreadingMode;
 import io.aeron.logbuffer.BufferClaim;
 import io.aeron.logbuffer.FragmentHandler;
 import io.aeron.logbuffer.LogBufferDescriptor;
+import io.aeron.test.MediaDriverTestWatcher;
 import io.aeron.test.TestMediaDriver;
 import io.aeron.test.Tests;
 import org.agrona.CloseHelper;
@@ -27,6 +28,7 @@ import org.agrona.collections.MutableInteger;
 import org.agrona.concurrent.UnsafeBuffer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.extension.RegisterExtension;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
@@ -48,13 +50,17 @@ public class PublicationUnblockTest
     private static final int STREAM_ID = 1001;
     private static final int FRAGMENT_COUNT_LIMIT = 10;
 
+    @RegisterExtension
+    public final MediaDriverTestWatcher testWatcher = new MediaDriverTestWatcher();
+
     private final TestMediaDriver driver = TestMediaDriver.launch(new MediaDriver.Context()
         .threadingMode(ThreadingMode.SHARED)
         .errorHandler(Tests::onError)
         .publicationTermBufferLength(LogBufferDescriptor.TERM_MIN_LENGTH)
         .clientLivenessTimeoutNs(TimeUnit.MILLISECONDS.toNanos(400))
         .timerIntervalNs(TimeUnit.MILLISECONDS.toNanos(10))
-        .publicationUnblockTimeoutNs(TimeUnit.MILLISECONDS.toNanos(500)));
+        .publicationUnblockTimeoutNs(TimeUnit.MILLISECONDS.toNanos(500)),
+        testWatcher);
 
     private final Aeron aeron = Aeron.connect(new Aeron.Context()
         .keepAliveIntervalNs(TimeUnit.MILLISECONDS.toNanos(100)));
@@ -85,8 +91,7 @@ public class PublicationUnblockTest
 
             while (publicationOne.tryClaim(length, bufferClaim) < 0L)
             {
-                Thread.yield();
-                Tests.checkInterruptStatus();
+                Tests.yield();
             }
 
             bufferClaim.buffer().setMemory(bufferClaim.offset(), length, (byte)65);
@@ -94,20 +99,17 @@ public class PublicationUnblockTest
 
             while (publicationTwo.offer(srcBuffer, 0, length) < 0L)
             {
-                Thread.yield();
-                Tests.checkInterruptStatus();
+                Tests.yield();
             }
 
             while (publicationOne.tryClaim(length, bufferClaim) < 0L)
             {
-                Thread.yield();
-                Tests.checkInterruptStatus();
+                Tests.yield();
             }
 
             while (publicationTwo.offer(srcBuffer, 0, length) < 0L)
             {
-                Thread.yield();
-                Tests.checkInterruptStatus();
+                Tests.yield();
             }
 
             final int expectedFragments = 3;
@@ -117,8 +119,7 @@ public class PublicationUnblockTest
                 final int fragments = subscription.poll(fragmentHandler, FRAGMENT_COUNT_LIMIT);
                 if (fragments == 0)
                 {
-                    Thread.yield();
-                    Tests.checkInterruptStatus();
+                    Tests.yield();
                 }
 
                 numFragments += fragments;

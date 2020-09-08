@@ -18,8 +18,11 @@ package io.aeron.agent;
 import io.aeron.archive.codecs.*;
 import org.agrona.MutableDirectBuffer;
 
-import static io.aeron.agent.ArchiveEventCode.CMD_OUT_RESPONSE;
+import static io.aeron.agent.ArchiveEventCode.*;
 import static io.aeron.agent.CommonEventDissector.dissectLogHeader;
+import static java.nio.ByteOrder.LITTLE_ENDIAN;
+import static org.agrona.BitUtil.SIZE_OF_INT;
+import static org.agrona.BitUtil.SIZE_OF_LONG;
 
 final class ArchiveEventDissector
 {
@@ -75,6 +78,8 @@ final class ArchiveEventDissector
     private static final KeepAliveRequestDecoder KEEP_ALIVE_REQUEST_DECODER = new KeepAliveRequestDecoder();
     private static final TaggedReplicateRequestDecoder TAGGED_REPLICATE_REQUEST_DECODER =
         new TaggedReplicateRequestDecoder();
+    private static final StopRecordingByIdentityRequestDecoder STOP_RECORDING_BY_IDENTITY_REQUEST_DECODER =
+        new StopRecordingByIdentityRequestDecoder();
     private static final ControlResponseDecoder CONTROL_RESPONSE_DECODER = new ControlResponseDecoder();
 
     private ArchiveEventDissector()
@@ -82,7 +87,7 @@ final class ArchiveEventDissector
     }
 
     @SuppressWarnings("MethodLength")
-    static void controlRequest(
+    static void dissectControlRequest(
         final ArchiveEventCode eventCode,
         final MutableDirectBuffer buffer,
         final int offset,
@@ -374,12 +379,21 @@ final class ArchiveEventDissector
                 appendExtendRecording2(builder);
                 break;
 
+            case CMD_IN_STOP_RECORDING_BY_IDENTITY:
+                STOP_RECORDING_BY_IDENTITY_REQUEST_DECODER.wrap(
+                    buffer,
+                    offset + relativeOffset,
+                    HEADER_DECODER.blockLength(),
+                    HEADER_DECODER.version());
+                appendStopRecordingByIdentity(builder);
+                break;
+
             default:
                 builder.append(": unknown command");
         }
     }
 
-    static void controlResponse(final MutableDirectBuffer buffer, final int offset, final StringBuilder builder)
+    static void dissectControlResponse(final MutableDirectBuffer buffer, final int offset, final StringBuilder builder)
     {
         int relativeOffset = dissectLogHeader(CONTEXT, CMD_OUT_RESPONSE, buffer, offset, builder);
 
@@ -400,6 +414,73 @@ final class ArchiveEventDissector
             .append(", errorMessage=");
 
         CONTROL_RESPONSE_DECODER.getErrorMessage(builder);
+    }
+
+    static void dissectReplicationSessionStateChange(
+        final MutableDirectBuffer buffer, final int offset, final StringBuilder builder)
+    {
+        int absoluteOffset = offset;
+        absoluteOffset += dissectLogHeader(CONTEXT, REPLICATION_SESSION_STATE_CHANGE, buffer, absoluteOffset, builder);
+
+        final long replicationId = buffer.getLong(absoluteOffset, LITTLE_ENDIAN);
+        absoluteOffset += SIZE_OF_LONG;
+
+        builder.append(": replicationId=").append(replicationId);
+        builder.append(", ");
+        buffer.getStringAscii(absoluteOffset, builder);
+    }
+
+    static void dissectControlSessionStateChange(
+        final MutableDirectBuffer buffer, final int offset, final StringBuilder builder)
+    {
+        int absoluteOffset = offset;
+        absoluteOffset += dissectLogHeader(CONTEXT, CONTROL_SESSION_STATE_CHANGE, buffer, absoluteOffset, builder);
+
+        final long controlSessionId = buffer.getLong(absoluteOffset, LITTLE_ENDIAN);
+        absoluteOffset += SIZE_OF_LONG;
+
+        builder.append(": controlSessionId=").append(controlSessionId);
+        builder.append(", ");
+        buffer.getStringAscii(absoluteOffset, builder);
+    }
+
+    static void dissectReplaySessionError(
+        final MutableDirectBuffer buffer, final int offset, final StringBuilder builder)
+    {
+        int absoluteOffset = offset;
+        absoluteOffset += dissectLogHeader(CONTEXT, REPLAY_SESSION_ERROR, buffer, absoluteOffset, builder);
+
+        final long sessionId = buffer.getLong(absoluteOffset, LITTLE_ENDIAN);
+        absoluteOffset += SIZE_OF_LONG;
+
+        final long recordingId = buffer.getLong(absoluteOffset, LITTLE_ENDIAN);
+        absoluteOffset += SIZE_OF_LONG;
+
+        builder.append(": sessionId=").append(sessionId);
+        builder.append(", recordingId=").append(recordingId);
+        builder.append(", errorMessage=");
+        buffer.getStringAscii(absoluteOffset, builder);
+    }
+
+    static void dissectCatalogResize(
+        final MutableDirectBuffer buffer, final int offset, final StringBuilder builder)
+    {
+        int absoluteOffset = offset;
+        absoluteOffset += dissectLogHeader(CONTEXT, CATALOG_RESIZE, buffer, absoluteOffset, builder);
+
+        final int maxEntries = buffer.getInt(absoluteOffset, LITTLE_ENDIAN);
+        absoluteOffset += SIZE_OF_INT;
+        final long catalogLength = buffer.getLong(absoluteOffset, LITTLE_ENDIAN);
+        absoluteOffset += SIZE_OF_LONG;
+
+        final int newMaxEntries = buffer.getInt(absoluteOffset, LITTLE_ENDIAN);
+        absoluteOffset += SIZE_OF_INT;
+        final long newCatalogLength = buffer.getLong(absoluteOffset, LITTLE_ENDIAN);
+
+        builder.append(": ").append(maxEntries);
+        builder.append(" entries (").append(catalogLength).append(" bytes)");
+        builder.append(" => ").append(newMaxEntries);
+        builder.append(" entries (").append(newCatalogLength).append(" bytes)");
     }
 
     private static void appendConnect(final StringBuilder builder)
@@ -554,6 +635,13 @@ final class ArchiveEventDissector
         builder.append(": controlSessionId=").append(STOP_RECORDING_SUBSCRIPTION_REQUEST_DECODER.controlSessionId())
             .append(", correlationId=").append(STOP_RECORDING_SUBSCRIPTION_REQUEST_DECODER.correlationId())
             .append(", subscriptionId=").append(STOP_RECORDING_SUBSCRIPTION_REQUEST_DECODER.subscriptionId());
+    }
+
+    private static void appendStopRecordingByIdentity(final StringBuilder builder)
+    {
+        builder.append(": controlSessionId=").append(STOP_RECORDING_BY_IDENTITY_REQUEST_DECODER.controlSessionId())
+            .append(", correlationId=").append(STOP_RECORDING_BY_IDENTITY_REQUEST_DECODER.correlationId())
+            .append(", recordingId=").append(STOP_RECORDING_BY_IDENTITY_REQUEST_DECODER.recordingId());
     }
 
     private static void appendStopPosition(final StringBuilder builder)

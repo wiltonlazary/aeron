@@ -15,7 +15,8 @@
  */
 
 #include "util/aeron_platform.h"
-#if defined(AERON_COMPILER_MSVC) && defined(AERON_CPU_X64)
+
+#if defined(AERON_COMPILER_MSVC)
 #include <io.h>
 #else
 #include <unistd.h>
@@ -24,7 +25,6 @@
 #include "util/aeron_arrayutil.h"
 #include "aeron_alloc.h"
 #include "media/aeron_udp_transport_poller.h"
-#include "aeron_send_channel_endpoint.h"
 
 int aeron_udp_transport_poller_init(
     aeron_udp_transport_poller_t *poller,
@@ -103,7 +103,8 @@ int aeron_udp_transport_poller_add(aeron_udp_transport_poller_t *poller, aeron_u
 
     if (new_capacity > old_capacity)
     {
-        if (aeron_array_ensure_capacity((uint8_t **)&poller->pollfds, sizeof(struct pollfd), old_capacity, new_capacity) < 0)
+        if (aeron_array_ensure_capacity(
+            (uint8_t **)&poller->pollfds, sizeof(struct pollfd), old_capacity, new_capacity) < 0)
         {
             return -1;
         }

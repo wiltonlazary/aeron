@@ -15,24 +15,35 @@
  */
 
 #include "AeronArchive.h"
-#include "ArchiveException.h"
 
+using namespace aeron;
 using namespace aeron::archive::client;
 
 AeronArchive::AsyncConnect::AsyncConnect(
     Context_t &context,
     std::shared_ptr<Aeron> aeron,
     std::int64_t subscriptionId,
-    std::int64_t publicationId) :
+    std::int64_t publicationId,
+    const long long deadlineNs) :
+    m_nanoClock(systemNanoClock),
     m_ctx(std::unique_ptr<Context_t>(new Context_t(context))),
     m_aeron(std::move(aeron)),
     m_subscriptionId(subscriptionId),
-    m_publicationId(publicationId)
+    m_publicationId(publicationId),
+    m_deadlineNs(deadlineNs)
 {
 }
 
 std::shared_ptr<AeronArchive> AeronArchive::AsyncConnect::poll()
 {
+    if (m_nanoClock() > m_deadlineNs)
+    {
+        throw TimeoutException(
+            "Archive connect timeout: correlationId=" + std::to_string(m_correlationId) +
+            " step=" + std::to_string(m_step),
+            SOURCEINFO);
+    }
+
     if (!m_subscription)
     {
         m_subscription = m_aeron->findSubscription(m_subscriptionId);
@@ -72,13 +83,16 @@ std::shared_ptr<AeronArchive> AeronArchive::AsyncConnect::poll()
 
     if (2 == m_step)
     {
+        std::string controlResponseChannel = m_subscription->tryResolveChannelEndpointPort();
+        if (controlResponseChannel.empty())
+        {
+            return std::shared_ptr<AeronArchive>();
+        }
+
         auto encodedCredentials = m_ctx->credentialsSupplier().m_encodedCredentials();
 
         if (!m_archiveProxy->tryConnect(
-            m_ctx->controlResponseChannel(),
-            m_ctx->controlResponseStreamId(),
-            encodedCredentials,
-            m_correlationId))
+            controlResponseChannel,m_ctx->controlResponseStreamId(), encodedCredentials, m_correlationId))
         {
             m_ctx->credentialsSupplier().m_onFree(encodedCredentials);
             return std::shared_ptr<AeronArchive>();
@@ -91,7 +105,7 @@ std::shared_ptr<AeronArchive> AeronArchive::AsyncConnect::poll()
 
     if (3 == m_step && m_controlResponsePoller)
     {
-        if (!m_controlResponsePoller->subscription()->isConnected())
+        if (!m_subscription->isConnected())
         {
             return std::shared_ptr<AeronArchive>();
         }
@@ -205,15 +219,14 @@ std::shared_ptr<AeronArchive::AsyncConnect> AeronArchive::asyncConnect(AeronArch
 {
     ctx.conclude();
 
+    const long long deadlineNs = systemNanoClock() + ctx.messageTimeoutNs();
     std::shared_ptr<Aeron> aeron = ctx.aeron();
-
     const std::int64_t subscriptionId = aeron->addSubscription(
         ctx.controlResponseChannel(), ctx.controlResponseStreamId());
-
     const std::int64_t publicationId = aeron->addExclusivePublication(
         ctx.controlRequestChannel(), ctx.controlRequestStreamId());
 
-    return std::make_shared<AeronArchive::AsyncConnect>(ctx, aeron, subscriptionId, publicationId);
+    return std::make_shared<AeronArchive::AsyncConnect>(ctx, aeron, subscriptionId, publicationId, deadlineNs);
 }
 
 std::string AeronArchive::version()

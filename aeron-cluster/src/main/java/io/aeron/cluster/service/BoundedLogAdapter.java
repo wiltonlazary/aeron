@@ -23,7 +23,6 @@ import io.aeron.logbuffer.*;
 import org.agrona.*;
 
 import static io.aeron.logbuffer.FrameDescriptor.*;
-import static io.aeron.logbuffer.FrameDescriptor.END_FRAG_FLAG;
 
 /**
  * Adapter for reading a log with a upper bound applied beyond which the consumer cannot progress.
@@ -104,11 +103,6 @@ final class BoundedLogAdapter implements ControlledFragmentHandler, AutoCloseabl
     void maxLogPosition(final long position)
     {
         maxLogPosition = position;
-    }
-
-    long maxLogPosition()
-    {
-        return maxLogPosition;
     }
 
     boolean isDone()

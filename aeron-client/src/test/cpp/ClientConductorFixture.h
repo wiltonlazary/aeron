@@ -20,10 +20,10 @@
 #include <array>
 #include <gmock/gmock.h>
 
-#include <concurrent/ringbuffer/ManyToOneRingBuffer.h>
-#include <concurrent/broadcast/CopyBroadcastReceiver.h>
-#include <command/ControlProtocolEvents.h>
-#include <concurrent/logbuffer/LogBufferDescriptor.h>
+#include "concurrent/ringbuffer/ManyToOneRingBuffer.h"
+#include "concurrent/broadcast/CopyBroadcastReceiver.h"
+#include "command/ControlProtocolEvents.h"
+#include "concurrent/logbuffer/LogBufferDescriptor.h"
 #include "DriverProxy.h"
 #include "ClientConductor.h"
 #include "Context.h"
@@ -35,6 +35,10 @@ using namespace aeron::command;
 using namespace aeron;
 
 using namespace std::placeholders;
+
+#ifdef PAGE_SIZE
+#undef PAGE_SIZE
+#endif
 
 #define CAPACITY (1024)
 #define MANY_TO_ONE_RING_BUFFER_LENGTH (CAPACITY + RingBufferDescriptor::TRAILER_LENGTH)

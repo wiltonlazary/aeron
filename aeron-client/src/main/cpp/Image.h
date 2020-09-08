@@ -17,21 +17,21 @@
 #ifndef AERON_IMAGE_H
 #define AERON_IMAGE_H
 
-#include <concurrent/AtomicBuffer.h>
-#include <concurrent/logbuffer/LogBufferDescriptor.h>
-#include <concurrent/logbuffer/FrameDescriptor.h>
-#include <concurrent/logbuffer/Header.h>
-#include <concurrent/logbuffer/TermReader.h>
-#include <concurrent/logbuffer/TermBlockScanner.h>
-#include <concurrent/status/UnsafeBufferPosition.h>
 #include <algorithm>
 #include <array>
 #include <vector>
 #include <atomic>
 #include <cassert>
+#include "concurrent/logbuffer/LogBufferDescriptor.h"
+#include "concurrent/logbuffer/FrameDescriptor.h"
+#include "concurrent/logbuffer/Header.h"
+#include "concurrent/logbuffer/TermReader.h"
+#include "concurrent/logbuffer/TermBlockScanner.h"
+#include "concurrent/status/UnsafeBufferPosition.h"
 #include "LogBuffers.h"
 
-namespace aeron {
+namespace aeron
+{
 
 using namespace aeron::concurrent;
 using namespace aeron::concurrent::logbuffer;
@@ -90,7 +90,7 @@ class Image
 public:
     typedef Image this_t;
     typedef std::vector<std::shared_ptr<Image>> list_t;
-    typedef std::shared_ptr<Image>* array_t;
+    typedef std::shared_ptr<Image> *array_t;
 
     /**
      * Construct a new image over a log to represent a stream of messages from a {@link Publication}.
@@ -107,10 +107,10 @@ public:
         std::int32_t sessionId,
         std::int64_t correlationId,
         std::int64_t subscriptionRegistrationId,
-        const std::string& sourceIdentity,
-        UnsafeBufferPosition& subscriberPosition,
+        const std::string &sourceIdentity,
+        UnsafeBufferPosition &subscriberPosition,
         std::shared_ptr<LogBuffers> logBuffers,
-        const exception_handler_t& exceptionHandler) :
+        const util::exception_handler_t &exceptionHandler) :
         m_sourceIdentity(sourceIdentity),
         m_logBuffers(std::move(logBuffers)),
         m_exceptionHandler(exceptionHandler),
@@ -138,7 +138,7 @@ public:
         m_isEos = false;
     }
 
-    Image(const Image& image) :
+    Image(const Image &image) :
         m_sourceIdentity(image.m_sourceIdentity),
         m_logBuffers(image.m_logBuffers),
         m_exceptionHandler(image.m_exceptionHandler),
@@ -157,7 +157,7 @@ public:
     {
     }
 
-    Image& operator = (const Image& image)
+    Image &operator=(const Image &image)
     {
         m_sourceIdentity = image.m_sourceIdentity;
         m_logBuffers = image.m_logBuffers;
@@ -178,7 +178,7 @@ public:
         return *this;
     }
 
-    Image(Image&& image) noexcept :
+    Image(Image &&image) noexcept:
         m_sourceIdentity(std::move(image.m_sourceIdentity)),
         m_logBuffers(std::move(image.m_logBuffers)),
         m_exceptionHandler(std::move(image.m_exceptionHandler)),
@@ -197,7 +197,7 @@ public:
     {
     }
 
-    Image& operator = (Image&& image) noexcept
+    Image &operator=(Image &&image) noexcept
     {
         m_sourceIdentity = std::move(image.m_sourceIdentity);
         m_logBuffers = std::move(image.m_logBuffers);
@@ -393,8 +393,8 @@ public:
      *
      * @see fragment_handler_t
      */
-    template <typename F>
-    inline int poll(F&& fragmentHandler, int fragmentLimit)
+    template<typename F>
+    inline int poll(F &&fragmentHandler, int fragmentLimit)
     {
         if (isClosed())
         {
@@ -431,8 +431,8 @@ public:
      *
      * @see fragment_handler_t
      */
-    template <typename F>
-    inline int boundedPoll(F&& fragmentHandler, std::int64_t limitPosition, int fragmentLimit)
+    template<typename F>
+    inline int boundedPoll(F &&fragmentHandler, std::int64_t limitPosition, int fragmentLimit)
     {
         if (isClosed())
         {
@@ -482,7 +482,7 @@ public:
                 ++fragmentsRead;
             }
         }
-        catch (const std::exception& ex)
+        catch (const std::exception &ex)
         {
             m_exceptionHandler(ex);
         }
@@ -508,8 +508,8 @@ public:
      *
      * @see controlled_poll_fragment_handler_t
      */
-    template <typename F>
-    inline int controlledPoll(F&& fragmentHandler, int fragmentLimit)
+    template<typename F>
+    inline int controlledPoll(F &&fragmentHandler, int fragmentLimit)
     {
         if (isClosed())
         {
@@ -574,7 +574,7 @@ public:
                 }
             }
         }
-        catch (const std::exception& ex)
+        catch (const std::exception &ex)
         {
             m_exceptionHandler(ex);
         }
@@ -601,8 +601,8 @@ public:
      * @return the number of fragments that have been consumed.
      * @see controlled_poll_fragment_handler_t
      */
-    template <typename F>
-    inline int boundedControlledPoll(F&& fragmentHandler, std::int64_t limitPosition, int fragmentLimit)
+    template<typename F>
+    inline int boundedControlledPoll(F &&fragmentHandler, std::int64_t limitPosition, int fragmentLimit)
     {
         if (isClosed())
         {
@@ -669,7 +669,7 @@ public:
                 }
             }
         }
-        catch (const std::exception& ex)
+        catch (const std::exception &ex)
         {
             m_exceptionHandler(ex);
         }
@@ -696,8 +696,8 @@ public:
      * @return the resulting position after the scan terminates which is a complete message.
      * @see controlled_poll_fragment_handler_t
      */
-    template <typename F>
-    inline std::int64_t controlledPeek(std::int64_t initialPosition, F&& fragmentHandler, std::int64_t limitPosition)
+    template<typename F>
+    inline std::int64_t controlledPeek(std::int64_t initialPosition, F &&fragmentHandler, std::int64_t limitPosition)
     {
         if (isClosed())
         {
@@ -772,7 +772,7 @@ public:
                 }
             }
         }
-        catch (const std::exception& ex)
+        catch (const std::exception &ex)
         {
             m_exceptionHandler(ex);
         }
@@ -797,10 +797,10 @@ public:
      *
      * @see block_handler_t
      */
-    template <typename F>
-    inline int blockPoll(F&& blockHandler, int blockLengthLimit)
+    template<typename F>
+    inline int blockPoll(F &&blockHandler, int blockLengthLimit)
     {
-        if (!isClosed())
+        if (isClosed())
         {
             return 0;
         }
@@ -821,7 +821,7 @@ public:
                 const std::int32_t termId = termBuffer.getInt32(termOffset + DataFrameHeader::TERM_ID_FIELD_OFFSET);
                 blockHandler(termBuffer, termOffset, length, m_sessionId, termId);
             }
-            catch (const std::exception& ex)
+            catch (const std::exception &ex)
             {
                 m_exceptionHandler(ex);
             }
@@ -853,7 +853,7 @@ public:
 private:
     std::string m_sourceIdentity;
     std::shared_ptr<LogBuffers> m_logBuffers;
-    exception_handler_t m_exceptionHandler;
+    util::exception_handler_t m_exceptionHandler;
     std::array<AtomicBuffer, LogBufferDescriptor::PARTITION_COUNT> m_termBuffers;
     Position<UnsafeBufferPosition> m_subscriberPosition;
     Header m_header;

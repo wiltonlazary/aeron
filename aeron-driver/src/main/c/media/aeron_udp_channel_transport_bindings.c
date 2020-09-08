@@ -73,6 +73,7 @@ aeron_udp_channel_transport_bindings_t *aeron_udp_channel_transport_bindings_loa
         {
             aeron_set_err(
                 EINVAL, "could not find UDP channel transport bindings %s: dlsym - %s", bindings_name, aeron_dlerror());
+            return NULL;
         }
         bindings->meta_info.next_binding = NULL; // Make sure it is not some random data.
         bindings->meta_info.source_symbol = bindings;
@@ -107,6 +108,7 @@ static aeron_udp_channel_interceptor_bindings_load_func_t *aeron_udp_channel_int
             aeron_set_err(
                 EINVAL, "could not find interceptor bindings %s: dlsym - %s", interceptor_name,
                 aeron_dlerror());
+            return NULL;
         }
 #if defined(AERON_COMPILER_GCC)
 #pragma GCC diagnostic pop
@@ -131,7 +133,8 @@ aeron_udp_channel_interceptor_bindings_t *aeron_udp_channel_interceptor_bindings
     if (interceptors_length >= (size_t)AERON_MAX_INTERCEPTORS_LEN)
     {
         aeron_set_err(
-            EINVAL, "Interceptors list too long, must have: %" PRIu32 " < %d", (uint32_t)interceptors_length, AERON_MAX_INTERCEPTORS_LEN);
+            EINVAL, "Interceptors list too long, must have: %" PRIu32 " < %d",
+            (uint32_t)interceptors_length, AERON_MAX_INTERCEPTORS_LEN);
         return NULL;
     }
 
@@ -142,7 +145,8 @@ aeron_udp_channel_interceptor_bindings_t *aeron_udp_channel_interceptor_bindings
 
     if (-ERANGE == num_interceptors)
     {
-        aeron_set_err(EINVAL, "Too many interceptors defined, limit %d: %s", AERON_MAX_INTERCEPTOR_NAMES, interceptors);
+        aeron_set_err(
+            EINVAL, "Too many interceptors defined, limit %d: %s", AERON_MAX_INTERCEPTOR_NAMES, interceptors);
         return NULL;
     }
     else if (num_interceptors < 0)
@@ -160,6 +164,11 @@ aeron_udp_channel_interceptor_bindings_t *aeron_udp_channel_interceptor_bindings
         aeron_udp_channel_interceptor_bindings_load_func_t *interceptor_load_func =
             aeron_udp_channel_interceptor_bindings_load_interceptor(interceptor_name);
 
+        if (NULL == interceptor_load_func)
+        {
+            return NULL;
+        }
+
         current_bindings = interceptor_load_func(current_bindings);
         if (NULL == current_bindings)
         {
@@ -171,7 +180,7 @@ aeron_udp_channel_interceptor_bindings_t *aeron_udp_channel_interceptor_bindings
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wpedantic"
 #endif
-        current_bindings->meta_info.source_symbol = (const void*)interceptor_load_func;
+        current_bindings->meta_info.source_symbol = (const void *)interceptor_load_func;
 #if defined(AERON_COMPILER_GCC)
 #pragma GCC diagnostic pop
 #endif
@@ -186,6 +195,7 @@ int aeron_udp_channel_data_paths_init(
     aeron_udp_channel_interceptor_bindings_t *incoming_interceptor_bindings,
     aeron_udp_channel_transport_bindings_t *media_bindings,
     aeron_udp_transport_recv_func_t recv_func,
+    aeron_driver_context_t *context,
     aeron_udp_channel_transport_affinity_t affinity)
 {
     data_paths->outgoing_interceptors = NULL;
@@ -209,7 +219,7 @@ int aeron_udp_channel_data_paths_init(
         {
             aeron_udp_channel_outgoing_interceptor_t *interceptor;
 
-            if (aeron_alloc((void **) &interceptor, sizeof(aeron_udp_channel_outgoing_interceptor_t)) < 0)
+            if (aeron_alloc((void **)&interceptor, sizeof(aeron_udp_channel_outgoing_interceptor_t)) < 0)
             {
                 aeron_set_err(ENOMEM, "could not allocate %s:%d", __FILE__, __LINE__);
                 return -1;
@@ -219,9 +229,12 @@ int aeron_udp_channel_data_paths_init(
             interceptor->outgoing_mmsg_func = binding->outgoing_mmsg_func;
             interceptor->outgoing_msg_func = binding->outgoing_msg_func;
             interceptor->close_func = binding->outgoing_close_func;
+            interceptor->outgoing_transport_notification_func = binding->outgoing_transport_notification_func;
+            interceptor->outgoing_publication_notification_func = binding->outgoing_publication_notification_func;
+            interceptor->outgoing_image_notification_func = binding->outgoing_image_notification_func;
             interceptor->next_interceptor = NULL;
 
-            if (binding->outgoing_init_func(&interceptor->interceptor_state, affinity) < 0)
+            if (binding->outgoing_init_func(&interceptor->interceptor_state, context, affinity) < 0)
             {
                 return -1;
             }
@@ -239,7 +252,7 @@ int aeron_udp_channel_data_paths_init(
         }
 
         if (aeron_alloc(
-            (void **) &outgoing_transport_interceptor, sizeof(aeron_udp_channel_outgoing_interceptor_t)) < 0)
+            (void **)&outgoing_transport_interceptor, sizeof(aeron_udp_channel_outgoing_interceptor_t)) < 0)
         {
             aeron_set_err(ENOMEM, "could not allocate %s:%d", __FILE__, __LINE__);
             return -1;
@@ -277,7 +290,7 @@ int aeron_udp_channel_data_paths_init(
         {
             aeron_udp_channel_incoming_interceptor_t *interceptor;
 
-            if (aeron_alloc((void **) &interceptor, sizeof(aeron_udp_channel_incoming_interceptor_t)) < 0)
+            if (aeron_alloc((void **)&interceptor, sizeof(aeron_udp_channel_incoming_interceptor_t)) < 0)
             {
                 aeron_set_err(ENOMEM, "could not allocate %s:%d", __FILE__, __LINE__);
                 return -1;
@@ -286,9 +299,12 @@ int aeron_udp_channel_data_paths_init(
             interceptor->interceptor_state = NULL;
             interceptor->incoming_func = binding->incoming_func;
             interceptor->close_func = binding->incoming_close_func;
+            interceptor->incoming_transport_notification_func = binding->incoming_transport_notification_func;
+            interceptor->incoming_publication_notification_func = binding->incoming_publication_notification_func;
+            interceptor->incoming_image_notification_func = binding->incoming_image_notification_func;
             interceptor->next_interceptor = NULL;
 
-            if (binding->incoming_init_func(&interceptor->interceptor_state, affinity) < 0)
+            if (binding->incoming_init_func(&interceptor->interceptor_state, context, affinity) < 0)
             {
                 return -1;
             }
@@ -306,7 +322,7 @@ int aeron_udp_channel_data_paths_init(
         }
 
         if (aeron_alloc(
-            (void **) &incoming_transport_interceptor, sizeof(aeron_udp_channel_incoming_interceptor_t)) < 0)
+            (void **)&incoming_transport_interceptor, sizeof(aeron_udp_channel_incoming_interceptor_t)) < 0)
         {
             aeron_set_err(ENOMEM, "could not allocate %s:%d", __FILE__, __LINE__);
             return -1;
@@ -393,8 +409,10 @@ extern int aeron_udp_channel_outgoing_interceptor_msg_to_transport(
 
 extern void aeron_udp_channel_incoming_interceptor_recv_func(
     aeron_udp_channel_data_paths_t *data_paths,
+    aeron_udp_channel_transport_t *transport,
     void *receiver_clientd,
     void *endpoint_clientd,
+    void *destination_clientd,
     uint8_t *buffer,
     size_t length,
     struct sockaddr_storage *addr);
@@ -402,8 +420,29 @@ extern void aeron_udp_channel_incoming_interceptor_recv_func(
 extern void aeron_udp_channel_incoming_interceptor_to_endpoint(
     void *interceptor_state,
     aeron_udp_channel_incoming_interceptor_t *delegate,
+    aeron_udp_channel_transport_t *transport,
     void *receiver_clientd,
     void *endpoint_clientd,
+    void *destination_clientd,
     uint8_t *buffer,
     size_t length,
     struct sockaddr_storage *addr);
+
+extern int aeron_udp_channel_interceptors_transport_notifications(
+    aeron_udp_channel_data_paths_t *data_paths,
+    aeron_udp_channel_transport_t *transport,
+    const aeron_udp_channel_t *udp_channel,
+    aeron_data_packet_dispatcher_t *data_packet_dispatcher,
+    aeron_udp_channel_interceptor_notification_type_t type);
+
+extern int aeron_udp_channel_interceptors_publication_notifications(
+    aeron_udp_channel_data_paths_t *data_paths,
+    aeron_udp_channel_transport_t *transport,
+    aeron_network_publication_t *publication,
+    aeron_udp_channel_interceptor_notification_type_t type);
+
+extern int aeron_udp_channel_interceptors_image_notifications(
+    aeron_udp_channel_data_paths_t *data_paths,
+    aeron_udp_channel_transport_t *transport,
+    aeron_publication_image_t *image,
+    aeron_udp_channel_interceptor_notification_type_t type);

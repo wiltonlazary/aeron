@@ -17,8 +17,7 @@
 #ifndef AERON_CONCURRENT_BROADCAST_TRANSMITTER_H
 #define AERON_CONCURRENT_BROADCAST_TRANSMITTER_H
 
-#include <util/Index.h>
-#include <concurrent/AtomicBuffer.h>
+#include "concurrent/AtomicBuffer.h"
 #include "BroadcastBufferDescriptor.h"
 #include "RecordDescriptor.h"
 
@@ -27,7 +26,7 @@ namespace aeron { namespace concurrent { namespace broadcast {
 class BroadcastTransmitter
 {
 public:
-    explicit BroadcastTransmitter(AtomicBuffer& buffer) :
+    explicit BroadcastTransmitter(AtomicBuffer &buffer) :
         m_buffer(buffer),
         m_capacity(buffer.capacity() - BroadcastBufferDescriptor::TRAILER_LENGTH),
         m_mask(m_capacity - 1),
@@ -39,24 +38,24 @@ public:
         BroadcastBufferDescriptor::checkCapacity(m_capacity);
     }
 
-    inline util::index_t capacity()
+    inline util::index_t capacity() const
     {
         return m_capacity;
     }
 
-    inline util::index_t maxMsgLength()
+    inline util::index_t maxMsgLength() const
     {
         return m_maxMsgLength;
     }
 
     void transmit(
-        std::int32_t msgTypeId, concurrent::AtomicBuffer& srcBuffer, util::index_t srcIndex, util::index_t length)
+        std::int32_t msgTypeId, concurrent::AtomicBuffer &srcBuffer, util::index_t srcIndex, util::index_t length)
     {
         RecordDescriptor::checkMsgTypeId(msgTypeId);
         checkMessageLength(length);
 
         std::int64_t currentTail = m_buffer.getInt64(m_tailCounterIndex);
-        std::int32_t recordOffset = (std::int32_t) currentTail & m_mask;
+        auto recordOffset = static_cast<std::int32_t>(currentTail & m_mask);
         const std::int32_t recordLength = length + RecordDescriptor::HEADER_LENGTH;
         const std::int32_t alignedRecordLength = util::BitUtil::align(recordLength, RecordDescriptor::RECORD_ALIGNMENT);
         const std::int64_t newTail = currentTail + alignedRecordLength;
@@ -81,12 +80,12 @@ public:
 
         m_buffer.putBytes(RecordDescriptor::msgOffset(recordOffset), srcBuffer, srcIndex, length);
 
-        m_buffer.putInt64(m_latestCounterIndex, currentTail);
+        m_buffer.putInt64Ordered(m_latestCounterIndex, currentTail);
         m_buffer.putInt64Ordered(m_tailCounterIndex, currentTail + alignedRecordLength);
     }
 
 private:
-    AtomicBuffer& m_buffer;
+    AtomicBuffer &m_buffer;
     util::index_t m_capacity;
     util::index_t m_mask;
     util::index_t m_maxMsgLength;
@@ -94,7 +93,7 @@ private:
     util::index_t m_tailCounterIndex;
     util::index_t m_latestCounterIndex;
 
-    inline void checkMessageLength(util::index_t length)
+    inline void checkMessageLength(util::index_t length) const
     {
         if (length > m_maxMsgLength)
         {
@@ -104,13 +103,13 @@ private:
         }
     }
 
-    inline void signalTailIntent(AtomicBuffer& buffer, std::int64_t newTail)
+    inline void signalTailIntent(AtomicBuffer &buffer, std::int64_t newTail)
     {
         buffer.putInt64Ordered(m_tailIntentCounterIndex, newTail);
         atomic::release();
     }
 
-    inline static void insertPaddingRecord(AtomicBuffer& buffer, std::int32_t recordOffset, std::int32_t length)
+    inline static void insertPaddingRecord(AtomicBuffer &buffer, std::int32_t recordOffset, std::int32_t length)
     {
         buffer.putInt32(RecordDescriptor::lengthOffset(recordOffset), length);
         buffer.putInt32(RecordDescriptor::typeOffset(recordOffset), RecordDescriptor::PADDING_MSG_TYPE_ID);

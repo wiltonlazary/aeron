@@ -26,4 +26,12 @@
 typedef void (*aeron_idle_strategy_func_t)(void *state, int work_count);
 typedef int (*aeron_idle_strategy_init_func_t)(void **state, const char *env_var, const char *init_args);
 
+int32_t aeron_semantic_version_compose(uint8_t major, uint8_t minor, uint8_t patch);
+
+uint8_t aeron_semantic_version_major(int32_t version);
+
+uint8_t aeron_semantic_version_minor(int32_t version);
+
+uint8_t aeron_semantic_version_patch(int32_t version);
+
 #endif //AERON_COMMON_H

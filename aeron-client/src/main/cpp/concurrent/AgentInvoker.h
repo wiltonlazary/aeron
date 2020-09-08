@@ -16,11 +16,11 @@
 #ifndef AERON_AGENT_INVOKER_H
 #define AERON_AGENT_INVOKER_H
 
-#include <util/Exceptions.h>
 #include <functional>
 #include <thread>
 #include <atomic>
-#include <concurrent/logbuffer/TermReader.h>
+
+#include "util/Exceptions.h"
 
 namespace aeron {
 
@@ -30,7 +30,7 @@ template<typename Agent>
 class AgentInvoker
 {
 public:
-    AgentInvoker(Agent& agent, logbuffer::exception_handler_t& exceptionHandler) :
+    AgentInvoker(Agent &agent, util::exception_handler_t &exceptionHandler) :
         m_agent(agent),
         m_exceptionHandler(exceptionHandler),
         m_isStarted(false),
@@ -141,8 +141,8 @@ public:
     }
 
 private:
-    Agent& m_agent;
-    logbuffer::exception_handler_t& m_exceptionHandler;
+    Agent &m_agent;
+    util::exception_handler_t &m_exceptionHandler;
     bool m_isStarted;
     bool m_isRunning;
     bool m_isClosed;

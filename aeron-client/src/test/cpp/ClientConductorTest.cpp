@@ -48,7 +48,7 @@ public:
     {
     }
 
-    virtual void SetUp()
+    void SetUp() override
     {
         m_toDriver.fill(0);
         m_toClients.fill(0);
@@ -73,7 +73,7 @@ public:
         logMetaDataBuffer.putInt32(LogBufferDescriptor::LOG_PAGE_SIZE_OFFSET, PAGE_SIZE);
     }
 
-    virtual void TearDown()
+    void TearDown() override
     {
         ::unlink(m_logFileName.c_str());
         ::unlink(m_logFileName2.c_str());
@@ -378,6 +378,24 @@ TEST_F(ClientConductorTest, shouldExceptionOnFindWhenReceivingErrorResponseOnAdd
             std::shared_ptr<ExclusivePublication> pub = m_conductor.findExclusivePublication(id);
         },
         util::RegistrationException);
+}
+
+TEST_F(ClientConductorTest, shouldExceptionOnFindWhenReceivingErrorResponseOnAddSubscriptionAsWarning)
+{
+    std::int64_t id = m_conductor.addSubscription(
+        CHANNEL, STREAM_ID, m_onAvailableImageHandler, m_onUnavailableImageHandler);
+
+    m_conductor.onErrorResponse(id, ERROR_CODE_RESOURCE_TEMPORARILY_UNAVAILABLE, "resource unavailable");
+
+    try
+    {
+        std::shared_ptr<Subscription> sub = m_conductor.findSubscription(id);
+        FAIL() << "Exception should be thrown";
+    }
+    catch (util::RegistrationException &e)
+    {
+        ASSERT_EQ(ExceptionCategory::EXCEPTION_CATEGORY_WARN, e.category());
+    }
 }
 
 TEST_F(ClientConductorTest, shouldReturnNullForUnknownSubscription)
@@ -723,7 +741,7 @@ TEST_F(ClientConductorTest, shouldNotCallNewConnectionIfUninterestingRegistratio
     ASSERT_FALSE(sub->hasImage(correlationId));
 }
 
-TEST_F(ClientConductorTest, shouldCallInactiveConnecitonAfterInactiveConnection)
+TEST_F(ClientConductorTest, shouldCallInactiveConnectionAfterInactiveConnection)
 {
     std::int64_t id = m_conductor.addSubscription(
         CHANNEL, STREAM_ID, m_onAvailableImageHandler, m_onUnavailableImageHandler);

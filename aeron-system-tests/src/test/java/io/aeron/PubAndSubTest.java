@@ -126,8 +126,7 @@ public class PubAndSubTest
                 break;
             }
 
-            Thread.yield();
-            Tests.checkInterruptStatus();
+            Tests.yield();
         }
 
         final long expectedOffset = 0L;
@@ -164,8 +163,7 @@ public class PubAndSubTest
         {
             while (publication.offer(buffer, 0, messageLength) < 0L)
             {
-                Thread.yield();
-                Tests.checkInterruptStatus();
+                Tests.yield();
             }
 
             pollForFragment();
@@ -199,8 +197,7 @@ public class PubAndSubTest
         {
             while (publication.offer(buffer, 0, messageLength) < 0L)
             {
-                Thread.yield();
-                Tests.checkInterruptStatus();
+                Tests.yield();
             }
 
             pollForFragment();
@@ -210,27 +207,23 @@ public class PubAndSubTest
         {
             while (publication.offer(buffer, 0, messageLength) < 0L)
             {
-                Thread.yield();
-                Tests.checkInterruptStatus();
+                Tests.yield();
             }
         }
 
         // small enough to leave room for padding that is just a header
         while (publication.offer(buffer, 0, lastMessageLength) < 0L)
         {
-            Thread.yield();
-            Tests.checkInterruptStatus();
+            Tests.yield();
         }
 
         // no roll over
         while (publication.offer(buffer, 0, messageLength) < 0L)
         {
-            Thread.yield();
-            Tests.checkInterruptStatus();
+            Tests.yield();
         }
 
         final MutableInteger fragmentsRead = new MutableInteger();
-
 
         Tests.executeUntil(
             () -> fragmentsRead.value == 9,
@@ -293,8 +286,7 @@ public class PubAndSubTest
         {
             while (publication.offer(buffer, 0, messageLength) < 0L)
             {
-                Thread.yield();
-                Tests.checkInterruptStatus();
+                Tests.yield();
             }
 
             pollForFragment();
@@ -341,8 +333,7 @@ public class PubAndSubTest
             {
                 while (publication.offer(buffer, 0, messageLength) < 0L)
                 {
-                    Thread.yield();
-                    Tests.checkInterruptStatus();
+                    Tests.yield();
                 }
             }
 
@@ -380,8 +371,7 @@ public class PubAndSubTest
             {
                 while (publication.offer(buffer, 0, messageLength) < 0L)
                 {
-                    Thread.yield();
-                    Tests.checkInterruptStatus();
+                    Tests.yield();
                 }
             }
 
@@ -390,8 +380,7 @@ public class PubAndSubTest
 
         while (publication.offer(buffer, 0, messageLength) < 0L)
         {
-            Thread.yield();
-            Tests.checkInterruptStatus();
+            Tests.yield();
         }
 
         final MutableInteger fragmentsRead = new MutableInteger();
@@ -440,8 +429,7 @@ public class PubAndSubTest
         {
             while (publication.offer(buffer, 0, messageLength) < 0L)
             {
-                Thread.yield();
-                Tests.checkInterruptStatus();
+                Tests.yield();
             }
 
             pollForFragment();
@@ -481,8 +469,7 @@ public class PubAndSubTest
             {
                 while (publication.offer(buffer, 0, messageLength) < 0L)
                 {
-                    Thread.yield();
-                    Tests.checkInterruptStatus();
+                    Tests.yield();
                 }
             }
 
@@ -526,8 +513,7 @@ public class PubAndSubTest
                     break;
                 }
 
-                Thread.yield();
-                Tests.checkInterruptStatus();
+                Tests.yield();
             }
 
             if (offerFails > maxFails)
@@ -567,9 +553,6 @@ public class PubAndSubTest
     @Timeout(10)
     public void shouldReceivePublishedMessageOneForOneWithReSubscription(final String channel)
     {
-        // Immediate re-subscription currently doesn't work in the C media driver
-        assumeFalse(TestMediaDriver.shouldRunCMediaDriver());
-
         final int termBufferLength = 64 * 1024;
         final int numMessagesInTermBuffer = 64;
         final int messageLength = (termBufferLength / numMessagesInTermBuffer) - HEADER_LENGTH;
@@ -580,18 +563,13 @@ public class PubAndSubTest
 
         launch(channel);
 
-        while (!subscription.isConnected())
-        {
-            Thread.yield();
-            Tests.checkInterruptStatus();
-        }
+        Tests.awaitConnected(subscription);
 
         for (int i = 0; i < numMessagesToSendStageOne; i++)
         {
             while (publication.offer(buffer, 0, messageLength) < 0L)
             {
-                Thread.yield();
-                Tests.checkInterruptStatus();
+                Tests.yield();
             }
 
             pollForFragment();
@@ -600,13 +578,9 @@ public class PubAndSubTest
         assertEquals(publication.position(), subscription.imageAtIndex(0).position());
 
         subscription.close();
-        subscription = subscribingClient.addSubscription(channel, STREAM_ID);
+        subscription = Tests.reAddSubscription(subscribingClient, channel, STREAM_ID);
 
-        while (!subscription.isConnected())
-        {
-            Thread.yield();
-            Tests.checkInterruptStatus();
-        }
+        Tests.awaitConnected(subscription);
 
         assertEquals(publication.position(), subscription.imageAtIndex(0).position());
 
@@ -614,8 +588,7 @@ public class PubAndSubTest
         {
             while (publication.offer(buffer, 0, messageLength) < 0L)
             {
-                Thread.yield();
-                Tests.checkInterruptStatus();
+                Tests.yield();
             }
 
             pollForFragment();
@@ -651,8 +624,7 @@ public class PubAndSubTest
         {
             while (publication.offer(buffer, 0, messageLength) < 0L)
             {
-                Thread.yield();
-                Tests.checkInterruptStatus();
+                Tests.yield();
             }
         }
 
@@ -686,18 +658,13 @@ public class PubAndSubTest
     {
         launch(channel);
 
-        while (!publication.isConnected())
-        {
-            Thread.yield();
-            Tests.checkInterruptStatus();
-        }
+        Tests.awaitConnected(publication);
 
         subscription.close();
 
         while (publication.isConnected())
         {
-            Thread.yield();
-            Tests.checkInterruptStatus();
+            Tests.yield();
         }
     }
 
@@ -707,8 +674,7 @@ public class PubAndSubTest
 
         while (publication.offer(buffer, 0, SIZE_OF_INT) < 0L)
         {
-            Thread.yield();
-            Tests.checkInterruptStatus();
+            Tests.yield();
         }
     }
 
@@ -722,8 +688,7 @@ public class PubAndSubTest
                 break;
             }
 
-            Thread.yield();
-            Tests.checkInterruptStatus();
+            Tests.yield();
         }
     }
 
@@ -743,8 +708,7 @@ public class PubAndSubTest
 
             if (0 == fragments)
             {
-                Thread.yield();
-                Tests.checkInterruptStatus();
+                Tests.yield();
             }
         }
     }

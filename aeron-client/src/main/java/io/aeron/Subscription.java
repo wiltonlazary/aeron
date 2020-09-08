@@ -16,11 +16,17 @@
 package io.aeron;
 
 import io.aeron.exceptions.AeronException;
-import io.aeron.logbuffer.*;
+import io.aeron.logbuffer.BlockHandler;
+import io.aeron.logbuffer.ControlledFragmentHandler;
+import io.aeron.logbuffer.FragmentHandler;
+import io.aeron.logbuffer.RawBlockHandler;
 import io.aeron.status.ChannelEndpointStatus;
+import io.aeron.status.LocalSocketAddressStatus;
 import org.agrona.collections.ArrayUtil;
 
-import java.util.*;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 import java.util.function.Consumer;
 
 @SuppressWarnings("unused")
@@ -34,13 +40,13 @@ abstract class SubscriptionLhsPadding
 
 abstract class SubscriptionFields extends SubscriptionLhsPadding
 {
-    protected static final Image[] EMPTY_ARRAY = new Image[0];
+    protected static final Image[] EMPTY_IMAGES = new Image[0];
 
     protected final long registrationId;
     protected final int streamId;
     protected int roundRobinIndex = 0;
     protected volatile boolean isClosed = false;
-    protected volatile Image[] images = EMPTY_ARRAY;
+    protected volatile Image[] images = EMPTY_IMAGES;
     protected final ClientConductor conductor;
     protected final String channel;
     protected final AvailableImageHandler availableImageHandler;
@@ -414,6 +420,28 @@ public class Subscription extends SubscriptionFields implements AutoCloseable
     }
 
     /**
+     * Fetches the local socket addresses for this subscription. If the channel is not
+     * {@link io.aeron.status.ChannelEndpointStatus#ACTIVE}, then this will return an empty list.
+     * <p>
+     * The format is as follows:
+     * <br>
+     * <br>
+     * IPv4: <code>ip address:port</code>
+     * <br>
+     * IPv6: <code>[ip6 address]:port</code>
+     * <br>
+     * <br>
+     * This is to match the formatting used in the Aeron URI.
+     *
+     * @return {@link List} of local socket addresses for this subscription.
+     * @see #channelStatus()
+     */
+    public List<String> localSocketAddresses()
+    {
+        return LocalSocketAddressStatus.findAddresses(conductor.countersReader(), channelStatus(), channelStatusId);
+    }
+
+    /**
      * Add a destination manually to a multi-destination Subscription.
      *
      * @param endpointChannel for the destination to add.
@@ -481,6 +509,49 @@ public class Subscription extends SubscriptionFields implements AutoCloseable
         return conductor.asyncRemoveRcvDestination(registrationId, endpointChannel);
     }
 
+    /**
+     * Resolve channel endpoint and replace it with the port from the ephemeral range when 0 was provided. If there are
+     * no addresses, or if there is more than one, returned from {@link #localSocketAddresses()} then the original
+     * {@link #channel()} is returned.
+     * <p>
+     * If the channel is not {@link io.aeron.status.ChannelEndpointStatus#ACTIVE}, then {@code null} will be returned.
+     *
+     * @return channel URI string with an endpoint being resolved to the allocated port.
+     * @see #channelStatus()
+     * @see #localSocketAddresses()
+     */
+    public String tryResolveChannelEndpointPort()
+    {
+        final long channelStatus = channelStatus();
+
+        if (ChannelEndpointStatus.ACTIVE == channelStatus)
+        {
+            final List<String> localSocketAddresses = LocalSocketAddressStatus.findAddresses(
+                conductor.countersReader(), channelStatus, channelStatusId);
+
+            if (1 == localSocketAddresses.size())
+            {
+                final ChannelUri uri = ChannelUri.parse(channel);
+                final String endpoint = uri.get(CommonContext.ENDPOINT_PARAM_NAME);
+
+                if (null != endpoint && endpoint.endsWith(":0"))
+                {
+                    final String resolvedEndpoint = localSocketAddresses.get(0);
+                    final int i = resolvedEndpoint.lastIndexOf(':');
+                    final String newEndpoint =
+                        endpoint.substring(0, endpoint.length() - 2) + resolvedEndpoint.substring(i);
+                    uri.put(CommonContext.ENDPOINT_PARAM_NAME, newEndpoint);
+
+                    return uri.toString();
+                }
+            }
+
+            return channel;
+        }
+
+        return null;
+    }
+
     void channelStatusId(final int id)
     {
         channelStatusId = id;
@@ -495,7 +566,7 @@ public class Subscription extends SubscriptionFields implements AutoCloseable
     {
         isClosed = true;
         final Image[] images = this.images;
-        this.images = EMPTY_ARRAY;
+        this.images = EMPTY_IMAGES;
 
         conductor.closeImages(images, unavailableImageHandler);
     }
@@ -525,7 +596,7 @@ public class Subscription extends SubscriptionFields implements AutoCloseable
         if (null != removedImage)
         {
             removedImage.close();
-            images = ArrayUtil.remove(oldArray, i);
+            images = oldArray.length == 1 ? EMPTY_IMAGES : ArrayUtil.remove(oldArray, i);
             conductor.releaseLogBuffers(removedImage.logBuffers(), correlationId);
         }
 
@@ -539,6 +610,7 @@ public class Subscription extends SubscriptionFields implements AutoCloseable
             ", isClosed=" + isClosed +
             ", streamId=" + streamId +
             ", channel='" + channel + '\'' +
+            ", localSocketAddresses=" + localSocketAddresses() +
             ", imageCount=" + imageCount() +
             '}';
     }

@@ -18,8 +18,8 @@
 
 extern "C"
 {
-#include <aeron_alloc.h>
-#include <util/aeron_strutil.h>
+#include "aeron_alloc.h"
+#include "util/aeron_strutil.h"
 }
 #undef max
 
@@ -68,7 +68,7 @@ TEST_F(StrUtilTest, shouldHandleMoreThanSpecifiedTokens)
     EXPECT_STREQ(tokens[1], "token_b");
 }
 
-TEST_F(StrUtilTest, shouldHandleConsequtiveDelimeters)
+TEST_F(StrUtilTest, shouldHandleConsecutiveDelimeters)
 {
     const int max_tokens = 10;
     char *tokens[max_tokens];
@@ -82,7 +82,7 @@ TEST_F(StrUtilTest, shouldHandleConsequtiveDelimeters)
     EXPECT_STREQ(tokens[2], "token_a");
 }
 
-TEST_F(StrUtilTest, shouldHandleMaxRangeWithConsequtiveDelimeters)
+TEST_F(StrUtilTest, shouldHandleMaxRangeWithConsecutiveDelimeters)
 {
     const int max_tokens = 3;
     char *tokens[max_tokens];
@@ -115,7 +115,7 @@ TEST_F(StrUtilTest, shouldHandleNull)
     const int max_tokens = 3;
     char *tokens[max_tokens];
 
-    int num_tokens = aeron_tokenise(NULL, ',', max_tokens, tokens);
+    int num_tokens = aeron_tokenise(nullptr, ',', max_tokens, tokens);
 
     EXPECT_EQ(num_tokens, -EINVAL);
 }

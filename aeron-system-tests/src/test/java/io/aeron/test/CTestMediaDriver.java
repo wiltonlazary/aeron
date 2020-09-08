@@ -18,8 +18,9 @@ package io.aeron.test;
 import io.aeron.CommonContext;
 import io.aeron.driver.*;
 import io.aeron.protocol.HeaderFlyweight;
-import org.agrona.IoUtil;
+import org.agrona.*;
 import org.agrona.collections.Object2ObjectHashMap;
+import org.agrona.concurrent.AgentInvoker;
 
 import java.io.File;
 import java.io.IOException;
@@ -32,24 +33,23 @@ import static java.util.Collections.emptyMap;
 
 public final class CTestMediaDriver implements TestMediaDriver
 {
-    private static final File NULL_FILE = System.getProperty("os.name").startsWith("Windows") ?
-        new File("NUL") : new File("/dev/null");
-    private static final Map<Class<?>, String> C_DRIVER_FLOW_CONTROL_STRATEGY_NAME_BY_SUPPLIER_TYPE =
+    private static final File NULL_FILE = SystemUtil.isWindows() ? new File("NUL") : new File("/dev/null");
+    private static final Map<Class<? extends FlowControlSupplier>, String> C_DRIVER_FLOW_CONTROL_STRATEGY_NAME_BY_TYPE =
         new IdentityHashMap<>();
     private static final ThreadLocal<Map<MediaDriver.Context, Map<String, String>>> C_DRIVER_ADDITIONAL_ENV_VARS =
         ThreadLocal.withInitial(IdentityHashMap::new);
 
     static
     {
-        C_DRIVER_FLOW_CONTROL_STRATEGY_NAME_BY_SUPPLIER_TYPE.put(
+        C_DRIVER_FLOW_CONTROL_STRATEGY_NAME_BY_TYPE.put(
             DefaultMulticastFlowControlSupplier.class, "aeron_max_multicast_flow_control_strategy_supplier");
-        C_DRIVER_FLOW_CONTROL_STRATEGY_NAME_BY_SUPPLIER_TYPE.put(
+        C_DRIVER_FLOW_CONTROL_STRATEGY_NAME_BY_TYPE.put(
             MaxMulticastFlowControlSupplier.class, "aeron_max_multicast_flow_control_strategy_supplier");
-        C_DRIVER_FLOW_CONTROL_STRATEGY_NAME_BY_SUPPLIER_TYPE.put(
+        C_DRIVER_FLOW_CONTROL_STRATEGY_NAME_BY_TYPE.put(
             MinMulticastFlowControlSupplier.class, "aeron_min_flow_control_strategy_supplier");
-        C_DRIVER_FLOW_CONTROL_STRATEGY_NAME_BY_SUPPLIER_TYPE.put(
+        C_DRIVER_FLOW_CONTROL_STRATEGY_NAME_BY_TYPE.put(
             DefaultUnicastFlowControlSupplier.class, "aeron_unicast_flow_control_strategy_supplier");
-        C_DRIVER_FLOW_CONTROL_STRATEGY_NAME_BY_SUPPLIER_TYPE.put(
+        C_DRIVER_FLOW_CONTROL_STRATEGY_NAME_BY_TYPE.put(
             TaggedMulticastFlowControlSupplier.class, "aeron_tagged_flow_control_strategy_supplier");
     }
 
@@ -67,7 +67,6 @@ public final class CTestMediaDriver implements TestMediaDriver
         this.driverOutputConsumer = driverOutputConsumer;
     }
 
-    @Override
     public void close()
     {
         try
@@ -75,8 +74,8 @@ public final class CTestMediaDriver implements TestMediaDriver
             terminateDriver();
             if (!aeronMediaDriverProcess.waitFor(10, TimeUnit.SECONDS))
             {
-                aeronMediaDriverProcess.destroyForcibly();
-                throw new RuntimeException("Failed to shutdown cleaning, forcing close");
+                aeronMediaDriverProcess.destroyForcibly().waitFor(5, TimeUnit.SECONDS);
+                throw new RuntimeException("Failed to shutdown cleanly, forced close");
             }
 
             if (null != driverOutputConsumer)
@@ -84,13 +83,10 @@ public final class CTestMediaDriver implements TestMediaDriver
                 driverOutputConsumer.exitCode(context.aeronDirectoryName(), aeronMediaDriverProcess.exitValue());
             }
         }
-        catch (final InterruptedException e)
+        catch (final InterruptedException ex)
         {
-            throw new RuntimeException("Interrupted while waiting for shutdown", e);
+            throw new RuntimeException("Interrupted while waiting for shutdown", ex);
         }
-
-        final File aeronDirectory = new File(context.aeronDirectoryName());
-        IoUtil.delete(aeronDirectory, false);
     }
 
     private void terminateDriver()
@@ -99,21 +95,19 @@ public final class CTestMediaDriver implements TestMediaDriver
     }
 
     public static CTestMediaDriver launch(
-        final MediaDriver.Context context,
-        final DriverOutputConsumer driverOutputConsumer)
+        final MediaDriver.Context context, final DriverOutputConsumer driverOutputConsumer)
     {
         final String aeronDirPath = System.getProperty(TestMediaDriver.AERONMD_PATH_PROP_NAME);
-        final File f = new File(aeronDirPath);
+        final File aeronBinary = new File(aeronDirPath);
 
-        if (!f.exists())
+        if (!aeronBinary.exists())
         {
-            throw new RuntimeException("Unable to find native media driver binary: " + f.getAbsolutePath());
+            throw new RuntimeException("Unable to find native media driver binary: " + aeronBinary.getAbsolutePath());
         }
 
-        IoUtil.ensureDirectoryExists(
-            new File(context.aeronDirectoryName()).getParentFile(), "Aeron C Media Driver directory");
+        context.concludeAeronDirectory();
+        IoUtil.ensureDirectoryExists(context.aeronDirectory().getParentFile(), "Aeron C Media Driver directory");
 
-        final ProcessBuilder pb = new ProcessBuilder(f.getAbsolutePath());
         final HashMap<String, String> environment = new HashMap<>();
 
         environment.put("AERON_CLIENT_LIVENESS_TIMEOUT", String.valueOf(context.clientLivenessTimeoutNs()));
@@ -122,12 +116,15 @@ public final class CTestMediaDriver implements TestMediaDriver
         environment.put("AERON_DRIVER_TERMINATION_VALIDATOR", "allow");
         environment.put("AERON_DIR_DELETE_ON_START", Boolean.toString(context.dirDeleteOnStart()));
         environment.put("AERON_DIR_DELETE_ON_SHUTDOWN", Boolean.toString(context.dirDeleteOnShutdown()));
+        environment.put("AERON_TERM_BUFFER_SPARSE_FILE", Boolean.toString(context.termBufferSparseFile()));
         environment.put("AERON_TERM_BUFFER_LENGTH", String.valueOf(context.publicationTermBufferLength()));
+        environment.put("AERON_IPC_TERM_BUFFER_LENGTH", String.valueOf(context.ipcTermBufferLength()));
         environment.put(
             "AERON_PUBLICATION_UNBLOCK_TIMEOUT", String.valueOf(context.publicationUnblockTimeoutNs()));
         environment.put(
             "AERON_PUBLICATION_CONNECTION_TIMEOUT", String.valueOf(context.publicationConnectionTimeoutNs()));
-        environment.put("AERON_SPIES_SIMULATE_CONNECTION", String.valueOf(context.spiesSimulateConnection()));
+        environment.put("AERON_SPIES_SIMULATE_CONNECTION", Boolean.toString(context.spiesSimulateConnection()));
+        environment.put("AERON_PERFORM_STORAGE_CHECKS", Boolean.toString(context.performStorageChecks()));
         if (null != context.threadingMode())
         {
             environment.put("AERON_THREADING_MODE", context.threadingMode().name());
@@ -144,8 +141,7 @@ public final class CTestMediaDriver implements TestMediaDriver
         environment.put("AERON_FLOW_CONTROL_GROUP_TAG", String.valueOf(context.flowControlGroupTag()));
         environment.put(
             "AERON_FLOW_CONTROL_GROUP_MIN_SIZE", String.valueOf(context.flowControlGroupMinSize()));
-        environment.put("AERON_PRINT_CONFIGURATION", "true");
-        environment.put("AERON_EVENT_LOG", "0xFFFF");
+        environment.put("AERON_PRINT_CONFIGURATION", Boolean.toString(context.printConfigurationOnStart()));
 
         if (null != context.resolverName())
         {
@@ -162,22 +158,15 @@ public final class CTestMediaDriver implements TestMediaDriver
         }
 
         setFlowControlStrategy(environment, context);
-        C_DRIVER_ADDITIONAL_ENV_VARS.get().getOrDefault(context, emptyMap()).forEach(environment::put);
         setLogging(environment);
-
-        pb.environment().putAll(environment);
+        C_DRIVER_ADDITIONAL_ENV_VARS.get().getOrDefault(context, emptyMap()).forEach(environment::put);
 
         try
         {
-            final File stdoutFile;
-            final File stderrFile;
+            File stdoutFile = NULL_FILE;
+            File stderrFile = NULL_FILE;
 
-            if (null == driverOutputConsumer)
-            {
-                stdoutFile = NULL_FILE;
-                stderrFile = NULL_FILE;
-            }
-            else
+            if (null != driverOutputConsumer)
             {
                 stdoutFile = File.createTempFile("CTestMediaDriver-", ".out");
                 final String tmpName = stdoutFile.getName().substring(0, stdoutFile.getName().length() - 4) + ".err";
@@ -186,18 +175,23 @@ public final class CTestMediaDriver implements TestMediaDriver
                 driverOutputConsumer.environmentVariables(context.aeronDirectoryName(), environment);
             }
 
+            final ProcessBuilder pb = new ProcessBuilder(aeronBinary.getAbsolutePath());
+            pb.environment().putAll(environment);
             pb.redirectOutput(stdoutFile).redirectError(stderrFile);
 
             return new CTestMediaDriver(pb.start(), context, driverOutputConsumer);
         }
-        catch (final IOException e)
+        catch (final IOException ex)
         {
-            throw new RuntimeException(e);
+            LangUtil.rethrowUnchecked(ex);
+            return null;
         }
     }
 
     private static void setLogging(final Map<String, String> environment)
     {
+        environment.put("AERON_EVENT_LOG", "0x3");
+
         final String driverAgentPath = System.getProperty(DRIVER_AGENT_PATH_PROP_NAME);
         if (null == driverAgentPath)
         {
@@ -211,7 +205,6 @@ public final class CTestMediaDriver implements TestMediaDriver
                 "Unable to find driver agent file at: " + DRIVER_AGENT_PATH_PROP_NAME + "=" + driverAgentPath);
         }
 
-        environment.put("AERON_EVENT_LOG", "0xFFFF");
         environment.put("LD_PRELOAD", driverAgent.getAbsolutePath());
     }
 
@@ -245,7 +238,7 @@ public final class CTestMediaDriver implements TestMediaDriver
     private static String getFlowControlStrategyName(final FlowControlSupplier flowControlSupplier)
     {
         return null == flowControlSupplier ?
-            null : C_DRIVER_FLOW_CONTROL_STRATEGY_NAME_BY_SUPPLIER_TYPE.get(flowControlSupplier.getClass());
+            null : C_DRIVER_FLOW_CONTROL_STRATEGY_NAME_BY_TYPE.get(flowControlSupplier.getClass());
     }
 
     public MediaDriver.Context context()
@@ -256,6 +249,11 @@ public final class CTestMediaDriver implements TestMediaDriver
     public String aeronDirectoryName()
     {
         return context.aeronDirectoryName();
+    }
+
+    public AgentInvoker sharedAgentInvoker()
+    {
+        throw new UnsupportedOperationException("Not supported in C media driver");
     }
 
     public static void enableLossGenerationOnReceive(

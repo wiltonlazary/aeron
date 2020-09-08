@@ -16,6 +16,7 @@
 package io.aeron.test;
 
 import io.aeron.driver.MediaDriver;
+import org.agrona.concurrent.AgentInvoker;
 
 import static org.agrona.Strings.isEmpty;
 import static org.junit.jupiter.api.Assumptions.assumeFalse;
@@ -30,15 +31,9 @@ public interface TestMediaDriver extends AutoCloseable
         return !isEmpty(System.getProperty(AERONMD_PATH_PROP_NAME));
     }
 
-    static void notSupportedOnCMediaDriverYet(final String reason)
+    static void notSupportedOnCMediaDriver(final String reason)
     {
         assumeFalse(shouldRunCMediaDriver(), () -> "Functionality not support by C Media Driver: " + reason);
-    }
-
-    static TestMediaDriver launch(final MediaDriver.Context context)
-    {
-        return shouldRunCMediaDriver() ?
-            CTestMediaDriver.launch(context, null) : JavaTestMediaDriver.launch(context);
     }
 
     static TestMediaDriver launch(final MediaDriver.Context context, final DriverOutputConsumer driverOutputConsumer)
@@ -82,4 +77,6 @@ public interface TestMediaDriver extends AutoCloseable
     String aeronDirectoryName();
 
     void close();
+
+    AgentInvoker sharedAgentInvoker();
 }

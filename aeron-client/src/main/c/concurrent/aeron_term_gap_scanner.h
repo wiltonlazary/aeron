@@ -17,11 +17,8 @@
 #ifndef AERON_TERM_GAP_SCANNER_H
 #define AERON_TERM_GAP_SCANNER_H
 
-#include <stddef.h>
-#include <stdint.h>
 #include "protocol/aeron_udp_protocol.h"
 #include "util/aeron_bitutil.h"
-#include "aeron_atomic.h"
 #include "aeron_logbuffer_descriptor.h"
 
 typedef void (*aeron_term_gap_scanner_on_gap_detected_func_t)(void *clientd, int32_t term_id, int32_t term_offset, size_t length);

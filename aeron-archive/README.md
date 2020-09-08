@@ -3,7 +3,7 @@ Aeron Archive
 
 [![Javadocs](http://www.javadoc.io/badge/io.aeron/aeron-all.svg)](http://www.javadoc.io/doc/io.aeron/aeron-all)
 
-The aeron-archive is an module which enables Aeron data stream recording and replay from persistent storage. 
+The aeron-archive is a module which enables Aeron data stream recording and replay from durable storage. 
 
 Samples can be found [here](https://github.com/real-logic/aeron/blob/master/aeron-samples/scripts/archive/README.md) and
 systems tests [here](https://github.com/real-logic/aeron/tree/master/aeron-system-tests/src/test/java/io/aeron/archive).
@@ -18,10 +18,10 @@ Features:
 - **Extend:** service can extend an existing recording by appending.
 
 - **Replay:** service can replay a recorded `recordingId` from a particular `position`, and for a particular `length`
- which can be `Aeron.NULL_VALUE` for an open ended replay. An open ended replay will stop when it reaches the stop
+ which can be `Aeron.NULL_VALUE` for an open-ended replay. An open-ended replay will stop when it reaches the stop
  position of a recording.
 
-- **Query:** the catalog for existing recordings and the recorded position of an active recording.
+- **Query:** the catalog for existing recordings, and the recorded position of an active recording.
 
 - **Truncate:** allows a stopped recording to have its length truncated, and if truncated to the start position then it
  is effectively deleted.
@@ -41,7 +41,7 @@ Usage
 
 Protocol
 =====
-Messages are specified using SBE in [aeron-archive-codecs.xml](https://github.com/real-logic/aeron/blob/master/aeron-archive/src/main/resources/archive/aeron-archive-codecs.xml).
+Messages specification use SBE [aeron-archive-codecs.xml](https://github.com/real-logic/aeron/blob/master/aeron-archive/src/main/resources/archive/aeron-archive-codecs.xml).
 The Archive communicates via the following interfaces:
 
  - **Recording Events stream:** other parties can subscribe to events for the start,
@@ -68,7 +68,8 @@ replicate, and live merge.
 
 Recording Durability
 ----
-An archive can be instructed to record streams, i.e. `<channel, streamId>` pairs. These streams are recorded with the file sync level the archive has been launched with. Progress is reported on the recording events stream.
+An archive can be instructed to record streams, i.e. `<channel, streamId>` pairs. These streams are recorded with the
+file sync level the archive has been launched with. Progress is reported on the recording events stream.
 
 - `aeron.archive.file.sync.level=0`: for normal writes to the OS page cache for background writing to disk.
 - `aeron.archive.file.sync.level=1`: for forcing the dirty data pages to disk. 
@@ -77,7 +78,8 @@ An archive can be instructed to record streams, i.e. `<channel, streamId>` pairs
 When setting file sync level greater than zero it is also important to sync the archive catalog with the
  `aeron.archive.catalog.file.sync.level` to the same value.
 
-Recordings will be assigned a `recordingId` and a full description of the stream is captured in the Archive Catalog. The Catalog chronicles the contents of an archive as `RecordingDescriptor`s which can be queried.
+Recordings will be assigned a `recordingId` and a full description of the stream is captured in the Archive Catalog.
+The Catalog chronicles the contents of an archive as `RecordingDescriptor`s which can be queried.
 
 The progress of active recordings can be tracked using `AeronStat` to view the `rec-pos` counter for each stream.
 
@@ -108,12 +110,12 @@ to run `CatalogTool` with the `describe` command on the archive directory. A pre
 only be readable by a previous version of `CatalogTool`. To migrate the archive, please follow
 the steps below.
 
-- Ensure archive is shutdown and all stopPositions have been updated.
-- Ensure archive directory is backed up appropriately.
+- Shutdown the Archive and ensure all recordings have a stop position.
+- Take a backup of the Archive directory.
 - Run `CatalogTool` command `migrate`. Information on versions, etc. will be displayed. Errors
 will also be displayed.
 - Run `CatalogTool` command `verify` to check for validity.
 
 This is a list of Version that require migration are below.
 
-- Version previous to 1.0.0 must migrate as the names of segment files was changed.
+- Version previous to 1.0.0 must migrate due to the segment file name change.

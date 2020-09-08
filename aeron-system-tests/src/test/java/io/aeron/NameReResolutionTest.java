@@ -64,15 +64,10 @@ public class NameReResolutionTest
         "aeron:udp?control=" + CONTROL_NAME + "|control-mode=dynamic";
     private static final String SUBSCRIPTION_MDS_URI = "aeron:udp?control-mode=manual";
 
-    private static final String STUB_LOOKUP_CONFIGURATION;
-
-    static
-    {
-        STUB_LOOKUP_CONFIGURATION =
-            ENDPOINT_NAME + "," + ENDPOINT_PARAM_NAME + "," + "localhost:24326,localhost:24325|" +
-            CONTROL_NAME + "," + MDC_CONTROL_PARAM_NAME + "," + "localhost:24328,localhost:24327|" +
-            ENDPOINT_WITH_ERROR_NAME + "," + ENDPOINT_PARAM_NAME + "," + BAD_ADDRESS + ",localhost:24325|";
-    }
+    private static final String STUB_LOOKUP_CONFIGURATION =
+        ENDPOINT_NAME + "," + ENDPOINT_PARAM_NAME + "," + "localhost:24326,localhost:24325|" +
+        CONTROL_NAME + "," + MDC_CONTROL_PARAM_NAME + "," + "localhost:24328,localhost:24327|" +
+        ENDPOINT_WITH_ERROR_NAME + "," + ENDPOINT_PARAM_NAME + "," + BAD_ADDRESS + ",localhost:24325|";
 
     private static final int STREAM_ID = 1001;
 
@@ -118,7 +113,7 @@ public class NameReResolutionTest
     @SlowTest
     @Test
     @Timeout(20)
-    public void shouldReResolveEndpointOnNoConnected()
+    public void shouldReResolveEndpointOnNotConnected()
     {
         final long initialResolutionChanges = countersReader.getCounterValue(RESOLUTION_CHANGES.id());
 
@@ -147,7 +142,7 @@ public class NameReResolutionTest
         // wait for disconnect to ensure we stay in lock step
         while (publication.isConnected())
         {
-            Tests.sleep(100);
+            Tests.sleep(10);
         }
 
         subscription = client.addSubscription(SECOND_SUBSCRIPTION_URI, STREAM_ID);
@@ -179,7 +174,7 @@ public class NameReResolutionTest
     @SlowTest
     @Test
     @Timeout(20)
-    public void shouldReResolveMdcManualEndpointOnNoConnected()
+    public void shouldReResolveMdcManualEndpointOnNotConnected()
     {
         final long initialResolutionChanges = countersReader.getCounterValue(RESOLUTION_CHANGES.id());
 
@@ -209,7 +204,7 @@ public class NameReResolutionTest
         // wait for disconnect to ensure we stay in lock step
         while (publication.isConnected())
         {
-            Tests.sleep(100);
+            Tests.sleep(10);
         }
 
         subscription = client.addSubscription(SECOND_SUBSCRIPTION_URI, STREAM_ID);
@@ -241,7 +236,7 @@ public class NameReResolutionTest
     @SlowTest
     @Test
     @Timeout(20)
-    public void shouldReResolveMdcDynamicControlOnNoConnected()
+    public void shouldReResolveMdcDynamicControlOnNotConnected()
     {
         final long initialResolutionChanges = countersReader.getCounterValue(RESOLUTION_CHANGES.id());
         buffer.putInt(0, 1);
@@ -269,7 +264,7 @@ public class NameReResolutionTest
         // wait for disconnect to ensure we stay in lock step
         while (subscription.isConnected())
         {
-            Tests.sleep(100);
+            Tests.sleep(10);
         }
 
         publication = client.addPublication(SECOND_PUBLICATION_DYNAMIC_MDC_URI, STREAM_ID);
@@ -301,10 +296,9 @@ public class NameReResolutionTest
     @SlowTest
     @Test
     @Timeout(20)
-    public void shouldReResolveMdcDynamicControlOnManualDestinationSubscriptionOnNoConnected()
+    public void shouldReResolveMdcDynamicControlOnManualDestinationSubscriptionOnNotConnected()
     {
         final long initialResolutionChanges = countersReader.getCounterValue(RESOLUTION_CHANGES.id());
-        TestMediaDriver.notSupportedOnCMediaDriverYet("Multi-Destination-Subscriptions");
 
         buffer.putInt(0, 1);
 
@@ -332,7 +326,7 @@ public class NameReResolutionTest
         // wait for disconnect to ensure we stay in lock step
         while (subscription.isConnected())
         {
-            Tests.sleep(100);
+            Tests.sleep(10);
         }
 
         publication = client.addPublication(SECOND_PUBLICATION_DYNAMIC_MDC_URI, STREAM_ID);
@@ -392,14 +386,15 @@ public class NameReResolutionTest
         // wait for disconnect to ensure we stay in lock step
         while (publication.isConnected())
         {
-            Tests.sleep(100);
+            Tests.sleep(10);
         }
 
         Tests.awaitCounterDelta(
             client.countersReader(), SystemCounterDescriptor.ERRORS.id(), initialErrorCount, 1);
 
         final Matcher<String> exceptionMessageMatcher = allOf(
-            containsString("endpoint=" + ENDPOINT_WITH_ERROR_NAME), containsString("name-and-port=" + BAD_ADDRESS));
+            containsString("endpoint=" + ENDPOINT_WITH_ERROR_NAME),
+            containsString("name-and-port=" + BAD_ADDRESS));
 
         ErrorReportTestUtil.waitForErrorToOccur(
             client.context().aeronDirectoryName(),

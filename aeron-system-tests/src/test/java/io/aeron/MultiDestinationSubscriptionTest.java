@@ -21,21 +21,20 @@ import io.aeron.logbuffer.FragmentHandler;
 import io.aeron.logbuffer.Header;
 import io.aeron.logbuffer.LogBufferDescriptor;
 import io.aeron.protocol.DataHeaderFlyweight;
-import io.aeron.test.TestMediaDriver;
-import io.aeron.test.Tests;
+import io.aeron.test.*;
 import org.agrona.CloseHelper;
 import org.agrona.DirectBuffer;
 import org.agrona.IoUtil;
 import org.agrona.SystemUtil;
-import org.agrona.collections.MutableInteger;
+import org.agrona.collections.MutableLong;
 import org.agrona.concurrent.UnsafeBuffer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.extension.RegisterExtension;
 
 import java.io.File;
-import java.util.UUID;
-import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -59,8 +58,7 @@ public class MultiDestinationSubscriptionTest
     private static final int NUM_MESSAGES_PER_TERM = 64;
     private static final int MESSAGE_LENGTH =
         (TERM_BUFFER_LENGTH / NUM_MESSAGES_PER_TERM) - DataHeaderFlyweight.HEADER_LENGTH;
-    private static final String ROOT_DIR =
-        SystemUtil.tmpDirName() + "aeron-system-tests-" + UUID.randomUUID() + File.separator;
+    private static final String ROOT_DIR = SystemUtil.tmpDirName() + "aeron-system-tests" + File.separator;
 
     private final MediaDriver.Context driverContextA = new MediaDriver.Context();
     private final MediaDriver.Context driverContextB = new MediaDriver.Context();
@@ -77,10 +75,11 @@ public class MultiDestinationSubscriptionTest
     private final FragmentHandler fragmentHandler = mock(FragmentHandler.class);
     private final FragmentHandler copyFragmentHandler = mock(FragmentHandler.class);
 
+    @RegisterExtension
+    public final MediaDriverTestWatcher testWatcher = new MediaDriverTestWatcher();
+
     private void launch()
     {
-        TestMediaDriver.notSupportedOnCMediaDriverYet("Multi-destination-cast not available");
-
         final String baseDirA = ROOT_DIR + "A";
 
         buffer.putInt(0, 1);
@@ -91,7 +90,7 @@ public class MultiDestinationSubscriptionTest
             .aeronDirectoryName(baseDirA)
             .threadingMode(ThreadingMode.SHARED);
 
-        driverA = TestMediaDriver.launch(driverContextA);
+        driverA = TestMediaDriver.launch(driverContextA, testWatcher);
         clientA = Aeron.connect(new Aeron.Context().aeronDirectoryName(driverContextA.aeronDirectoryName()));
     }
 
@@ -105,7 +104,7 @@ public class MultiDestinationSubscriptionTest
             .aeronDirectoryName(baseDirB)
             .threadingMode(ThreadingMode.SHARED);
 
-        driverB = TestMediaDriver.launch(driverContextB);
+        driverB = TestMediaDriver.launch(driverContextB, testWatcher);
         clientB = Aeron.connect(new Aeron.Context().aeronDirectoryName(driverContextB.aeronDirectoryName()));
     }
 
@@ -149,11 +148,7 @@ public class MultiDestinationSubscriptionTest
 
         publicationA = clientA.addPublication(PUB_UNICAST_URI, STREAM_ID);
 
-        while (subscription.hasNoImages())
-        {
-            Thread.yield();
-            Tests.checkInterruptStatus();
-        }
+        Tests.awaitConnected(subscription);
     }
 
     @Test
@@ -167,11 +162,7 @@ public class MultiDestinationSubscriptionTest
 
         publicationA = clientA.addPublication(PUB_MULTICAST_URI, STREAM_ID);
 
-        while (subscription.hasNoImages())
-        {
-            Thread.yield();
-            Tests.checkInterruptStatus();
-        }
+        Tests.awaitConnected(subscription);
 
         assertFalse(clientA.isCommandActive(correlationId));
     }
@@ -187,11 +178,7 @@ public class MultiDestinationSubscriptionTest
 
         publicationA = clientA.addPublication(PUB_MDC_URI, STREAM_ID);
 
-        while (subscription.hasNoImages())
-        {
-            Thread.yield();
-            Tests.checkInterruptStatus();
-        }
+        Tests.awaitConnected(subscription);
     }
 
     @Test
@@ -199,7 +186,6 @@ public class MultiDestinationSubscriptionTest
     public void shouldSendToSingleDestinationSubscriptionWithUnicast()
     {
         final int numMessagesToSend = NUM_MESSAGES_PER_TERM * 3;
-        final MutableInteger fragmentsRead = new MutableInteger();
 
         launch();
 
@@ -208,25 +194,149 @@ public class MultiDestinationSubscriptionTest
 
         publicationA = clientA.addPublication(PUB_UNICAST_URI, STREAM_ID);
 
-        while (subscription.hasNoImages())
-        {
-            Thread.yield();
-            Tests.checkInterruptStatus();
-        }
+        Tests.awaitConnected(subscription);
 
         for (int i = 0; i < numMessagesToSend; i++)
         {
             while (publicationA.offer(buffer, 0, buffer.capacity()) < 0L)
             {
-                Thread.yield();
-                Tests.checkInterruptStatus();
+                Tests.yield();
             }
 
-            fragmentsRead.set(0);
-            pollForFragment(subscription, fragmentHandler, fragmentsRead);
+            pollForFragment(subscription, fragmentHandler);
         }
 
         verifyFragments(fragmentHandler, numMessagesToSend);
+    }
+
+    @Test
+    @Timeout(10)
+    @SlowTest
+    public void shouldAllowMultipleMdsSubscriptions()
+    {
+        final String unicastUri2 = "aeron:udp?endpoint=localhost:24326";
+
+        launch();
+
+        subscription = clientA.addSubscription(SUB_URI, STREAM_ID);
+        subscription.addDestination(PUB_UNICAST_URI);
+
+        try (Subscription subscriptionB = clientA.addSubscription(SUB_URI, STREAM_ID))
+        {
+            subscriptionB.addDestination(unicastUri2);
+
+            publicationA = clientA.addPublication(PUB_UNICAST_URI, STREAM_ID);
+            publicationB = clientA.addPublication(unicastUri2, STREAM_ID);
+
+            while (publicationA.offer(buffer, 0, buffer.capacity()) < 0)
+            {
+                Tests.yield();
+            }
+
+            while (subscription.poll(fragmentHandler, 1) <= 0)
+            {
+                Tests.yield();
+            }
+
+            // Wait a bit to ensure a message doesn't arrive.
+            Tests.sleep(1000);
+
+            assertEquals(0, subscriptionB.poll(fragmentHandler, 1));
+
+            while (publicationB.offer(buffer, 0, buffer.capacity()) < 0)
+            {
+                Tests.yield();
+            }
+
+            while (subscriptionB.poll(fragmentHandler, 1) <= 0)
+            {
+                Tests.yield();
+            }
+
+            // Wait a bit to ensure a message doesn't arrive.
+            Tests.sleep(1000);
+
+            assertEquals(0, subscription.poll(fragmentHandler, 1));
+        }
+    }
+
+    @Test
+    @Timeout(10)
+    public void shouldFindMdsSubscriptionWithTags()
+    {
+        launch();
+
+        subscription = clientA.addSubscription(SUB_URI + "|tags=1001", STREAM_ID);
+        subscription.addDestination(PUB_UNICAST_URI);
+
+        try (Subscription ignore = clientA.addSubscription(SUB_URI + "|tags=1002", STREAM_ID);
+            Subscription subscriptionA1 = clientA.addSubscription("aeron:udp?tags=1001", STREAM_ID))
+        {
+            publicationA = clientA.addPublication(PUB_UNICAST_URI, STREAM_ID);
+
+            while (publicationA.offer(buffer, 0, buffer.capacity()) < 0)
+            {
+                Tests.yield();
+            }
+
+            while (subscriptionA1.poll(fragmentHandler, 1) <= 0)
+            {
+                Tests.yield();
+            }
+        }
+    }
+
+    @Test
+    @Timeout(10)
+    @SlowTest
+    public void shouldAllowMultipleMdsSubscriptionsWithTags()
+    {
+        final String unicastUri2 = "aeron:udp?endpoint=localhost:24326";
+
+        launch();
+
+        subscription = clientA.addSubscription(SUB_URI + "|tags=1001", STREAM_ID);
+        subscription.addDestination(PUB_UNICAST_URI);
+
+        try (Subscription subscriptionB = clientA.addSubscription(SUB_URI + "|tags=1002", STREAM_ID);
+            Subscription subscriptionA1 = clientA.addSubscription("aeron:udp?tags=1001", STREAM_ID);
+            Subscription subscriptionB1 = clientA.addSubscription("aeron:udp?tags=1002", STREAM_ID))
+        {
+            subscriptionB.addDestination(unicastUri2);
+
+            publicationA = clientA.addPublication(PUB_UNICAST_URI, STREAM_ID);
+            publicationB = clientA.addPublication(unicastUri2, STREAM_ID);
+
+            while (publicationA.offer(buffer, 0, buffer.capacity()) < 0)
+            {
+                Tests.yield();
+            }
+
+            while (subscriptionA1.poll(fragmentHandler, 1) <= 0)
+            {
+                Tests.yield();
+            }
+
+            // Wait a bit to ensure a message doesn't arrive.
+            Tests.sleep(1000);
+
+            assertEquals(0, subscriptionB1.poll(fragmentHandler, 1));
+
+            while (publicationB.offer(buffer, 0, buffer.capacity()) < 0)
+            {
+                Tests.yield();
+            }
+
+            while (subscriptionB1.poll(fragmentHandler, 1) <= 0)
+            {
+                Tests.yield();
+            }
+
+            // Wait a bit to ensure a message doesn't arrive.
+            Tests.sleep(1000);
+
+            assertEquals(0, subscriptionA1.poll(fragmentHandler, 1));
+        }
     }
 
     @Test
@@ -235,8 +345,6 @@ public class MultiDestinationSubscriptionTest
     {
         final int numMessagesToSend = NUM_MESSAGES_PER_TERM * 3;
         final String tags = "1,2";
-        final MutableInteger fragmentsRead = new MutableInteger();
-        final MutableInteger copyFragmentsRead = new MutableInteger();
 
         launch();
 
@@ -253,25 +361,17 @@ public class MultiDestinationSubscriptionTest
 
         publicationA = clientA.addPublication(PUB_UNICAST_URI, STREAM_ID);
 
-        while (subscription.hasNoImages())
-        {
-            Thread.yield();
-            Tests.checkInterruptStatus();
-        }
+        Tests.awaitConnected(subscription);
 
         for (int i = 0; i < numMessagesToSend; i++)
         {
             while (publicationA.offer(buffer, 0, buffer.capacity()) < 0L)
             {
-                Thread.yield();
-                Tests.checkInterruptStatus();
+                Tests.yield();
             }
 
-            fragmentsRead.set(0);
-            pollForFragment(subscription, fragmentHandler, fragmentsRead);
-
-            copyFragmentsRead.set(0);
-            pollForFragment(copySubscription, copyFragmentHandler, copyFragmentsRead);
+            pollForFragment(subscription, fragmentHandler);
+            pollForFragment(copySubscription, copyFragmentHandler);
         }
 
         verifyFragments(fragmentHandler, numMessagesToSend);
@@ -283,7 +383,6 @@ public class MultiDestinationSubscriptionTest
     public void shouldSendToSingleDestinationSubscriptionWithMulticast()
     {
         final int numMessagesToSend = NUM_MESSAGES_PER_TERM * 3;
-        final MutableInteger fragmentsRead = new MutableInteger();
 
         launch();
 
@@ -292,22 +391,16 @@ public class MultiDestinationSubscriptionTest
 
         publicationA = clientA.addPublication(PUB_MULTICAST_URI, STREAM_ID);
 
-        while (subscription.hasNoImages())
-        {
-            Thread.yield();
-            Tests.checkInterruptStatus();
-        }
+        Tests.awaitConnected(subscription);
 
         for (int i = 0; i < numMessagesToSend; i++)
         {
             while (publicationA.offer(buffer, 0, buffer.capacity()) < 0L)
             {
-                Thread.yield();
-                Tests.checkInterruptStatus();
+                Tests.yield();
             }
 
-            fragmentsRead.set(0);
-            pollForFragment(subscription, fragmentHandler, fragmentsRead);
+            pollForFragment(subscription, fragmentHandler);
         }
 
         verifyFragments(fragmentHandler, numMessagesToSend);
@@ -318,7 +411,6 @@ public class MultiDestinationSubscriptionTest
     public void shouldSendToSingleDestinationSubscriptionWithDynamicMdc()
     {
         final int numMessagesToSend = NUM_MESSAGES_PER_TERM * 3;
-        final MutableInteger fragmentsRead = new MutableInteger();
 
         launch();
 
@@ -327,22 +419,16 @@ public class MultiDestinationSubscriptionTest
 
         publicationA = clientA.addPublication(PUB_MDC_URI, STREAM_ID);
 
-        while (subscription.hasNoImages())
-        {
-            Thread.yield();
-            Tests.checkInterruptStatus();
-        }
+        Tests.awaitConnected(subscription);
 
         for (int i = 0; i < numMessagesToSend; i++)
         {
             while (publicationA.offer(buffer, 0, buffer.capacity()) < 0L)
             {
-                Thread.yield();
-                Tests.checkInterruptStatus();
+                Tests.yield();
             }
 
-            fragmentsRead.set(0);
-            pollForFragment(subscription, fragmentHandler, fragmentsRead);
+            pollForFragment(subscription, fragmentHandler);
         }
 
         verifyFragments(fragmentHandler, numMessagesToSend);
@@ -357,7 +443,6 @@ public class MultiDestinationSubscriptionTest
         final int numMessagesToSendForB = numMessagesToSend / 2;
         final String tags = "1,2";
         final int pubTag = 2;
-        final MutableInteger fragmentsRead = new MutableInteger();
 
         launch();
 
@@ -375,29 +460,22 @@ public class MultiDestinationSubscriptionTest
 
         publicationA = clientA.addPublication(publicationChannelA, STREAM_ID);
 
-        while (subscription.hasNoImages())
-        {
-            Thread.yield();
-            Tests.checkInterruptStatus();
-        }
+        Tests.awaitConnected(subscription);
 
         for (int i = 0; i < numMessagesToSendForA; i++)
         {
             while (publicationA.offer(buffer, 0, buffer.capacity()) < 0L)
             {
-                Thread.yield();
-                Tests.checkInterruptStatus();
+                Tests.yield();
             }
 
-            fragmentsRead.set(0);
-            pollForFragment(subscription, fragmentHandler, fragmentsRead);
+            pollForFragment(subscription, fragmentHandler);
         }
 
         final long position = publicationA.position();
         final int initialTermId = publicationA.initialTermId();
         final int positionBitsToShift = Long.numberOfTrailingZeros(publicationA.termBufferLength());
-        final int termId = LogBufferDescriptor
-            .computeTermIdFromPosition(position, positionBitsToShift, initialTermId);
+        final int termId = LogBufferDescriptor.computeTermIdFromPosition(position, positionBitsToShift, initialTermId);
         final int termOffset = (int)(position & (publicationA.termBufferLength() - 1));
 
         builder
@@ -427,12 +505,10 @@ public class MultiDestinationSubscriptionTest
         {
             while (publicationB.offer(buffer, 0, buffer.capacity()) < 0L)
             {
-                Thread.yield();
-                Tests.checkInterruptStatus();
+                Tests.yield();
             }
 
-            fragmentsRead.set(0);
-            pollForFragment(subscription, fragmentHandler, fragmentsRead);
+            pollForFragment(subscription, fragmentHandler);
         }
 
         assertEquals(1, subscription.imageCount());
@@ -481,25 +557,23 @@ public class MultiDestinationSubscriptionTest
             .endpoint(UNICAST_ENDPOINT_B);
 
         final String publicationChannelB = builder.build();
-        final MutableInteger fragmentsRead = new MutableInteger();
 
         publicationB = clientB.addExclusivePublication(publicationChannelB, STREAM_ID);
+        final MutableLong position = new MutableLong(Long.MIN_VALUE);
+        final Supplier<String> offerFailure = () -> "Failed to offer: " + position;
 
         for (int i = 0; i < numMessagesToSendForA; i++)
         {
             while (publicationA.offer(buffer, 0, buffer.capacity()) < 0L)
             {
-                Thread.yield();
-                Tests.checkInterruptStatus();
+                Tests.yield();
             }
 
-            fragmentsRead.set(0);
-            pollForFragment(subscription, fragmentHandler, fragmentsRead);
+            pollForFragment(subscription, fragmentHandler);
 
-            while (publicationB.offer(buffer, 0, buffer.capacity()) < 0L)
+            while ((position.value = publicationB.offer(buffer, 0, buffer.capacity())) < 0L)
             {
-                Thread.yield();
-                Tests.checkInterruptStatus();
+                Tests.yieldingWait(offerFailure);
             }
 
             assertEquals(0, subscription.poll(fragmentHandler, 10));
@@ -509,17 +583,14 @@ public class MultiDestinationSubscriptionTest
         {
             while (publicationB.offer(buffer, 0, buffer.capacity()) < 0L)
             {
-                Thread.yield();
-                Tests.checkInterruptStatus();
+                Tests.yield();
             }
 
-            fragmentsRead.set(0);
-            pollForFragment(subscription, fragmentHandler, fragmentsRead);
+            pollForFragment(subscription, fragmentHandler);
 
             while (publicationA.offer(buffer, 0, buffer.capacity()) < 0L)
             {
-                Thread.yield();
-                Tests.checkInterruptStatus();
+                Tests.yield();
             }
 
             assertEquals(0, subscription.poll(fragmentHandler, 10));
@@ -530,23 +601,12 @@ public class MultiDestinationSubscriptionTest
         verifyFragments(fragmentHandler, numMessagesToSend);
     }
 
-    private void pollForFragment(
-        final Subscription subscription, final FragmentHandler handler, final MutableInteger fragmentsRead)
+    private void pollForFragment(final Subscription subscription, final FragmentHandler handler)
     {
-        Tests.executeUntil(
-            () -> fragmentsRead.get() > 0,
-            (j) ->
-            {
-                final int fragments = subscription.poll(handler, 10);
-                if (fragments == 0)
-                {
-                    Thread.yield();
-                }
-
-                fragmentsRead.value += fragments;
-            },
-            Integer.MAX_VALUE,
-            TimeUnit.MILLISECONDS.toNanos(500));
+        while (0 == subscription.poll(handler, 1))
+        {
+            Tests.yield();
+        }
     }
 
     private void verifyFragments(final FragmentHandler fragmentHandler, final int numMessagesToSend)

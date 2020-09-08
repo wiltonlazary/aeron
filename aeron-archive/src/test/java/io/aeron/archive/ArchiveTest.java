@@ -39,6 +39,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.File;
 import java.nio.charset.StandardCharsets;
@@ -49,7 +50,6 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.function.IntConsumer;
 
-import static io.aeron.archive.Archive.Configuration.MAX_BLOCK_LENGTH;
 import static io.aeron.archive.ArchiveThreadingMode.DEDICATED;
 import static io.aeron.archive.ArchiveThreadingMode.SHARED;
 import static io.aeron.archive.client.AeronArchive.segmentFileBasePosition;
@@ -192,7 +192,7 @@ public class ArchiveTest
 
             while ((resultingPosition = publication.offer(buffer)) <= 0)
             {
-                Thread.yield();
+                Tests.yield();
             }
 
             final Aeron aeron = archive.context().aeron();
@@ -202,14 +202,14 @@ public class ArchiveTest
             final CountersReader countersReader = aeron.countersReader();
             while (Aeron.NULL_VALUE == (counterId = RecordingPos.findCounterIdBySession(countersReader, sessionId)))
             {
-                Thread.yield();
+                Tests.yield();
             }
 
             recordingId = RecordingPos.getRecordingId(countersReader, counterId);
 
             while (countersReader.getCounterValue(counterId) < resultingPosition)
             {
-                Thread.yield();
+                Tests.yield();
             }
         }
 
@@ -310,7 +310,7 @@ public class ArchiveTest
         final UnsafeBuffer buffer = context.dataBuffer();
 
         assertNotNull(buffer);
-        assertEquals(MAX_BLOCK_LENGTH, buffer.capacity());
+        assertEquals(context.fileIoMaxLength(), buffer.capacity());
         assertSame(buffer, context.dataBuffer());
     }
 
@@ -332,7 +332,7 @@ public class ArchiveTest
         final UnsafeBuffer buffer = context.replayBuffer();
 
         assertNotNull(buffer);
-        assertEquals(MAX_BLOCK_LENGTH, buffer.capacity());
+        assertEquals(context.fileIoMaxLength(), buffer.capacity());
         assertSame(buffer, context.replayBuffer());
         assertNotSame(context.dataBuffer(), buffer);
     }
@@ -374,7 +374,7 @@ public class ArchiveTest
         final UnsafeBuffer buffer = context.recordChecksumBuffer();
 
         assertNotNull(buffer);
-        assertEquals(MAX_BLOCK_LENGTH, buffer.capacity());
+        assertEquals(context.fileIoMaxLength(), buffer.capacity());
         assertSame(buffer, context.recordChecksumBuffer());
         assertNotSame(context.dataBuffer(), buffer);
     }
@@ -400,6 +400,48 @@ public class ArchiveTest
         final UnsafeBuffer buffer = context.recordChecksumBuffer();
 
         assertSame(context.dataBuffer(), buffer);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = { "localhost:0", "localhost:8888" })
+    public void shouldResolveControlResponseEndpointAddress(final String endpoint)
+    {
+        final MediaDriver.Context driverCtx = new MediaDriver.Context()
+            .dirDeleteOnStart(true)
+            .threadingMode(ThreadingMode.SHARED);
+        final Context archiveCtx = new Context().threadingMode(SHARED);
+        final String controlResponseChannel = "aeron:udp?endpoint=" + endpoint;
+        final AeronArchive.Context clientContext = new AeronArchive.Context()
+            .controlResponseChannel(controlResponseChannel);
+
+        try (ArchivingMediaDriver ignore = ArchivingMediaDriver.launch(driverCtx, archiveCtx);
+            AeronArchive archive = AeronArchive.connect(clientContext))
+        {
+            final int count = archive.listRecordings(0, 10,
+                (controlSessionId,
+                correlationId,
+                recordingId,
+                startTimestamp,
+                stopTimestamp,
+                startPosition,
+                stopPosition,
+                initialTermId,
+                segmentFileLength,
+                termBufferLength,
+                mtuLength,
+                sessionId,
+                streamId,
+                strippedChannel,
+                originalChannel,
+                sourceIdentity) -> {});
+
+            assertEquals(0, count);
+        }
+        finally
+        {
+            archiveCtx.deleteDirectory();
+            driverCtx.deleteDirectory();
+        }
     }
 
     static final class SubscriptionDescriptor

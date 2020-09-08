@@ -18,14 +18,13 @@
 #include <cstdint>
 #include <thread>
 #include <atomic>
-#include <exception>
 #include <functional>
 
 #include <gtest/gtest.h>
 
 extern "C"
 {
-#include <concurrent/aeron_spsc_concurrent_array_queue.h>
+#include "concurrent/aeron_spsc_concurrent_array_queue.h"
 }
 
 #define CAPACITY (8u)
@@ -41,7 +40,7 @@ public:
         }
     }
 
-    virtual ~SpscQueueTest()
+    ~SpscQueueTest() override
     {
         aeron_spsc_concurrent_array_queue_close(&m_q);
     }
@@ -73,7 +72,7 @@ TEST_F(SpscQueueTest, shouldGetSizeWhenEmpty)
 
 TEST_F(SpscQueueTest, shouldReturnErrorWhenNullOffered)
 {
-    EXPECT_EQ(aeron_spsc_concurrent_array_queue_offer(&m_q, NULL), AERON_OFFER_ERROR);
+    EXPECT_EQ(aeron_spsc_concurrent_array_queue_offer(&m_q, nullptr), AERON_OFFER_ERROR);
 }
 
 TEST_F(SpscQueueTest, shouldOfferAndDrainToEmptyQueue)
@@ -83,10 +82,11 @@ TEST_F(SpscQueueTest, shouldOfferAndDrainToEmptyQueue)
     EXPECT_EQ(aeron_spsc_concurrent_array_queue_offer(&m_q, (void *)element), AERON_OFFER_SUCCESS);
     EXPECT_EQ(aeron_spsc_concurrent_array_queue_size(&m_q), 1u);
 
-    m_drain = [&](volatile void *e)
-    {
-        ASSERT_EQ(e, (void *)element);
-    };
+    m_drain =
+        [&](volatile void *e)
+        {
+            ASSERT_EQ(e, (void *)element);
+        };
 
     EXPECT_EQ(aeron_spsc_concurrent_array_queue_drain(&m_q, SpscQueueTest::drain_func, this, UINT64_MAX), 1u);
 }
@@ -104,10 +104,11 @@ TEST_F(SpscQueueTest, shouldDrainSingleElementFromFullQueue)
 {
     fillQueue();
 
-    m_drain = [&](volatile void *e)
-    {
-        ASSERT_EQ(e, (void *)1);
-    };
+    m_drain =
+        [&](volatile void *e)
+        {
+            ASSERT_EQ(e, (void *)1);
+        };
 
     EXPECT_EQ(aeron_spsc_concurrent_array_queue_drain(&m_q, SpscQueueTest::drain_func, this, 1), 1u);
     EXPECT_EQ(aeron_spsc_concurrent_array_queue_size(&m_q), CAPACITY - 1);
@@ -115,10 +116,11 @@ TEST_F(SpscQueueTest, shouldDrainSingleElementFromFullQueue)
 
 TEST_F(SpscQueueTest, shouldDrainNothingFromEmptyQueue)
 {
-    m_drain = [&](volatile void *e)
-    {
-        FAIL();
-    };
+    m_drain =
+        [&](volatile void *e)
+        {
+            FAIL();
+        };
 
     EXPECT_EQ(aeron_spsc_concurrent_array_queue_drain(&m_q, SpscQueueTest::drain_func, this, UINT64_MAX), 0u);
 }
@@ -128,27 +130,29 @@ TEST_F(SpscQueueTest, shouldDrainFullQueue)
     fillQueue();
 
     int64_t counter = 1;
-    m_drain = [&](volatile void *e)
-    {
-        ASSERT_EQ(e, (void *)counter);
-        counter++;
-    };
+    m_drain =
+        [&](volatile void *e)
+        {
+            ASSERT_EQ(e, (void *)counter);
+            counter++;
+        };
 
     EXPECT_EQ(aeron_spsc_concurrent_array_queue_drain(&m_q, SpscQueueTest::drain_func, this, UINT64_MAX), CAPACITY);
     EXPECT_EQ(aeron_spsc_concurrent_array_queue_size(&m_q), 0u);
 }
 
-TEST_F(SpscQueueTest, shouldDraingFullQueueWithLimit)
+TEST_F(SpscQueueTest, shouldDrainingFullQueueWithLimit)
 {
     uint64_t limit = CAPACITY / 2;
     fillQueue();
 
     int64_t counter = 1;
-    m_drain = [&](volatile void *e)
-    {
-        ASSERT_EQ(e, (void *)counter);
-        counter++;
-    };
+    m_drain =
+        [&](volatile void *e)
+        {
+            ASSERT_EQ(e, (void *)counter);
+            counter++;
+        };
 
     EXPECT_EQ(aeron_spsc_concurrent_array_queue_drain(&m_q, SpscQueueTest::drain_func, this, limit), limit);
     EXPECT_EQ(aeron_spsc_concurrent_array_queue_size(&m_q), CAPACITY - limit);
@@ -175,22 +179,23 @@ TEST(SpscQueueConcurrentTest, shouldExchangeMessages)
     size_t msgCount = 0;
     size_t counts = 0;
 
-    threads.push_back(std::thread([&]()
-    {
-        countDown--;
-        while (countDown > 0)
+    threads.push_back(std::thread(
+        [&]()
         {
-            std::this_thread::yield();
-        }
-
-        for (uint64_t m = 1; m <= NUM_MESSAGES; m++)
-        {
-            while (AERON_OFFER_SUCCESS != aeron_spsc_concurrent_array_queue_offer(&q, (void *)m))
+            countDown--;
+            while (countDown > 0)
             {
                 std::this_thread::yield();
             }
-        }
-    }));
+
+            for (uint64_t m = 1; m <= NUM_MESSAGES; m++)
+            {
+                while (AERON_OFFER_SUCCESS != aeron_spsc_concurrent_array_queue_offer(&q, (void *)m))
+                {
+                    std::this_thread::yield();
+                }
+            }
+        }));
 
     while (msgCount < NUM_MESSAGES)
     {

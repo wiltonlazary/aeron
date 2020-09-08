@@ -68,14 +68,14 @@ public class IndexedReplicatedRecording implements AutoCloseable
     private static final String SRC_REPLICATION_CHANNEL = "aeron:udp?endpoint=localhost:8040";
     private static final String DST_REPLICATION_CHANNEL = "aeron:udp?endpoint=localhost:8041";
 
-    private static final int LIVE_STREAM_ID = 33;
+    private static final int LIVE_STREAM_ID = 1033;
     private static final String LIVE_CHANNEL = new ChannelUriStringBuilder()
         .media("udp")
         .controlEndpoint("localhost:8100")
         .termLength(TERM_LENGTH)
         .build();
 
-    private static final int INDEX_STREAM_ID = 97;
+    private static final int INDEX_STREAM_ID = 1097;
     private static final String INDEX_CHANNEL = new ChannelUriStringBuilder()
         .media("ipc")
         .termLength(TERM_LENGTH)
@@ -108,7 +108,6 @@ public class IndexedReplicatedRecording implements AutoCloseable
                 .dirDeleteOnStart(true),
             new Archive.Context()
                 .maxCatalogEntries(MAX_CATALOG_ENTRIES)
-                .aeronDirectoryName(srcAeronDirectoryName)
                 .controlChannel(SRC_CONTROL_REQUEST_CHANNEL)
                 .archiveClientContext(new AeronArchive.Context().controlResponseChannel(SRC_CONTROL_RESPONSE_CHANNEL))
                 .recordingEventsEnabled(false)
@@ -131,7 +130,6 @@ public class IndexedReplicatedRecording implements AutoCloseable
                 .dirDeleteOnStart(true),
             new Archive.Context()
                 .maxCatalogEntries(MAX_CATALOG_ENTRIES)
-                .aeronDirectoryName(dstAeronDirectoryName)
                 .controlChannel(DST_CONTROL_REQUEST_CHANNEL)
                 .archiveClientContext(new AeronArchive.Context().controlResponseChannel(DST_CONTROL_RESPONSE_CHANNEL))
                 .recordingEventsEnabled(false)
@@ -172,9 +170,10 @@ public class IndexedReplicatedRecording implements AutoCloseable
             srcAeron,
             dstAeron,
             srcArchivingMediaDriver,
-            dstArchivingMediaDriver,
-            () -> srcArchivingMediaDriver.archive().context().deleteDirectory(),
-            () -> dstArchivingMediaDriver.archive().context().deleteDirectory());
+            dstArchivingMediaDriver);
+
+        srcArchivingMediaDriver.archive().context().deleteDirectory();
+        dstArchivingMediaDriver.archive().context().deleteDirectory();
     }
 
     public static void main(final String[] args) throws Exception
@@ -189,11 +188,11 @@ public class IndexedReplicatedRecording implements AutoCloseable
                 test.srcAeron.addSubscription(CommonContext.SPY_PREFIX + sessionSpecificLiveChannel, LIVE_STREAM_ID),
                 test.srcAeron.addExclusivePublication(INDEX_CHANNEL, INDEX_STREAM_ID),
                 publication.sessionId());
-            test.srcAeronArchive.startRecording(INDEX_CHANNEL, INDEX_STREAM_ID, SourceLocation.LOCAL);
+            test.srcAeronArchive.startRecording(INDEX_CHANNEL, INDEX_STREAM_ID, SourceLocation.LOCAL, true);
             final Thread primaryIndexerThread = Indexer.start(primaryIndexer);
 
             final long srcRecordingSubscriptionId = test.srcAeronArchive.startRecording(
-                sessionSpecificLiveChannel, LIVE_STREAM_ID, SourceLocation.LOCAL);
+                sessionSpecificLiveChannel, LIVE_STREAM_ID, SourceLocation.LOCAL, true);
             final CountersReader srcCounters = test.srcAeron.countersReader();
             final int srcCounterId = awaitRecordingCounterId(srcCounters, publication.sessionId());
             final long srcRecordingId = RecordingPos.getRecordingId(srcCounters, srcCounterId);
@@ -209,7 +208,7 @@ public class IndexedReplicatedRecording implements AutoCloseable
                 test.dstAeron.addSubscription(taggedChannel, LIVE_STREAM_ID),
                 test.dstAeron.addExclusivePublication(INDEX_CHANNEL, INDEX_STREAM_ID),
                 publication.sessionId());
-            test.dstAeronArchive.startRecording(INDEX_CHANNEL, INDEX_STREAM_ID, SourceLocation.LOCAL);
+            test.dstAeronArchive.startRecording(INDEX_CHANNEL, INDEX_STREAM_ID, SourceLocation.LOCAL, true);
             final Thread secondaryIndexerThread = Indexer.start(secondaryIndexer);
 
             final long replicationId = test.dstAeronArchive.taggedReplicate(
@@ -459,6 +458,7 @@ public class IndexedReplicatedRecording implements AutoCloseable
                 }
                 catch (final InterruptedException ignore)
                 {
+                    Thread.currentThread().interrupt();
                     return;
                 }
             }

@@ -20,7 +20,8 @@
 #endif
 
 #include "util/aeron_platform.h"
-#if defined(AERON_COMPILER_MSVC) && defined(AERON_CPU_X64)
+
+#if defined(AERON_COMPILER_MSVC)
 #include <io.h>
 #else
 #include <unistd.h>
@@ -31,6 +32,7 @@
 #include <string.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <time.h>
 #include "util/aeron_error.h"
 #include "util/aeron_netutil.h"
 #include "aeron_udp_channel_transport.h"
@@ -60,12 +62,17 @@ int aeron_udp_channel_transport_init(
 
     transport->fd = -1;
     transport->bindings_clientd = NULL;
+    for (size_t i = 0; i < AERON_UDP_CHANNEL_TRANSPORT_MAX_INTERCEPTORS; i++)
+    {
+        transport->interceptor_clientds[i] = NULL;
+    }
+
     if ((transport->fd = aeron_socket(bind_addr->ss_family, SOCK_DGRAM, 0)) < 0)
     {
         goto error;
     }
 
-    is_ipv6 = (AF_INET6 == bind_addr->ss_family);
+    is_ipv6 = AF_INET6 == bind_addr->ss_family;
     is_multicast = aeron_is_addr_multicast(bind_addr);
     socklen_t bind_addr_len = is_ipv6 ? sizeof(struct sockaddr_in6) : sizeof(struct sockaddr_in);
 
@@ -103,7 +110,7 @@ int aeron_udp_channel_transport_init(
             memcpy(&addr, bind_addr, sizeof(addr));
             addr.sin6_addr = in6addr_any;
 
-            if (bind(transport->fd, (struct sockaddr *) &addr, bind_addr_len) < 0)
+            if (bind(transport->fd, (struct sockaddr *)&addr, bind_addr_len) < 0)
             {
                 aeron_set_err_from_last_err_code("multicast IPv6 bind");
                 goto error;
@@ -142,14 +149,14 @@ int aeron_udp_channel_transport_init(
             memcpy(&addr, bind_addr, sizeof(addr));
             addr.sin_addr.s_addr = INADDR_ANY;
 
-            if (bind(transport->fd, (struct sockaddr *) &addr, bind_addr_len) < 0)
+            if (bind(transport->fd, (struct sockaddr *)&addr, bind_addr_len) < 0)
             {
                 aeron_set_err_from_last_err_code("multicast IPv4 bind");
                 goto error;
             }
 
             struct ip_mreq mreq;
-            struct sockaddr_in *interface_addr = (struct sockaddr_in *) multicast_if_addr;
+            struct sockaddr_in *interface_addr = (struct sockaddr_in *)multicast_if_addr;
 
             mreq.imr_multiaddr.s_addr = in4->sin_addr.s_addr;
             mreq.imr_interface.s_addr = interface_addr->sin_addr.s_addr;
@@ -160,7 +167,8 @@ int aeron_udp_channel_transport_init(
                 goto error;
             }
 
-            if (aeron_setsockopt(transport->fd, IPPROTO_IP, IP_MULTICAST_IF, &interface_addr->sin_addr, sizeof(struct in_addr)) < 0)
+            if (aeron_setsockopt(
+                transport->fd, IPPROTO_IP, IP_MULTICAST_IF, &interface_addr->sin_addr, sizeof(struct in_addr)) < 0)
             {
                 aeron_set_err_from_last_err_code("setsockopt(IP_MULTICAST_IF)");
                 goto error;
@@ -233,7 +241,7 @@ int aeron_udp_channel_transport_recvmmsg(
     void *clientd)
 {
 #if defined(HAVE_RECVMMSG)
-    struct timespec tv = {.tv_nsec = 0, .tv_sec = 0};
+    struct timespec tv = { .tv_nsec = 0, .tv_sec = 0 };
 
     int result = recvmmsg(transport->fd, msgvec, vlen, 0, &tv);
     if (result < 0)
@@ -258,8 +266,10 @@ int aeron_udp_channel_transport_recvmmsg(
         {
             recv_func(
                 transport->data_paths,
+                transport,
                 clientd,
                 transport->dispatch_clientd,
+                transport->destination_clientd,
                 msgvec[i].msg_hdr.msg_iov[0].iov_base,
                 msgvec[i].msg_len,
                 msgvec[i].msg_hdr.msg_name);
@@ -296,8 +306,10 @@ int aeron_udp_channel_transport_recvmmsg(
         msgvec[i].msg_len = (unsigned int)result;
         recv_func(
             transport->data_paths,
+            transport,
             clientd,
             transport->dispatch_clientd,
+            transport->destination_clientd,
             msgvec[i].msg_hdr.msg_iov[0].iov_base,
             msgvec[i].msg_len,
             msgvec[i].msg_hdr.msg_name);
@@ -392,3 +404,9 @@ int aeron_udp_channel_transport_bind_addr_and_port(
 
     return aeron_format_source_identity(buffer, length, &addr);
 }
+
+extern void *aeron_udp_channel_transport_get_interceptor_clientd(
+    aeron_udp_channel_transport_t *transport, int interceptor_index);
+
+extern void aeron_udp_channel_transport_set_interceptor_clientd(
+    aeron_udp_channel_transport_t *transport, int interceptor_index, void *clientd);

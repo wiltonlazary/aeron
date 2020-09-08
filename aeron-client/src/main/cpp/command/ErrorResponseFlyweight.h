@@ -21,7 +21,8 @@
 #include <cstddef>
 #include "Flyweight.h"
 
-namespace aeron { namespace command {
+namespace aeron { namespace command
+{
 
 /**
  * Control message flyweight for any errors sent from driver to clients
@@ -49,7 +50,7 @@ struct ErrorResponseDefn
     std::int64_t offendingCommandCorrelationId;
     std::int32_t errorCode;
     std::int32_t errorMessageLength;
-    std::int8_t  errorMessageData[1];
+    std::int8_t errorMessageData[1];
 };
 #pragma pack(pop)
 
@@ -64,13 +65,15 @@ static const std::int32_t ERROR_CODE_UNKNOWN_COUNTER = 5;
 static const std::int32_t ERROR_CODE_UNKNOWN_COMMAND_TYPE_ID = 6;
 static const std::int32_t ERROR_CODE_MALFORMED_COMMAND = 7;
 static const std::int32_t ERROR_CODE_NOT_SUPPORTED = 8;
+static const std::int32_t ERROR_CODE_UNKNOWN_HOST = 9;
+static const std::int32_t ERROR_CODE_RESOURCE_TEMPORARILY_UNAVAILABLE = 10;
 
 class ErrorResponseFlyweight : public Flyweight<ErrorResponseDefn>
 {
 public:
     typedef ErrorResponseFlyweight this_t;
 
-    inline ErrorResponseFlyweight(concurrent::AtomicBuffer& buffer, util::index_t offset) :
+    inline ErrorResponseFlyweight(concurrent::AtomicBuffer &buffer, util::index_t offset) :
         Flyweight<ErrorResponseDefn>(buffer, offset)
     {
     }
@@ -87,12 +90,12 @@ public:
 
     inline std::string errorMessage() const
     {
-        return stringGet(offsetof(ErrorResponseDefn, errorMessageLength));
+        return stringGet(static_cast<util::index_t>(offsetof(ErrorResponseDefn, errorMessageLength)));
     }
 
     inline util::index_t length() const
     {
-        return offsetof(ErrorResponseDefn, errorMessageData) + m_struct.errorMessageLength;
+        return static_cast<util::index_t>(offsetof(ErrorResponseDefn, errorMessageData) + m_struct.errorMessageLength);
     }
 };
 

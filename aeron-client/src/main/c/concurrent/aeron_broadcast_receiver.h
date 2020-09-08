@@ -17,42 +17,11 @@
 #ifndef AERON_BROADCAST_RECEIVER_H
 #define AERON_BROADCAST_RECEIVER_H
 
-#include <stdbool.h>
-#include <stdint.h>
-#include <stddef.h>
 #include "util/aeron_bitutil.h"
 #include "aeron_atomic.h"
+#include "aeron_broadcast_descriptor.h"
 
-#pragma pack(push)
-#pragma pack(4)
-typedef struct aeron_broadcast_descriptor_stct
-{
-    int64_t tail_intent_counter;
-    int64_t tail_counter;
-    int64_t latest_counter;
-    uint8_t pad[(2 * AERON_CACHE_LINE_LENGTH) - (3 * sizeof(int64_t))];
-}
-aeron_broadcast_descriptor_t;
-
-typedef struct aeron_broadcast_record_descriptor_stct
-{
-    int32_t length;
-    int32_t msg_type_id;
-}
-aeron_broadcast_record_descriptor_t;
-#pragma pack(pop)
-
-#define AERON_BROADCAST_BUFFER_TRAILER_LENGTH (sizeof(aeron_broadcast_descriptor_t))
-
-#define AERON_BROADCAST_IS_CAPACITY_VALID(capacity) AERON_IS_POWER_OF_TWO(capacity)
-#define AERON_BROADCAST_MAX_MESSAGE_LENGTH(capacity) (capacity / 8)
-#define AERON_BROADCAST_INVALID_MSG_TYPE_ID(id) (id < 1)
-#define AERON_BROADCAST_PADDING_MSG_TYPE_ID (-1)
-
-#define AERON_BROADCAST_RECORD_HEADER_LENGTH (sizeof(aeron_broadcast_record_descriptor_t))
-#define AERON_BROADCAST_RECORD_ALIGNMENT (sizeof(aeron_broadcast_record_descriptor_t))
-
-#define AERON_BROADCAST_SCRATCH_BUFFER_LENGTH (4096)
+#define AERON_BROADCAST_SCRATCH_BUFFER_LENGTH (4096u)
 
 typedef struct aeron_broadcast_receiver_stct
 {
@@ -98,13 +67,13 @@ inline bool aeron_broadcast_receiver_receive_next(volatile aeron_broadcast_recei
 
     if (tail > cursor)
     {
-        size_t record_offset = (uint32_t)cursor & (receiver->capacity - 1);
+        size_t record_offset = (uint32_t)cursor & (receiver->capacity - 1u);
 
         if (!aeron_broadcast_receiver_validate_at(receiver, cursor))
         {
             receiver->lapped_count++;
-            cursor = receiver->descriptor->latest_counter;
-            record_offset = (uint32_t)cursor & (receiver->capacity - 1);
+            AERON_GET_VOLATILE(cursor, receiver->descriptor->latest_counter);
+            record_offset = (uint32_t)cursor & (receiver->capacity - 1u);
         }
 
         aeron_broadcast_record_descriptor_t *record =

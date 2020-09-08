@@ -38,8 +38,6 @@ aeron_network_publication_state_t;
 #define AERON_NETWORK_PUBLICATION_HEARTBEAT_TIMEOUT_NS (100 * 1000 * 1000LL)
 #define AERON_NETWORK_PUBLICATION_SETUP_TIMEOUT_NS (100 * 1000 * 1000LL)
 
-#define AERON_NETWORK_PUBLICATION_MAX_MESSAGES_PER_SEND (2)
-
 typedef struct aeron_send_channel_endpoint_stct aeron_send_channel_endpoint_t;
 typedef struct aeron_driver_conductor_stct aeron_driver_conductor_t;
 
@@ -74,6 +72,7 @@ typedef struct aeron_network_publication_stct
     aeron_clock_cache_t *cached_clock;
 
     char *log_file_name;
+    int64_t term_buffer_length;
     int64_t term_window_length;
     int64_t trip_gain;
     int64_t linger_timeout_ns;
@@ -82,6 +81,7 @@ typedef struct aeron_network_publication_stct
     int64_t time_of_last_send_or_heartbeat_ns;
     int64_t time_of_last_setup_ns;
     int64_t status_message_deadline_ns;
+    int64_t tag;
     int32_t session_id;
     int32_t stream_id;
     int32_t initial_term_id;
@@ -100,6 +100,7 @@ typedef struct aeron_network_publication_stct
     bool track_sender_limits;
     bool has_sender_released;
     aeron_map_raw_log_close_func_t map_raw_log_close_func;
+    aeron_untethered_subscription_state_change_func_t untethered_subscription_state_change_func;
 
     int64_t *short_sends_counter;
     int64_t *heartbeats_sent_counter;
@@ -125,7 +126,6 @@ int aeron_network_publication_create(
     aeron_flow_control_strategy_t *flow_control_strategy,
     aeron_uri_publication_params_t *params,
     bool is_exclusive,
-    bool spies_simulate_connection,
     aeron_system_counters_t *system_counters);
 
 void aeron_network_publication_close(

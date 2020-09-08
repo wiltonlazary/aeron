@@ -16,11 +16,8 @@
 #ifndef AERON_CONCURRENT_ATOMIC_COUNTER_H
 #define AERON_CONCURRENT_ATOMIC_COUNTER_H
 
-#include <cstdint>
 #include <memory>
 
-#include <util/Index.h>
-#include "AtomicBuffer.h"
 #include "CountersManager.h"
 
 namespace aeron { namespace concurrent {
@@ -29,7 +26,7 @@ class AtomicCounter
 {
 public:
 
-    AtomicCounter(const AtomicBuffer& buffer, std::int32_t counterId, std::shared_ptr<CountersManager> countersManager) :
+    AtomicCounter(const AtomicBuffer &buffer, std::int32_t counterId, std::shared_ptr<CountersManager> countersManager) :
         m_buffer(buffer),
         m_counterId(counterId),
         m_countersManager(std::move(countersManager)),
@@ -38,7 +35,7 @@ public:
         m_buffer.putInt64(m_offset, 0);
     }
 
-    AtomicCounter(const AtomicBuffer& buffer, std::int32_t counterId) :
+    AtomicCounter(const AtomicBuffer &buffer, std::int32_t counterId) :
         m_buffer(buffer),
         m_counterId(counterId),
         m_countersManager(nullptr),

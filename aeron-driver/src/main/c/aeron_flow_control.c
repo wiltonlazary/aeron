@@ -21,15 +21,12 @@
 
 #include <stdlib.h>
 #include <errno.h>
-#include <media/aeron_udp_channel.h>
-#include "protocol/aeron_udp_protocol.h"
-#include "concurrent/aeron_logbuffer_descriptor.h"
+#include "media/aeron_udp_channel.h"
 #include "util/aeron_error.h"
 #include "util/aeron_dlopen.h"
 #include "util/aeron_parse_util.h"
-#include "aeron_flow_control.h"
 #include "aeron_alloc.h"
-#include "aeron_driver_context.h"
+#include "aeron_flow_control.h"
 
 aeron_flow_control_strategy_supplier_func_t aeron_flow_control_strategy_supplier_load(const char *strategy_name)
 {
@@ -161,9 +158,7 @@ aeron_flow_control_strategy_supplier_func_t aeron_flow_control_strategy_supplier
 }
 
 void aeron_flow_control_extract_strategy_name_length(
-    const size_t options_length,
-    const char *options,
-    size_t *strategy_length)
+    const size_t options_length, const char *options, size_t *strategy_length)
 {
     const char *next_option = (const char *)memchr(options, ',', options_length);
     *strategy_length = NULL == next_option ? options_length : (size_t)labs((long)(next_option - options));
@@ -185,7 +180,8 @@ int aeron_default_multicast_flow_control_strategy_supplier(
         channel->has_explicit_control ||
         channel->is_multicast)
     {
-        const char *flow_control_options = aeron_uri_find_param_value(&channel->uri.params.udp.additional_params, "fc");
+        const char *flow_control_options = aeron_uri_find_param_value(
+            &channel->uri.params.udp.additional_params, AERON_URI_FC_KEY);
         if (NULL != flow_control_options)
         {
             const char *strategy_name = flow_control_options;
@@ -250,9 +246,7 @@ int aeron_default_multicast_flow_control_strategy_supplier(
 #define AERON_FLOW_CONTROL_NUMBER_BUFFER_LEN (64)
 
 int aeron_flow_control_parse_tagged_options(
-    size_t options_length,
-    const char *options,
-    aeron_flow_control_tagged_options_t *flow_control_options)
+    size_t options_length, const char *options, aeron_flow_control_tagged_options_t *flow_control_options)
 {
     flow_control_options->strategy_name = NULL;
     flow_control_options->strategy_name_length = 0;
@@ -270,7 +264,7 @@ int aeron_flow_control_parse_tagged_options(
         return 0;
     }
 
-    const char* current_option = options;
+    const char *current_option = options;
     size_t remaining = options_length;
 
     const char *next_option;
@@ -308,13 +302,13 @@ int aeron_flow_control_parse_tagged_options(
             if (AERON_FLOW_CONTROL_NUMBER_BUFFER_LEN <= value_length)
             {
                 aeron_set_err(
-                    -EINVAL,
+                    EINVAL,
                     "Flow control options - number field too long (found %d, max %d), field: %.*s, options: %.*s",
                     (int)value_length, (AERON_FLOW_CONTROL_NUMBER_BUFFER_LEN - 1),
                     (int)value_length, value,
                     (int)options_length, options);
 
-                return -EINVAL;
+                return -1;
             }
             strncpy(number_buffer, value, value_length);
             number_buffer[value_length] = '\0';
@@ -335,12 +329,12 @@ int aeron_flow_control_parse_tagged_options(
                 else if (number_buffer != end_ptr && !has_group_min_size) // Allow empty values if we have a group count
                 {
                     aeron_set_err(
-                        -EINVAL,
+                        EINVAL,
                         "Flow control options - invalid group, field: %.*s, options: %.*s",
                         (int)current_option_length, current_option,
                         (int)options_length, options);
 
-                    return -EINVAL;
+                    return -1;
                 }
 
                 if (has_group_min_size)
@@ -362,12 +356,12 @@ int aeron_flow_control_parse_tagged_options(
                     else
                     {
                         aeron_set_err(
-                            -EINVAL,
+                            EINVAL,
                             "Group count invalid, field: %.*s, options: %.*s",
                             (int)current_option_length, current_option,
                             (int)options_length, options);
 
-                        return -EINVAL;
+                        return -1;
                     }
                 }
             }
@@ -382,24 +376,24 @@ int aeron_flow_control_parse_tagged_options(
                 else
                 {
                     aeron_set_err(
-                        -EINVAL,
+                        EINVAL,
                         "Flow control options - invalid timeout, field: %.*s, options: %.*s",
                         (int)current_option_length, current_option,
                         (int)options_length, options);
 
-                    return -EINVAL;
+                    return -1;
                 }
             }
         }
         else
         {
             aeron_set_err(
-                -EINVAL,
+                EINVAL,
                 "Flow control options - unrecognised option, field: %.*s, options: %.*s",
                 (int)current_option_length, current_option,
                 (int)options_length, options);
 
-            return -EINVAL;
+            return -1;
         }
 
         current_option = next_option;

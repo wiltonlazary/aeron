@@ -22,19 +22,29 @@
 #include <stddef.h>
 #include "util/aeron_platform.h"
 
-#define AERON_CACHE_LINE_LENGTH (64)
+#if defined(AERON_COMPILER_MSVC)
+#include <intrin.h>
+#endif
 
-#define AERON_ALIGN(value,alignment) (((value) + ((alignment) - 1)) & ~((alignment) - 1))
+#define AERON_CACHE_LINE_LENGTH (64u)
 
-#define AERON_IS_POWER_OF_TWO(value) ((value) > 0 && (((value) & (~(value) + 1)) == (value)))
+#define AERON_ALIGN(value, alignment) (((value) + ((alignment) - 1u)) & ~((alignment) - 1u))
 
-#define AERON_MIN(a,b) ((a) < (b) ? (a) : (b))
+#define AERON_IS_POWER_OF_TWO(value) ((value) > 0 && (((value) & (~(value) + 1u)) == (value)))
+
+#define AERON_MIN(a, b) ((a) < (b) ? (a) : (b))
 
 #if defined(__GNUC__)
-#define AERON_C_COND_EXPECT(exp,c) (__builtin_expect((exp),c))
+#define AERON_C_COND_EXPECT(exp, c) (__builtin_expect((exp), c))
 #else
-#define AERON_C_COND_EXPECT(exp,c) (exp)
+#define AERON_C_COND_EXPECT(exp, c) (exp)
 #endif
+
+inline uint8_t *aeron_cache_line_align_buffer(uint8_t *buffer)
+{
+    size_t remainder = ((size_t)buffer) % AERON_CACHE_LINE_LENGTH;
+    return 0 == remainder ? buffer : (buffer + (AERON_CACHE_LINE_LENGTH - remainder));
+}
 
 /* Taken from Hacker's Delight as ntz10 at http://www.hackersdelight.org/hdcodetxt/ntz.c.txt */
 inline int aeron_number_of_trailing_zeroes(int32_t value)
@@ -50,7 +60,9 @@ inline int aeron_number_of_trailing_zeroes(int32_t value)
     unsigned long r;
 
     if (_BitScanForward(&r, (unsigned long)value))
-        return r;
+    {
+        return (int)r;
+    }
 
     return 32;
 #else
@@ -69,7 +81,7 @@ inline int aeron_number_of_trailing_zeroes(int32_t value)
 
     uint32_t index = (uint32_t)((value & -value) * 0x04D7651F);
 
-    return table[index >> 27];
+    return table[index >> 27u];
 #endif
 }
 
@@ -82,11 +94,13 @@ inline int aeron_number_of_trailing_zeroes_u64(uint64_t value)
     }
 
     return __builtin_ctzll(value);
-#elif defined(_MSC_VER)
+#elif defined(_MSC_VER) && defined(AERON_CPU_X64)
     unsigned long r;
 
     if (_BitScanForward64(&r, (__int64)value))
-        return r;
+    {
+        return (int)r;
+    }
 
     return 64;
 #else
@@ -110,7 +124,9 @@ inline int aeron_number_of_leading_zeroes(int32_t value)
     unsigned long r;
 
     if (_BitScanReverse(&r, (unsigned long)value))
+    {
         return 31 - (int)r;
+    }
 
     return 32;
 #else

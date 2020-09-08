@@ -16,7 +16,7 @@
 package io.aeron.cluster;
 
 import io.aeron.*;
-import io.aeron.cluster.client.ClusterClock;
+import io.aeron.cluster.service.ClusterClock;
 import io.aeron.cluster.client.ClusterException;
 import io.aeron.cluster.codecs.*;
 import io.aeron.logbuffer.ControlledFragmentHandler;
@@ -24,7 +24,6 @@ import io.aeron.logbuffer.Header;
 import org.agrona.*;
 
 import static io.aeron.logbuffer.FrameDescriptor.*;
-import static io.aeron.logbuffer.FrameDescriptor.END_FRAG_FLAG;
 
 final class LogAdapter implements ControlledFragmentHandler
 {
@@ -226,8 +225,8 @@ final class LogAdapter implements ControlledFragmentHandler
                 consensusModuleAgent.onReplayNewLeadershipTermEvent(
                     newLeadershipTermEventDecoder.leadershipTermId(),
                     newLeadershipTermEventDecoder.logPosition(),
+                    newLeadershipTermEventDecoder.timestamp(),
                     newLeadershipTermEventDecoder.termBaseLogPosition(),
-                    newLeadershipTermEventDecoder.leaderMemberId(),
                     ClusterClock.map(newLeadershipTermEventDecoder.timeUnit()),
                     newLeadershipTermEventDecoder.appVersion());
                 break;

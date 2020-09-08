@@ -17,20 +17,13 @@
 #ifndef AERON_INT32_TO_PTR_HASH_MAP_H
 #define AERON_INT32_TO_PTR_HASH_MAP_H
 
-#include <stddef.h>
-#include <stdint.h>
-#include <stdbool.h>
 #include <errno.h>
 
 #include "util/aeron_platform.h"
-
-#if defined(AERON_COMPILER_MSVC)
-#include <WinSock2.h>
-#include <windows.h>
-#endif
-
+#include "collections/aeron_map.h"
 #include "util/aeron_bitutil.h"
 #include "aeron_alloc.h"
+#include "util/aeron_error.h"
 
 typedef struct aeron_int64_to_ptr_hash_map_stct
 {
@@ -43,19 +36,13 @@ typedef struct aeron_int64_to_ptr_hash_map_stct
 }
 aeron_int64_to_ptr_hash_map_t;
 
-#define AERON_INT64_TO_PTR_HASH_MAP_DEFAULT_LOAD_FACTOR (0.55f)
-
 inline size_t aeron_int64_to_ptr_hash_map_hash_key(int64_t key, size_t mask)
 {
-    return (key * 31) & mask;
+    return (size_t)(((uint64_t)key * 31u) & mask);
 }
 
-inline int64_t aeron_int64_to_ptr_hash_map_compound_key(int32_t high, int32_t low)
-{
-    return ((int64_t)high << 32) | (low);
-}
-
-inline int aeron_int64_to_ptr_hash_map_init(aeron_int64_to_ptr_hash_map_t *map, size_t initial_capacity, float load_factor)
+inline int aeron_int64_to_ptr_hash_map_init(
+    aeron_int64_to_ptr_hash_map_t *map, size_t initial_capacity, float load_factor)
 {
     size_t capacity = (size_t)aeron_find_next_power_of_two((int32_t)initial_capacity);
 
@@ -143,10 +130,7 @@ inline int aeron_int64_to_ptr_hash_map_put(aeron_int64_to_ptr_hash_map_t *map, c
 {
     if (NULL == value)
     {
-        errno = EINVAL;
-#if defined(AERON_COMPILER_MSVC)
-        SetLastError(ERROR_BAD_ARGUMENTS);
-#endif
+        aeron_set_errno(EINVAL);
         return -1;
     }
 
@@ -256,9 +240,10 @@ inline void *aeron_int64_to_ptr_hash_map_remove(aeron_int64_to_ptr_hash_map_t *m
 }
 
 typedef void (*aeron_int64_to_ptr_hash_map_for_each_func_t)(void *clientd, int64_t key, void *value);
+typedef bool (*aeron_int64_to_ptr_hash_map_predicate_func_t)(void *clientd, int64_t key, void *value);
 
 inline void aeron_int64_to_ptr_hash_map_for_each(
-        aeron_int64_to_ptr_hash_map_t *map, aeron_int64_to_ptr_hash_map_for_each_func_t func, void *clientd)
+    aeron_int64_to_ptr_hash_map_t *map, aeron_int64_to_ptr_hash_map_for_each_func_t func, void *clientd)
 {
     for (size_t i = 0; i < map->capacity; i++)
     {
@@ -266,6 +251,28 @@ inline void aeron_int64_to_ptr_hash_map_for_each(
         {
             func(clientd, map->keys[i], map->values[i]);
         }
+    }
+}
+
+inline void aeron_int64_to_ptr_hash_map_remove_if(
+    aeron_int64_to_ptr_hash_map_t *map, aeron_int64_to_ptr_hash_map_predicate_func_t func, void *clientd)
+{
+    size_t remaining = map->size;
+    size_t index = map->capacity - 1;
+
+    while (0 < remaining)
+    {
+        if (map->values[index] != NULL)
+        {
+            if (func(clientd, map->keys[index], map->values[index]))
+            {
+                aeron_int64_to_ptr_hash_map_remove(map, map->keys[index]);
+            }
+
+            --remaining;
+        }
+
+        --index;
     }
 }
 

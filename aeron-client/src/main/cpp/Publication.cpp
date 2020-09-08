@@ -18,8 +18,10 @@
 
 #include "Publication.h"
 #include "ClientConductor.h"
+#include "concurrent/status/LocalSocketAddressStatus.h"
 
-namespace aeron {
+namespace aeron
+{
 
 Publication::Publication(
     ClientConductor &conductor,
@@ -28,7 +30,7 @@ Publication::Publication(
     std::int64_t originalRegistrationId,
     std::int32_t streamId,
     std::int32_t sessionId,
-    UnsafeBufferPosition& publicationLimit,
+    UnsafeBufferPosition &publicationLimit,
     std::int32_t channelStatusId,
     std::shared_ptr<LogBuffers> logBuffers) :
     m_conductor(conductor),
@@ -67,7 +69,7 @@ Publication::~Publication()
     m_conductor.releasePublication(m_registrationId);
 }
 
-std::int64_t Publication::addDestination(const std::string& endpointChannel)
+std::int64_t Publication::addDestination(const std::string &endpointChannel)
 {
     if (isClosed())
     {
@@ -77,7 +79,7 @@ std::int64_t Publication::addDestination(const std::string& endpointChannel)
     return m_conductor.addDestination(m_originalRegistrationId, endpointChannel);
 }
 
-std::int64_t Publication::removeDestination(const std::string& endpointChannel)
+std::int64_t Publication::removeDestination(const std::string &endpointChannel)
 {
     if (isClosed())
     {
@@ -92,7 +94,7 @@ bool Publication::findDestinationResponse(std::int64_t correlationId)
     return m_conductor.findDestinationResponse(correlationId);
 }
 
-std::int64_t Publication::channelStatus()
+std::int64_t Publication::channelStatus() const
 {
     if (isClosed())
     {
@@ -100,6 +102,11 @@ std::int64_t Publication::channelStatus()
     }
 
     return m_conductor.channelStatus(m_channelStatusId);
+}
+
+std::vector<std::string> Publication::localSocketAddresses() const
+{
+    return LocalSocketAddressStatus::findAddresses(m_conductor.countersReader(), channelStatus(), channelStatusId());
 }
 
 }

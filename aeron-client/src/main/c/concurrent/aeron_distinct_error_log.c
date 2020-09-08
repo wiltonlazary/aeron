@@ -26,7 +26,6 @@
 #include "util/aeron_strutil.h"
 #include "aeron_alloc.h"
 #include "aeron_distinct_error_log.h"
-#include "aeron_atomic.h"
 
 int aeron_distinct_error_log_init(
     aeron_distinct_error_log_t *log,
@@ -65,7 +64,7 @@ void aeron_distinct_error_log_close(aeron_distinct_error_log_t *log)
 {
     aeron_distinct_error_log_observation_list_t *list = aeron_distinct_error_log_observation_list_load(log);
     aeron_distinct_observation_t *observations = list->observations;
-    size_t num_observations = list->num_observations;
+    size_t num_observations = (size_t)list->num_observations;
 
     for (size_t i = 0; i < num_observations; i++)
     {
@@ -103,7 +102,7 @@ static aeron_distinct_observation_t *aeron_distinct_error_log_new_observation(
     const char *message)
 {
     aeron_distinct_error_log_observation_list_t *list = aeron_distinct_error_log_observation_list_load(log);
-    size_t num_observations = list->num_observations;
+    size_t num_observations = (size_t)list->num_observations;
     aeron_distinct_observation_t *observations = list->observations;
     aeron_distinct_observation_t *observation = NULL;
 
@@ -166,18 +165,16 @@ static aeron_distinct_observation_t *aeron_distinct_error_log_new_observation(
 int aeron_distinct_error_log_record(
     aeron_distinct_error_log_t *log, int error_code, const char *description, const char *message)
 {
-    int64_t timestamp = 0;
-    aeron_distinct_observation_t *observation = NULL;
-
     if (NULL == log)
     {
         aeron_set_err(EINVAL, "%s", "invalid argument");
         return -1;
     }
 
-    timestamp = log->clock();
+    aeron_distinct_observation_t *observation = NULL;
+    int64_t timestamp = log->clock();
     aeron_distinct_error_log_observation_list_t *list = aeron_distinct_error_log_observation_list_load(log);
-    size_t num_observations = list->num_observations;
+    size_t num_observations = (size_t)list->num_observations;
     aeron_distinct_observation_t *observations = list->observations;
 
     if ((observation = aeron_distinct_error_log_find_observation(
@@ -196,10 +193,7 @@ int aeron_distinct_error_log_record(
 
             aeron_format_date(buffer, sizeof(buffer), timestamp);
             fprintf(stderr, "%s - unrecordable error %d: %s %s\n", buffer, error_code, description, message);
-            errno = ENOMEM;
-#if defined(AERON_COMPILER_MSVC)
-            SetLastError(ERROR_OUTOFMEMORY);
-#endif
+            aeron_set_errno(ENOMEM);
             return -1;
         }
     }
@@ -271,7 +265,7 @@ size_t aeron_error_log_read(
 size_t aeron_distinct_error_log_num_observations(aeron_distinct_error_log_t *log)
 {
     aeron_distinct_error_log_observation_list_t *list = aeron_distinct_error_log_observation_list_load(log);
-    return list->num_observations;
+    return (size_t)list->num_observations;
 }
 
 extern int aeron_distinct_error_log_observation_list_alloc(

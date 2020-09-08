@@ -154,8 +154,7 @@ public class ClusterNodeTest
             }
             else
             {
-                Thread.yield();
-                Tests.checkInterruptStatus();
+                Tests.yield();
             }
         }
         while (publicationResult < 0);
@@ -223,8 +222,7 @@ public class ClusterNodeTest
     {
         while (aeronCluster.offer(msgBuffer, 0, msg.length()) < 0)
         {
-            Thread.yield();
-            Tests.checkInterruptStatus();
+            Tests.yield();
         }
     }
 
@@ -234,8 +232,7 @@ public class ClusterNodeTest
         {
             if (aeronCluster.pollEgress() <= 0)
             {
-                Thread.yield();
-                Tests.checkInterruptStatus();
+                Tests.yield();
             }
         }
     }
@@ -363,6 +360,6 @@ public class ClusterNodeTest
             new AeronCluster.Context()
                 .egressListener(egressListener)
                 .ingressChannel("aeron:udp")
-                .clusterMemberEndpoints("0=localhost:9010,1=localhost:9011,2=localhost:9012"));
+                .ingressEndpoints("0=localhost:9010,1=localhost:9011,2=localhost:9012"));
     }
 }

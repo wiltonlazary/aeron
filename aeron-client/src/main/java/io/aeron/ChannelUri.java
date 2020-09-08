@@ -240,7 +240,7 @@ public class ChannelUri
      */
     public String channelTag()
     {
-        return (null != tags && tags.length > CHANNEL_TAG_INDEX) ? tags[CHANNEL_TAG_INDEX] : null;
+        return tags.length > CHANNEL_TAG_INDEX ? tags[CHANNEL_TAG_INDEX] : null;
     }
 
     /**
@@ -252,7 +252,44 @@ public class ChannelUri
      */
     public String entityTag()
     {
-        return (null != tags && tags.length > ENTITY_TAG_INDEX) ? tags[ENTITY_TAG_INDEX] : null;
+        return tags.length > ENTITY_TAG_INDEX ? tags[ENTITY_TAG_INDEX] : null;
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public boolean equals(final Object o)
+    {
+        if (this == o)
+        {
+            return true;
+        }
+
+        if (!(o instanceof ChannelUri))
+        {
+            return false;
+        }
+
+        final ChannelUri that = (ChannelUri)o;
+
+        return Objects.equals(prefix, that.prefix) &&
+            Objects.equals(media, that.media) &&
+            Objects.equals(params, that.params) &&
+            Arrays.equals(tags, that.tags);
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public int hashCode()
+    {
+        int result = 19;
+        result = 31 * result + Objects.hashCode(prefix);
+        result = 31 * result + Objects.hashCode(media);
+        result = 31 * result + Objects.hashCode(params);
+        result = 31 * result + Arrays.hashCode(tags);
+
+        return result;
     }
 
     /**
@@ -414,7 +451,7 @@ public class ChannelUri
                     break;
 
                 default:
-                    throw new IllegalStateException("unexpected state=" + state);
+                    throw new IllegalStateException("unexpected state=" + state + " in " + cs);
             }
         }
 
@@ -430,7 +467,7 @@ public class ChannelUri
                 break;
 
             default:
-                throw new IllegalStateException("no more input found, state=" + state);
+                throw new IllegalStateException("no more input found, state=" + state + " in " + cs);
         }
 
         return new ChannelUri(prefix, media, params);
@@ -488,7 +525,7 @@ public class ChannelUri
         throw new IllegalArgumentException("unknown media: " + media);
     }
 
-    private static boolean startsWith(final CharSequence input, final int position, final CharSequence prefix)
+    private static boolean startsWith(final CharSequence input, final int position, final String prefix)
     {
         if ((input.length() - position) < prefix.length())
         {

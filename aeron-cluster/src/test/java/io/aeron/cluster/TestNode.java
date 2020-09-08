@@ -15,7 +15,9 @@
  */
 package io.aeron.cluster;
 
-import io.aeron.*;
+import io.aeron.Counter;
+import io.aeron.ExclusivePublication;
+import io.aeron.Image;
 import io.aeron.archive.Archive;
 import io.aeron.archive.client.AeronArchive;
 import io.aeron.archive.status.RecordingPos;
@@ -27,9 +29,12 @@ import io.aeron.driver.MediaDriver;
 import io.aeron.driver.status.SystemCounterDescriptor;
 import io.aeron.logbuffer.FragmentHandler;
 import io.aeron.logbuffer.Header;
-import org.agrona.*;
-import org.agrona.collections.MutableInteger;
+import io.aeron.test.DataCollector;
+import org.agrona.CloseHelper;
+import org.agrona.DirectBuffer;
+import org.agrona.LangUtil;
 import org.agrona.concurrent.AgentTerminationException;
+import org.agrona.concurrent.UnsafeBuffer;
 import org.agrona.concurrent.status.CountersReader;
 
 import java.io.File;
@@ -38,6 +43,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import static io.aeron.Aeron.NULL_VALUE;
 import static io.aeron.archive.client.AeronArchive.NULL_POSITION;
+import static org.agrona.BitUtil.SIZE_OF_INT;
 import static org.junit.jupiter.api.Assertions.fail;
 
 class TestNode implements AutoCloseable
@@ -48,7 +54,7 @@ class TestNode implements AutoCloseable
     private final Context context;
     private boolean isClosed = false;
 
-    TestNode(final Context context)
+    TestNode(final Context context, final DataCollector dataCollector)
     {
         clusteredMediaDriver = ClusteredMediaDriver.launch(
             context.mediaDriverContext,
@@ -64,6 +70,11 @@ class TestNode implements AutoCloseable
 
         service = context.service;
         this.context = context;
+
+        dataCollector.add(container.context().clusterDir().toPath());
+        dataCollector.add(clusteredMediaDriver.consensusModule().context().clusterDir().toPath());
+        dataCollector.add(clusteredMediaDriver.archive().context().archiveDir().toPath());
+        dataCollector.add(clusteredMediaDriver.mediaDriver().context().aeronDirectory().toPath());
     }
 
     ConsensusModule consensusModule()
@@ -168,15 +179,15 @@ class TestNode implements AutoCloseable
         return Cluster.Role.get(counter);
     }
 
-    Election.State electionState()
+    ElectionState electionState()
     {
         final Counter counter = clusteredMediaDriver.consensusModule().context().electionStateCounter();
         if (counter.isClosed())
         {
-            return Election.State.CLOSED;
+            return ElectionState.CLOSED;
         }
 
-        return Election.State.get(counter);
+        return ElectionState.get(counter);
     }
 
     ConsensusModule.State moduleState()
@@ -351,21 +362,18 @@ class TestNode implements AutoCloseable
         {
             super.onStart(cluster, snapshotImage);
 
-            activeSessionCount = cluster.clientSessions().size();
-
             if (null != snapshotImage)
             {
-                final MutableInteger snapshotFragmentCount = new MutableInteger();
-                final FragmentHandler handler =
-                    (buffer, offset, length, header) ->
-                    {
-                        messageCount = buffer.getInt(offset);
-                        snapshotFragmentCount.value += 1;
-                    };
+                activeSessionCount = cluster.clientSessions().size();
 
+                final FragmentHandler handler =
+                    (buffer, offset, length, header) -> messageCount = buffer.getInt(offset);
+
+                int fragmentCount = 0;
                 while (true)
                 {
-                    final int fragments = snapshotImage.poll(handler, 1);
+                    final int fragments = snapshotImage.poll(handler, 10);
+                    fragmentCount += fragments;
 
                     if (snapshotImage.isClosed() || snapshotImage.isEndOfStream())
                     {
@@ -375,11 +383,10 @@ class TestNode implements AutoCloseable
                     idleStrategy.idle(fragments);
                 }
 
-                if (snapshotFragmentCount.get() != SNAPSHOT_FRAGMENT_COUNT)
+                if (fragmentCount != SNAPSHOT_FRAGMENT_COUNT)
                 {
                     throw new AgentTerminationException(
-                        "Unexpected snapshot length: expected=" + SNAPSHOT_FRAGMENT_COUNT +
-                        " actual=" + snapshotFragmentCount);
+                        "unexpected snapshot length: expected=" + SNAPSHOT_FRAGMENT_COUNT + " actual=" + fragmentCount);
                 }
 
                 wasSnapshotLoaded = true;
@@ -403,10 +410,10 @@ class TestNode implements AutoCloseable
                 }
             }
 
-            if (message.equals(ClusterTests.POISON_MSG))
+            if (message.equals(ClusterTests.UNEXPECTED_MSG))
             {
                 hasReceivedUnexpectedMessage = true;
-                throw new IllegalStateException("Poison message received.");
+                throw new IllegalStateException("unexpected message received");
             }
 
             if (message.equals(ClusterTests.ECHO_IPC_INGRESS_MSG))
@@ -445,8 +452,9 @@ class TestNode implements AutoCloseable
 
         public void onTakeSnapshot(final ExclusivePublication snapshotPublication)
         {
-            final ExpandableArrayBuffer buffer = new ExpandableArrayBuffer(SNAPSHOT_MSG_LENGTH);
+            final UnsafeBuffer buffer = new UnsafeBuffer(new byte[SNAPSHOT_MSG_LENGTH]);
             buffer.putInt(0, messageCount);
+            buffer.putInt(SNAPSHOT_MSG_LENGTH - SIZE_OF_INT, messageCount);
 
             for (int i = 0; i < SNAPSHOT_FRAGMENT_COUNT; i++)
             {

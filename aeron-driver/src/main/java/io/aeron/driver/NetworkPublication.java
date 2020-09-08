@@ -82,7 +82,7 @@ class NetworkPublicationSenderFields extends NetworkPublicationPadding2
 {
     protected long timeOfLastSendOrHeartbeatNs;
     protected long timeOfLastSetupNs;
-    protected long statusMessageDeadlineNs;
+    protected long timeOfLastStatusMessageNs;
     protected boolean trackSenderLimits = false;
     protected boolean shouldSendSetupFrame = true;
 }
@@ -161,9 +161,9 @@ public class NetworkPublication
 
     public NetworkPublication(
         final long registrationId,
+        final MediaDriver.Context ctx,
         final PublicationParams params,
         final SendChannelEndpoint channelEndpoint,
-        final CachedNanoClock nanoClock,
         final RawLog rawLog,
         final int termWindowLength,
         final Position publisherPos,
@@ -174,28 +174,21 @@ public class NetworkPublication
         final int sessionId,
         final int streamId,
         final int initialTermId,
-        final SystemCounters systemCounters,
         final FlowControl flowControl,
         final RetransmitHandler retransmitHandler,
         final NetworkPublicationThreadLocals threadLocals,
-        final long unblockTimeoutNs,
-        final long connectionTimeoutNs,
-        final long untetheredWindowLimitTimeoutNs,
-        final long untetheredRestingTimeoutNs,
-        final boolean spiesSimulateConnection,
-        final boolean isExclusive,
-        final ErrorHandler errorHandler)
+        final boolean isExclusive)
     {
         this.registrationId = registrationId;
-        this.unblockTimeoutNs = unblockTimeoutNs;
-        this.connectionTimeoutNs = connectionTimeoutNs;
+        this.unblockTimeoutNs = ctx.publicationUnblockTimeoutNs();
+        this.connectionTimeoutNs = ctx.publicationConnectionTimeoutNs();
         this.lingerTimeoutNs = params.lingerTimeoutNs;
-        this.untetheredWindowLimitTimeoutNs = untetheredWindowLimitTimeoutNs;
-        this.untetheredRestingTimeoutNs = untetheredRestingTimeoutNs;
+        this.untetheredWindowLimitTimeoutNs = ctx.untetheredWindowLimitTimeoutNs();
+        this.untetheredRestingTimeoutNs = ctx.untetheredRestingTimeoutNs();
         this.tag = params.entityTag;
         this.channelEndpoint = channelEndpoint;
         this.rawLog = rawLog;
-        this.nanoClock = nanoClock;
+        this.nanoClock = ctx.cachedNanoClock();
         this.senderPosition = senderPosition;
         this.senderLimit = senderLimit;
         this.flowControl = flowControl;
@@ -206,9 +199,9 @@ public class NetworkPublication
         this.initialTermId = initialTermId;
         this.sessionId = sessionId;
         this.streamId = streamId;
-        this.spiesSimulateConnection = spiesSimulateConnection;
-        this.isExclusive = isExclusive;
+        this.spiesSimulateConnection = params.spiesSimulateConnection;
         this.signalEos = params.signalEos;
+        this.isExclusive = isExclusive;
 
         metaDataBuffer = rawLog.metaData();
         setupBuffer = threadLocals.setupBuffer();
@@ -218,6 +211,7 @@ public class NetworkPublication
         rttMeasurementBuffer = threadLocals.rttMeasurementBuffer();
         rttMeasurementHeader = threadLocals.rttMeasurementHeader();
 
+        final SystemCounters systemCounters = ctx.systemCounters();
         heartbeatsSent = systemCounters.get(HEARTBEATS_SENT);
         shortSends = systemCounters.get(SHORT_SENDS);
         retransmitsSent = systemCounters.get(RETRANSMITS_SENT);
@@ -227,7 +221,7 @@ public class NetworkPublication
 
         termBuffers = rawLog.termBuffers();
         sendBuffers = rawLog.sliceTerms();
-        this.errorHandler = errorHandler;
+        errorHandler = ctx.errorHandler();
 
         final int termLength = rawLog.termLength();
         termBufferLength = termLength;
@@ -236,7 +230,7 @@ public class NetworkPublication
         final long nowNs = nanoClock.nanoTime();
         timeOfLastSendOrHeartbeatNs = nowNs - PUBLICATION_HEARTBEAT_TIMEOUT_NS - 1;
         timeOfLastSetupNs = nowNs - PUBLICATION_SETUP_TIMEOUT_NS - 1;
-        statusMessageDeadlineNs = spiesSimulateConnection ? nowNs : (nowNs + connectionTimeoutNs);
+        timeOfLastStatusMessageNs = nowNs;
 
         positionBitsToShift = LogBufferDescriptor.positionBitsToShift(termLength);
         this.termWindowLength = termWindowLength;
@@ -263,13 +257,18 @@ public class NetworkPublication
         for (int i = 0, size = untetheredSubscriptions.size(); i < size; i++)
         {
             final UntetheredSubscription untetheredSubscription = untetheredSubscriptions.get(i);
-            if (UntetheredSubscription.RESTING == untetheredSubscription.state)
+            if (UntetheredSubscription.State.RESTING == untetheredSubscription.state)
             {
                 CloseHelper.close(errorHandler, untetheredSubscription.position);
             }
         }
 
         CloseHelper.close(errorHandler, rawLog);
+    }
+
+    public long timeOfLastStatusMessageNs()
+    {
+        return timeOfLastStatusMessageNs;
     }
 
     public long tag()
@@ -295,6 +294,11 @@ public class NetworkPublication
     public boolean isExclusive()
     {
         return isExclusive;
+    }
+
+    public boolean spiesSimulateConnection()
+    {
+        return spiesSimulateConnection;
     }
 
     public final int send(final long nowNs)
@@ -399,6 +403,7 @@ public class NetworkPublication
     {
         if (!isEndOfStream)
         {
+            timeOfLastStatusMessageNs = nanoClock.nanoTime();
             shouldSendSetupFrame = true;
         }
     }
@@ -452,7 +457,7 @@ public class NetworkPublication
         }
 
         final long timeNs = nanoClock.nanoTime();
-        statusMessageDeadlineNs = timeNs + connectionTimeoutNs;
+        timeOfLastStatusMessageNs = timeNs;
 
         senderLimit.setOrdered(flowControl.onStatusMessage(
             msg,
@@ -547,7 +552,7 @@ public class NetworkPublication
 
     final void updateHasReceivers(final long timeNs)
     {
-        if ((statusMessageDeadlineNs - timeNs < 0) && hasReceivers)
+        if (((timeOfLastStatusMessageNs + connectionTimeoutNs) - timeNs < 0) && hasReceivers)
         {
             hasReceivers = false;
         }
@@ -751,20 +756,16 @@ public class NetworkPublication
     {
         final ArrayList<UntetheredSubscription> untetheredSubscriptions = this.untetheredSubscriptions;
         final int untetheredSubscriptionsSize = untetheredSubscriptions.size();
-        if (0 == untetheredSubscriptionsSize)
+        if (untetheredSubscriptionsSize > 0)
         {
-            return;
-        }
+            final long senderPosition = this.senderPosition.getVolatile();
+            final long untetheredWindowLimit = (senderPosition - termWindowLength) + (termWindowLength >> 2);
 
-        final long senderPosition = this.senderPosition.getVolatile();
-        final long untetheredWindowLimit = (senderPosition - termWindowLength) + (termWindowLength >> 3);
-
-        for (int lastIndex = untetheredSubscriptionsSize - 1, i = lastIndex; i >= 0; i--)
-        {
-            final UntetheredSubscription untethered = untetheredSubscriptions.get(i);
-            switch (untethered.state)
+            for (int lastIndex = untetheredSubscriptionsSize - 1, i = lastIndex; i >= 0; i--)
             {
-                case UntetheredSubscription.ACTIVE:
+                final UntetheredSubscription untethered = untetheredSubscriptions.get(i);
+                if (UntetheredSubscription.State.ACTIVE == untethered.state)
+                {
                     if (untethered.position.getVolatile() > untetheredWindowLimit)
                     {
                         untethered.timeOfLastUpdateNs = nowNs;
@@ -772,21 +773,19 @@ public class NetworkPublication
                     else if ((untethered.timeOfLastUpdateNs + untetheredWindowLimitTimeoutNs) - nowNs <= 0)
                     {
                         conductor.notifyUnavailableImageLink(registrationId, untethered.subscriptionLink);
-                        untethered.state = UntetheredSubscription.LINGER;
-                        untethered.timeOfLastUpdateNs = nowNs;
+                        untethered.state(UntetheredSubscription.State.LINGER, nowNs, streamId, sessionId);
                     }
-                    break;
-
-                case UntetheredSubscription.LINGER:
+                }
+                else if (UntetheredSubscription.State.LINGER == untethered.state)
+                {
                     if ((untethered.timeOfLastUpdateNs + untetheredWindowLimitTimeoutNs) - nowNs <= 0)
                     {
                         spyPositions = ArrayUtil.remove(spyPositions, untethered.position);
-                        untethered.state = UntetheredSubscription.RESTING;
-                        untethered.timeOfLastUpdateNs = nowNs;
+                        untethered.state(UntetheredSubscription.State.RESTING, nowNs, streamId, sessionId);
                     }
-                    break;
-
-                case UntetheredSubscription.RESTING:
+                }
+                else if (UntetheredSubscription.State.RESTING == untethered.state)
+                {
                     if ((untethered.timeOfLastUpdateNs + untetheredRestingTimeoutNs) - nowNs <= 0)
                     {
                         spyPositions = ArrayUtil.add(spyPositions, untethered.position);
@@ -798,11 +797,10 @@ public class NetworkPublication
                             senderPosition,
                             rawLog.fileName(),
                             CommonContext.IPC_CHANNEL);
-                        untethered.state = UntetheredSubscription.ACTIVE;
-                        untethered.timeOfLastUpdateNs = nowNs;
+                        untethered.state(UntetheredSubscription.State.ACTIVE, nowNs, streamId, sessionId);
                         LogBufferDescriptor.isConnected(metaDataBuffer, true);
                     }
-                    break;
+                }
             }
         }
     }

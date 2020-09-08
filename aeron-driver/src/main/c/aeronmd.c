@@ -21,7 +21,6 @@
 
 #include <stdlib.h>
 #include <signal.h>
-#include <stdbool.h>
 #include <stdio.h>
 
 #ifndef _MSC_VER
@@ -32,6 +31,7 @@
 #include "concurrent/aeron_atomic.h"
 #include "aeron_driver_context.h"
 #include "util/aeron_properties_util.h"
+#include "util/aeron_strutil.h"
 
 volatile bool running = true;
 
@@ -63,7 +63,6 @@ int main(int argc, char **argv)
     aeron_driver_context_t *context = NULL;
     aeron_driver_t *driver = NULL;
 
-#ifndef _MSC_VER
     int opt;
 
     while ((opt = getopt(argc, argv, "D:v")) != -1)
@@ -103,7 +102,6 @@ int main(int argc, char **argv)
             exit(status);
         }
     }
-#endif
 
     signal(SIGINT, sigint_handler);
 

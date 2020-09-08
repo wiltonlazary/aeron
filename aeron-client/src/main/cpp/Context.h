@@ -18,16 +18,14 @@
 #define AERON_CONTEXT_H
 
 #include <memory>
-#include <util/Exceptions.h>
-#include <concurrent/AgentRunner.h>
-#include <concurrent/broadcast/CopyBroadcastReceiver.h>
-#include <concurrent/CountersReader.h>
-#include <CncFileDescriptor.h>
-#include <iostream>
+#include "concurrent/AgentRunner.h"
+#include "concurrent/broadcast/CopyBroadcastReceiver.h"
+#include "concurrent/CountersReader.h"
+#include "CncFileDescriptor.h"
 
-namespace aeron {
+namespace aeron
+{
 
-using namespace aeron::concurrent::logbuffer;
 using namespace aeron::concurrent::broadcast;
 using namespace aeron::concurrent;
 
@@ -48,7 +46,7 @@ constexpr const std::int32_t NULL_VALUE = -1;
  *
  * @param image that has become available.
  */
-typedef std::function<void(Image& image)> on_available_image_t;
+typedef std::function<void(Image &image)> on_available_image_t;
 
 /**
  * Function called by Aeron to deliver notification that an Image has become unavailable for polling.
@@ -60,7 +58,7 @@ typedef std::function<void(Image& image)> on_available_image_t;
  *
  * @param image that has become unavailable
  */
-typedef std::function<void(Image& image)> on_unavailable_image_t;
+typedef std::function<void(Image &image)> on_unavailable_image_t;
 
 /**
  * Function called by Aeron to deliver notification that the media driver has added a Publication successfully.
@@ -74,7 +72,7 @@ typedef std::function<void(Image& image)> on_unavailable_image_t;
  * @param correlationId used by the Publication for adding. Aka the registrationId returned by Aeron::addPublication
  */
 typedef std::function<void(
-    const std::string& channel,
+    const std::string &channel,
     std::int32_t streamId,
     std::int32_t sessionId,
     std::int64_t correlationId)> on_new_publication_t;
@@ -90,7 +88,7 @@ typedef std::function<void(
  * @param correlationId used by the Subscription for adding. Aka the registrationId returned by Aeron::addSubscription
  */
 typedef std::function<void(
-    const std::string& channel,
+    const std::string &channel,
     std::int32_t streamId,
     std::int64_t correlationId)> on_new_subscription_t;
 
@@ -106,7 +104,7 @@ typedef std::function<void(
  */
 
 typedef std::function<void(
-    CountersReader& countersReader,
+    CountersReader &countersReader,
     std::int64_t registrationId,
     std::int32_t counterId)> on_available_counter_t;
 
@@ -121,7 +119,7 @@ typedef std::function<void(
  * @param counterId      that is unavailable.
  */
 typedef std::function<void(
-    CountersReader& countersReader,
+    CountersReader &countersReader,
     std::int64_t registrationId,
     std::int32_t counterId)> on_unavailable_counter_t;
 
@@ -144,16 +142,16 @@ const static long DEFAULT_RESOURCE_LINGER_MS = 5000;
  *
  * @see Context#errorHandler
  */
-inline void defaultErrorHandler(const std::exception& exception)
+inline void defaultErrorHandler(const std::exception &exception)
 {
     std::cerr << "ERROR: " << exception.what();
 
     try
     {
-        const auto& sourcedException = dynamic_cast<const SourcedException&>(exception);
+        const auto &sourcedException = dynamic_cast<const SourcedException &>(exception);
         std::cerr << " : " << sourcedException.where();
     }
-    catch (const std::bad_cast&)
+    catch (const std::bad_cast &)
     {
         // ignore
     }
@@ -162,7 +160,7 @@ inline void defaultErrorHandler(const std::exception& exception)
     ::exit(-1);
 }
 
-inline void defaultOnNewPublicationHandler(const std::string&, std::int32_t, std::int32_t, std::int64_t)
+inline void defaultOnNewPublicationHandler(const std::string &, std::int32_t, std::int32_t, std::int64_t)
 {
 }
 
@@ -170,7 +168,7 @@ inline void defaultOnAvailableImageHandler(Image &)
 {
 }
 
-inline void defaultOnNewSubscriptionHandler(const std::string&, std::int32_t, std::int64_t)
+inline void defaultOnNewSubscriptionHandler(const std::string &, std::int32_t, std::int64_t)
 {
 }
 
@@ -178,11 +176,11 @@ inline void defaultOnUnavailableImageHandler(Image &)
 {
 }
 
-inline void defaultOnAvailableCounterHandler(CountersReader&, std::int64_t, std::int32_t)
+inline void defaultOnAvailableCounterHandler(CountersReader &, std::int64_t, std::int32_t)
 {
 }
 
-inline void defaultOnUnavailableCounterHandler(CountersReader&, std::int64_t, std::int32_t)
+inline void defaultOnUnavailableCounterHandler(CountersReader &, std::int64_t, std::int32_t)
 {
 }
 
@@ -204,7 +202,7 @@ public:
     using this_t = Context;
 
     /// @cond HIDDEN_SYMBOLS
-    this_t& conclude()
+    this_t &conclude()
     {
         if (!m_isOnNewExclusivePublicationHandlerSet)
         {
@@ -221,7 +219,7 @@ public:
      * @param directory to use
      * @return reference to this Context instance
      */
-    inline this_t& aeronDir(const std::string &directory)
+    inline this_t &aeronDir(const std::string &directory)
     {
         m_dirName = directory;
         return *this;
@@ -234,7 +232,7 @@ public:
      */
     inline std::string cncFileName()
     {
-        return m_dirName + "/" + CncFileDescriptor::CNC_FILE;
+        return m_dirName + std::string(1, AERON_FILE_SEP) + CncFileDescriptor::CNC_FILE;
     }
 
     /**
@@ -245,7 +243,7 @@ public:
      *
      * @see defaultErrorHandler for how the default behavior is handled
      */
-    inline this_t& errorHandler(const exception_handler_t& handler)
+    inline this_t &errorHandler(const exception_handler_t &handler)
     {
         m_exceptionHandler = handler;
         return *this;
@@ -257,7 +255,7 @@ public:
      * @param handler called when add is completed successfully
      * @return reference to this Context instance
      */
-    inline this_t& newPublicationHandler(const on_new_publication_t& handler)
+    inline this_t &newPublicationHandler(const on_new_publication_t &handler)
     {
         m_onNewPublicationHandler = handler;
         return *this;
@@ -271,7 +269,7 @@ public:
      * @param handler called when add is completed successfully
      * @return reference to this Context instance
      */
-    inline this_t& newExclusivePublicationHandler(const on_new_publication_t& handler)
+    inline this_t &newExclusivePublicationHandler(const on_new_publication_t &handler)
     {
         m_onNewExclusivePublicationHandler = handler;
         m_isOnNewExclusivePublicationHandlerSet = true;
@@ -284,7 +282,7 @@ public:
      * @param handler called when add is completed successfully
      * @return reference to this Context instance
      */
-    inline this_t& newSubscriptionHandler(const on_new_subscription_t& handler)
+    inline this_t &newSubscriptionHandler(const on_new_subscription_t &handler)
     {
         m_onNewSubscriptionHandler = handler;
         return *this;
@@ -296,7 +294,7 @@ public:
      * @param handler called when event occurs
      * @return reference to this Context instance
      */
-    inline this_t& availableImageHandler(const on_available_image_t &handler)
+    inline this_t &availableImageHandler(const on_available_image_t &handler)
     {
         m_onAvailableImageHandler = handler;
         return *this;
@@ -308,7 +306,7 @@ public:
      * @param handler called when event occurs
      * @return reference to this Context instance
      */
-    inline this_t& unavailableImageHandler(const on_unavailable_image_t &handler)
+    inline this_t &unavailableImageHandler(const on_unavailable_image_t &handler)
     {
         m_onUnavailableImageHandler = handler;
         return *this;
@@ -320,7 +318,7 @@ public:
      * @param handler called when event occurs
      * @return reference to this Context instance
      */
-    inline this_t& availableCounterHandler(const on_available_counter_t &handler)
+    inline this_t &availableCounterHandler(const on_available_counter_t &handler)
     {
         m_onAvailableCounterHandler = handler;
         return *this;
@@ -332,7 +330,7 @@ public:
      * @param handler called when event occurs
      * @return reference to this Context instance
      */
-    inline this_t& unavailableCounterHandler(const on_unavailable_counter_t &handler)
+    inline this_t &unavailableCounterHandler(const on_unavailable_counter_t &handler)
     {
         m_onUnavailableCounterHandler = handler;
         return *this;
@@ -344,7 +342,7 @@ public:
      * @param handler to be called when the Aeron client is closed.
      * @return reference to this Context instance.
      */
-    inline this_t& closeClientHandler(const on_close_client_t &handler)
+    inline this_t &closeClientHandler(const on_close_client_t &handler)
     {
         m_onCloseClientHandler = handler;
         return *this;
@@ -358,7 +356,7 @@ public:
      * @return reference to this Context instance
      * @see errorHandler
      */
-    inline this_t& mediaDriverTimeout(long value)
+    inline this_t &mediaDriverTimeout(long value)
     {
         m_mediaDriverTimeout = value;
         return *this;
@@ -378,12 +376,12 @@ public:
 
     /**
      * Set the amount of time, in milliseconds, that this client will to linger inactive connections and internal
-     * arrays before they are free'd.
+     * arrays before they are freed.
      *
      * @param value Number of milliseconds.
      * @return reference to this Context instance
      */
-    inline this_t& resourceLingerTimeout(long value)
+    inline this_t &resourceLingerTimeout(long value)
     {
         m_resourceLingerTimeout = value;
         return *this;
@@ -395,7 +393,7 @@ public:
      * @param useConductorAgentInvoker to use an invoker or not.
      * @return reference to this Context instance
      */
-    inline this_t& useConductorAgentInvoker(bool useConductorAgentInvoker)
+    inline this_t &useConductorAgentInvoker(bool useConductorAgentInvoker)
     {
         m_useConductorAgentInvoker = useConductorAgentInvoker;
         return *this;
@@ -407,70 +405,16 @@ public:
      * @param preTouchMappedMemory true to pre-touch memory otherwise false.
      * @return reference to this Context instance
      */
-    inline this_t& preTouchMappedMemory(bool preTouchMappedMemory)
+    inline this_t &preTouchMappedMemory(bool preTouchMappedMemory)
     {
         m_preTouchMappedMemory = preTouchMappedMemory;
         return *this;
     }
 
-    static void requestDriverTermination(
-        const std::string& directory, const std::uint8_t *tokenBuffer, std::size_t tokenLength);
+    static bool requestDriverTermination(
+        const std::string &directory, const std::uint8_t *tokenBuffer, std::size_t tokenLength);
 
-    inline static std::string tmpDir()
-    {
-#if defined(_MSC_VER)
-        static char buff[MAX_PATH+1];
-        std::string dir = "";
-
-        if (::GetTempPath(MAX_PATH, &buff[0]) > 0)
-        {
-            dir = buff;
-        }
-
-        return dir;
-#else
-        std::string dir = "/tmp";
-
-        if (::getenv("TMPDIR"))
-        {
-            dir = ::getenv("TMPDIR");
-        }
-
-        return dir;
-#endif
-    }
-
-    inline static std::string getUserName()
-    {
-        const char *username = ::getenv("USER");
-#if (_MSC_VER)
-        if (nullptr == username)
-        {
-            username = ::getenv("USERNAME");
-            if (nullptr == username)
-            {
-                 username = "default";
-            }
-        }
-#else
-        if (nullptr == username)
-        {
-            username = "default";
-        }
-#endif
-        return username;
-    }
-
-    inline static std::string defaultAeronPath()
-    {
-#if defined(__linux__)
-        return "/dev/shm/aeron-" + getUserName();
-#elif (_MSC_VER)
-        return tmpDir() + "aeron-" + getUserName();
-#else
-        return tmpDir() + "/aeron-" + getUserName();
-#endif
-    }
+    static std::string defaultAeronPath();
 
 private:
     std::string m_dirName = defaultAeronPath();

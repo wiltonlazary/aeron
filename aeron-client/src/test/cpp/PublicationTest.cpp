@@ -42,7 +42,7 @@ static const std::int32_t TERM_ID_1 = 1;
 
 inline std::int64_t rawTailValue(std::int32_t termId, std::int64_t position)
 {
-    return (termId * ((int64_t(1) << 32))) | position;
+    return (termId * ((INT64_C(1) << 32))) | position;
 }
 
 inline util::index_t termTailCounterOffset(const int index)
@@ -104,6 +104,12 @@ protected:
 TEST_F(PublicationTest, shouldReportInitialPosition)
 {
     EXPECT_EQ(m_publication->position(), 0);
+}
+
+TEST_F(PublicationTest, shouldReportMaxPossiblePosition)
+{
+    auto expectedPosition = (int64_t)(TERM_LENGTH * (UINT64_C(1) << 31u));
+    EXPECT_EQ(m_publication->maxPossiblePosition(), expectedPosition);
 }
 
 TEST_F(PublicationTest, shouldReportMaxMessageLength)
@@ -190,7 +196,9 @@ TEST_F(PublicationTest, shouldRotateWhenAppendTrips)
     const int nextIndex = LogBufferDescriptor::indexByTermCount(1);
     EXPECT_EQ(m_logMetaDataBuffer.getInt32(LogBufferDescriptor::LOG_ACTIVE_TERM_COUNT_OFFSET), 1);
 
-    EXPECT_EQ(m_logMetaDataBuffer.getInt64(termTailCounterOffset(nextIndex)), static_cast<std::int64_t>(TERM_ID_1 + 1) << 32);
+    int64_t nextTermId = TERM_ID_1 + 1;
+    auto expectedTail = nextTermId << 32;
+    EXPECT_EQ(m_logMetaDataBuffer.getInt64(termTailCounterOffset(nextIndex)), expectedTail);
 
     EXPECT_GT(m_publication->offer(m_srcBuffer), initialPosition + DataFrameHeader::LENGTH + m_srcBuffer.capacity());
     EXPECT_GT(m_publication->position(), initialPosition + DataFrameHeader::LENGTH + m_srcBuffer.capacity());
@@ -210,8 +218,11 @@ TEST_F(PublicationTest, shouldRotateWhenClaimTrips)
     const int nextIndex = LogBufferDescriptor::indexByTermCount(1);
     EXPECT_EQ(m_logMetaDataBuffer.getInt32(LogBufferDescriptor::LOG_ACTIVE_TERM_COUNT_OFFSET), 1);
 
-    EXPECT_EQ(m_logMetaDataBuffer.getInt64(termTailCounterOffset(nextIndex)), static_cast<std::int64_t>(TERM_ID_1 + 1) << 32);
+    int64_t nextTermId = TERM_ID_1 + 1;
+    auto expectedTail = nextTermId << 32;
+    EXPECT_EQ(m_logMetaDataBuffer.getInt64(termTailCounterOffset(nextIndex)), expectedTail);
 
-    EXPECT_GT(m_publication->tryClaim(SRC_BUFFER_LENGTH, bufferClaim), initialPosition + DataFrameHeader::LENGTH + m_srcBuffer.capacity());
+    EXPECT_GT(m_publication->tryClaim(SRC_BUFFER_LENGTH, bufferClaim),
+              initialPosition + DataFrameHeader::LENGTH + m_srcBuffer.capacity());
     EXPECT_GT(m_publication->position(), initialPosition + DataFrameHeader::LENGTH + m_srcBuffer.capacity());
 }

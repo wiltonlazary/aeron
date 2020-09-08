@@ -19,10 +19,11 @@
 #define _GNU_SOURCE
 #endif
 
+#include <math.h>
 #include <stdlib.h>
-#include "aeron_loss_detector.h"
 #include "aeronmd.h"
 #include "aeron_windows.h"
+#include "aeron_loss_detector.h"
 
 int aeron_loss_detector_init(
     aeron_loss_detector_t *detector,

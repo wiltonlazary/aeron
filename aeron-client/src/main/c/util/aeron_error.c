@@ -26,7 +26,6 @@
 #include "command/aeron_control_protocol.h"
 
 #if defined(AERON_COMPILER_MSVC)
-#include <WinSock2.h>
 #include <windows.h>
 #endif
 
@@ -56,12 +55,13 @@ static void initialize_error()
     }
 #endif
 
-    (void) aeron_thread_once(&error_is_initialized, initialize_per_thread_error);
+    aeron_thread_once(&error_is_initialized, initialize_per_thread_error);
 }
 
 int aeron_errcode()
 {
     initialize_error();
+
     aeron_per_thread_error_t *error_state = aeron_thread_get_specific(error_key);
     int result = 0;
 
@@ -76,6 +76,7 @@ int aeron_errcode()
 const char *aeron_errmsg()
 {
     initialize_error();
+
     aeron_per_thread_error_t *error_state = aeron_thread_get_specific(error_key);
     const char *result = "";
 
@@ -87,9 +88,10 @@ const char *aeron_errmsg()
     return result;
 }
 
-static aeron_per_thread_error_t* get_required_error_state()
+static aeron_per_thread_error_t *get_required_error_state()
 {
     initialize_error();
+
     aeron_per_thread_error_t *error_state = aeron_thread_get_specific(error_key);
 
     if (NULL == error_state)
@@ -115,6 +117,8 @@ void aeron_set_err(int errcode, const char *format, ...)
     aeron_per_thread_error_t *error_state = get_required_error_state();
 
     error_state->errcode = errcode;
+    aeron_set_errno(errcode);
+
     va_list args;
     char stack_message[sizeof(error_state->errmsg)];
 
@@ -124,15 +128,39 @@ void aeron_set_err(int errcode, const char *format, ...)
     strncpy(error_state->errmsg, stack_message, sizeof(error_state->errmsg));
 }
 
-void aeron_set_err_from_last_err_code(const char* format, ...)
+void aeron_set_errno(int errcode)
+{
+    errno = errcode;
+#if defined(AERON_COMPILER_MSVC)
+    switch (errcode)
+    {
+        case 0:
+            SetLastError(ERROR_SUCCESS);
+            break;
+
+        case EINVAL:
+            SetLastError(ERROR_BAD_ARGUMENTS);
+            break;
+
+        case ENOMEM:
+            SetLastError(ERROR_OUTOFMEMORY);
+            break;
+
+        default:
+            break;
+    }
+#endif
+}
+
+void aeron_set_err_from_last_err_code(const char *format, ...)
 {
 #if defined(AERON_COMPILER_MSVC)
-    int errcode = GetLastError();
+    int errcode = (int)GetLastError();
 #else
     int errcode = errno;
 #endif
 
-    aeron_per_thread_error_t* error_state = get_required_error_state();
+    aeron_per_thread_error_t *error_state = get_required_error_state();
 
     error_state->errcode = errcode;
     va_list args;
@@ -151,7 +179,7 @@ void aeron_set_err_from_last_err_code(const char* format, ...)
     strncpy(error_state->errmsg, stack_message, sizeof(error_state->errmsg));
 
 #if defined(AERON_COMPILER_MSVC)
-    const int length = FormatMessageA(
+    int length = (int)FormatMessageA(
         FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
         NULL,
         errcode,
@@ -206,6 +234,12 @@ const char *aeron_error_code_str(int errcode)
         case AERON_ERROR_CODE_NOT_SUPPORTED:
             return "not supported";
 
+        case AERON_ERROR_CODE_UNKNOWN_HOST:
+            return "unknown host";
+
+        case AERON_ERROR_CODE_RESOURCE_TEMPORARILY_UNAVAILABLE:
+            return "resource temporarily unavailable";
+
         default:
             return "unknown error code";
     }
@@ -221,6 +255,7 @@ bool aeron_error_dll_process_attach()
     }
 
     error_key = TlsAlloc();
+
     return error_key != TLS_OUT_OF_INDEXES;
 }
 
@@ -231,7 +266,7 @@ void aeron_error_dll_thread_detach()
         return;
     }
 
-    aeron_per_thread_error_t* error_state = aeron_thread_get_specific(error_key);
+    aeron_per_thread_error_t *error_state = aeron_thread_get_specific(error_key);
 
     if (NULL != error_state)
     {

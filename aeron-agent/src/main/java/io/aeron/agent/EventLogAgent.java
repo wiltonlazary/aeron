@@ -70,9 +70,9 @@ public final class EventLogAgent
         if (logTransformer != null)
         {
             logTransformer.reset(instrumentation, AgentBuilder.RedefinitionStrategy.RETRANSFORMATION);
-            thread = null;
             instrumentation = null;
             logTransformer = null;
+            thread = null;
 
             CloseHelper.close(readerAgentRunner);
             readerAgentRunner = null;
@@ -89,9 +89,7 @@ public final class EventLogAgent
 
         EventConfiguration.init();
 
-        if (DRIVER_EVENT_CODES.isEmpty() &&
-            ARCHIVE_EVENT_CODES.isEmpty() &&
-            CLUSTER_EVENT_CODES.isEmpty())
+        if (DRIVER_EVENT_CODES.isEmpty() && ARCHIVE_EVENT_CODES.isEmpty() && CLUSTER_EVENT_CODES.isEmpty())
         {
             return;
         }
@@ -127,6 +125,7 @@ public final class EventLogAgent
         tempBuilder = addDriverSenderProxyInstrumentation(tempBuilder);
         tempBuilder = addDriverReceiverProxyInstrumentation(tempBuilder);
         tempBuilder = addDriverUdpChannelTransportInstrumentation(tempBuilder);
+        tempBuilder = addDriverUntetheredSubscriptionInstrumentation(tempBuilder);
 
         return tempBuilder;
     }
@@ -276,11 +275,30 @@ public final class EventLogAgent
             });
     }
 
+    private static AgentBuilder addDriverUntetheredSubscriptionInstrumentation(final AgentBuilder agentBuilder)
+    {
+        if (!DRIVER_EVENT_CODES.contains(DriverEventCode.UNTETHERED_SUBSCRIPTION_STATE_CHANGE))
+        {
+            return agentBuilder;
+        }
+
+        return agentBuilder
+            .type(nameEndsWith("UntetheredSubscription"))
+            .transform((builder, typeDescription, classLoader, javaModule) ->
+                builder
+                    .visit(to(DriverInterceptor.UntetheredSubscriptionStateChange.class)
+                        .on(named("stateChange"))));
+    }
+
     private static AgentBuilder addArchiveInstrumentation(final AgentBuilder agentBuilder)
     {
         AgentBuilder tempBuilder = agentBuilder;
         tempBuilder = addArchiveControlSessionDemuxerInstrumentation(tempBuilder);
         tempBuilder = addArchiveControlResponseProxyInstrumentation(tempBuilder);
+        tempBuilder = addArchiveReplicationSessionInstrumentation(tempBuilder);
+        tempBuilder = addArchiveControlSessionInstrumentation(tempBuilder);
+        tempBuilder = addArchiveReplaySessionInstrumentation(tempBuilder);
+        tempBuilder = addArchiveCatalogInstrumentation(tempBuilder);
 
         return tempBuilder;
     }
@@ -311,6 +329,62 @@ public final class EventLogAgent
             .transform(((builder, typeDescription, classLoader, module) -> builder
                 .visit(to(ControlInterceptor.ControlResponse.class)
                     .on(named("sendResponseHook")))));
+    }
+
+    private static AgentBuilder addArchiveReplicationSessionInstrumentation(final AgentBuilder agentBuilder)
+    {
+        if (!ARCHIVE_EVENT_CODES.contains(ArchiveEventCode.REPLICATION_SESSION_STATE_CHANGE))
+        {
+            return agentBuilder;
+        }
+
+        return agentBuilder
+            .type(nameEndsWith("ReplicationSession"))
+            .transform(((builder, typeDescription, classLoader, module) -> builder
+                .visit(to(ArchiveInterceptor.ReplicationSessionStateChange.class)
+                    .on(named("stateChange")))));
+    }
+
+    private static AgentBuilder addArchiveControlSessionInstrumentation(final AgentBuilder agentBuilder)
+    {
+        if (!ARCHIVE_EVENT_CODES.contains(ArchiveEventCode.CONTROL_SESSION_STATE_CHANGE))
+        {
+            return agentBuilder;
+        }
+
+        return agentBuilder
+            .type(nameEndsWith("ControlSession"))
+            .transform(((builder, typeDescription, classLoader, module) -> builder
+                .visit(to(ArchiveInterceptor.ControlSessionStateChange.class)
+                    .on(named("stateChange")))));
+    }
+
+    private static AgentBuilder addArchiveReplaySessionInstrumentation(final AgentBuilder agentBuilder)
+    {
+        if (!ARCHIVE_EVENT_CODES.contains(ArchiveEventCode.REPLAY_SESSION_ERROR))
+        {
+            return agentBuilder;
+        }
+
+        return agentBuilder
+            .type(nameEndsWith("ReplaySession"))
+            .transform(((builder, typeDescription, classLoader, module) -> builder
+                .visit(to(ArchiveInterceptor.ReplaySession.class)
+                    .on(named("onPendingError")))));
+    }
+
+    private static AgentBuilder addArchiveCatalogInstrumentation(final AgentBuilder agentBuilder)
+    {
+        if (!ARCHIVE_EVENT_CODES.contains(ArchiveEventCode.CATALOG_RESIZE))
+        {
+            return agentBuilder;
+        }
+
+        return agentBuilder
+            .type(nameEndsWith("Catalog"))
+            .transform(((builder, typeDescription, classLoader, module) -> builder
+                .visit(to(ArchiveInterceptor.Catalog.class)
+                    .on(named("catalogResized")))));
     }
 
     private static AgentBuilder addClusterInstrumentation(final AgentBuilder agentBuilder)

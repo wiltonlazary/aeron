@@ -38,7 +38,6 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.RegisterExtension;
 
 import java.io.File;
-import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
@@ -64,8 +63,7 @@ public class MultiDestinationCastTest
     private static final int MESSAGES_PER_TERM = 64;
     private static final int MESSAGE_LENGTH =
         (TERM_BUFFER_LENGTH / MESSAGES_PER_TERM) - DataHeaderFlyweight.HEADER_LENGTH;
-    private static final String ROOT_DIR =
-        SystemUtil.tmpDirName() + "aeron-system-tests-" + UUID.randomUUID() + File.separator;
+    private static final String ROOT_DIR = SystemUtil.tmpDirName() + "aeron-system-tests" + File.separator;
 
     private final MediaDriver.Context driverBContext = new MediaDriver.Context();
 
@@ -84,7 +82,7 @@ public class MultiDestinationCastTest
     private final FragmentHandler fragmentHandlerC = mock(FragmentHandler.class, "fragmentHandlerC");
 
     @RegisterExtension
-    public MediaDriverTestWatcher testWatcher = new MediaDriverTestWatcher();
+    public final MediaDriverTestWatcher testWatcher = new MediaDriverTestWatcher();
 
     private void launch()
     {
@@ -130,8 +128,7 @@ public class MultiDestinationCastTest
 
         while (subscriptionA.hasNoImages() || subscriptionB.hasNoImages() || subscriptionC.hasNoImages())
         {
-            Thread.yield();
-            Tests.checkInterruptStatus();
+            Tests.yield();
         }
     }
 
@@ -151,8 +148,7 @@ public class MultiDestinationCastTest
 
         while (subscriptionA.hasNoImages() || subscriptionB.hasNoImages() || subscriptionC.hasNoImages())
         {
-            Thread.yield();
-            Tests.checkInterruptStatus();
+            Tests.yield();
         }
 
         assertFalse(clientA.isCommandActive(correlationId));
@@ -173,16 +169,14 @@ public class MultiDestinationCastTest
 
         while (subscriptionA.hasNoImages() || subscriptionB.hasNoImages() || subscriptionC.hasNoImages())
         {
-            Thread.yield();
-            Tests.checkInterruptStatus();
+            Tests.yield();
         }
 
         for (int i = 0; i < numMessagesToSend; i++)
         {
             while (publication.offer(buffer, 0, buffer.capacity()) < 0L)
             {
-                Thread.yield();
-                Tests.checkInterruptStatus();
+                Tests.yield();
             }
 
             pollForFragment(subscriptionA, fragmentHandlerA);
@@ -210,16 +204,14 @@ public class MultiDestinationCastTest
 
         while (!subscriptionA.isConnected() || !subscriptionB.isConnected() || !subscriptionC.isConnected())
         {
-            Thread.yield();
-            Tests.checkInterruptStatus();
+            Tests.yield();
         }
 
         for (int i = 0; i < numMessagesToSend; i++)
         {
             while (publication.offer(buffer, 0, buffer.capacity()) < 0L)
             {
-                Thread.yield();
-                Tests.checkInterruptStatus();
+                Tests.yield();
             }
 
             pollForFragment(subscriptionA, fragmentHandlerA);
@@ -249,16 +241,14 @@ public class MultiDestinationCastTest
 
         while (!subscriptionA.isConnected() || !subscriptionB.isConnected())
         {
-            Thread.yield();
-            Tests.checkInterruptStatus();
+            Tests.yield();
         }
 
         for (int i = 0; i < numMessagesToSend; i++)
         {
             while (publication.offer(buffer, 0, MESSAGE_LENGTH) < 0L)
             {
-                Thread.yield();
-                Tests.checkInterruptStatus();
+                Tests.yield();
             }
 
             pollForFragment(subscriptionA, fragmentHandlerA);
@@ -291,16 +281,14 @@ public class MultiDestinationCastTest
 
         while (!subscriptionA.isConnected() || !subscriptionB.isConnected())
         {
-            Thread.yield();
-            Tests.checkInterruptStatus();
+            Tests.yield();
         }
 
         for (int i = 0; i < numMessagesToSend; i++)
         {
             while (publication.offer(buffer, 0, MESSAGE_LENGTH) < 0L)
             {
-                Thread.yield();
-                Tests.checkInterruptStatus();
+                Tests.yield();
             }
 
             pollForFragment(subscriptionA, fragmentHandlerA);
@@ -312,7 +300,7 @@ public class MultiDestinationCastTest
             else
             {
                 subscriptionB.poll(fragmentHandlerB, 10);
-                Thread.yield();
+                Tests.yield();
             }
 
             if (i == numMessageForSub2 - 1)
@@ -352,11 +340,7 @@ public class MultiDestinationCastTest
         publication = clientA.addPublication(PUB_MDC_MANUAL_URI, STREAM_ID);
         publication.addDestination(SUB1_MDC_MANUAL_URI);
 
-        while (!subscriptionA.isConnected())
-        {
-            Thread.yield();
-            Tests.checkInterruptStatus();
-        }
+        Tests.awaitConnected(subscriptionA);
 
         while (messagesSent.value < numMessagesToSend)
         {

@@ -16,8 +16,6 @@
 #ifndef AERON_ARCHIVE_AERON_ARCHIVE_H
 #define AERON_ARCHIVE_AERON_ARCHIVE_H
 
-#include "Aeron.h"
-#include "ChannelUri.h"
 #include "ArchiveConfiguration.h"
 #include "ArchiveProxy.h"
 #include "ControlResponsePoller.h"
@@ -25,7 +23,6 @@
 #include "RecordingSubscriptionDescriptorPoller.h"
 #include "concurrent/BackOffIdleStrategy.h"
 #include "concurrent/YieldingIdleStrategy.h"
-#include "util/ScopeUtils.h"
 #include "ArchiveException.h"
 
 namespace aeron { namespace archive { namespace client
@@ -78,7 +75,11 @@ public:
     {
     public:
         AsyncConnect(
-            Context_t &context, std::shared_ptr<Aeron> aeron, std::int64_t subscriptionId, std::int64_t publicationId);
+            Context_t &context,
+            std::shared_ptr<Aeron> aeron,
+            std::int64_t subscriptionId,
+            std::int64_t publicationId,
+            const long long deadlineNs);
 
         /**
          * Poll for a complete connection.
@@ -87,7 +88,18 @@ public:
          */
         std::shared_ptr<AeronArchive> poll();
 
+        /**
+         * The step in the connect process this connect attempt has reached.
+         *
+         * @return the step in the connect process this connect attempt has reached.
+         */
+        inline std::uint8_t step()
+        {
+            return m_step;
+        }
+
     private:
+        nano_clock_t m_nanoClock;
         std::unique_ptr<Context_t> m_ctx;
         std::unique_ptr<ArchiveProxy> m_archiveProxy;
         std::unique_ptr<ControlResponsePoller> m_controlResponsePoller;
@@ -96,6 +108,7 @@ public:
         std::shared_ptr<ExclusivePublication> m_publication;
         const std::int64_t m_subscriptionId;
         const std::int64_t m_publicationId;
+        const long long m_deadlineNs;
         std::int64_t m_correlationId = aeron::NULL_VALUE;
         std::int64_t m_challengeControlSessionId = aeron::NULL_VALUE;
         std::uint8_t m_step = 0;
@@ -136,16 +149,26 @@ public:
         std::shared_ptr<AsyncConnect> asyncConnect = AeronArchive::asyncConnect(context);
         std::shared_ptr<Aeron> aeron = context.aeron();
         ConnectIdleStrategy idle;
+        std::uint8_t previousStep = asyncConnect->step();
 
         std::shared_ptr<AeronArchive> archive = asyncConnect->poll();
         while (!archive)
         {
+            if (asyncConnect->step() == previousStep)
+            {
+                idle.idle();
+            }
+            else
+            {
+                idle.reset();
+                previousStep = asyncConnect->step();
+            }
+
             if (aeron->usesAgentInvoker())
             {
                 aeron->conductorAgentInvoker().invoke();
             }
 
-            idle.idle();
             archive = asyncConnect->poll();
         }
 
@@ -261,7 +284,7 @@ public:
             }
         }
 
-        return std::string();
+        return {};
     }
 
     /**
@@ -1521,7 +1544,7 @@ private:
     bool m_isClosed = false;
     bool m_isInCallback = false;
 
-    inline void ensureOpen()
+    inline void ensureOpen() const
     {
         if (m_isClosed)
         {
@@ -1529,7 +1552,7 @@ private:
         }
     }
 
-    inline void ensureNotReentrant()
+    inline void ensureNotReentrant() const
     {
         if (m_isInCallback)
         {
@@ -1725,7 +1748,7 @@ private:
 
             if (!m_recordingDescriptorPoller->subscription()->isConnected())
             {
-                throw ArchiveException("subscription to archive is not connected", SOURCEINFO);
+                throw ArchiveException("response channel from archive is not connected", SOURCEINFO);
             }
 
             checkDeadline(deadlineNs, "awaiting recording descriptors", correlationId);
@@ -1771,7 +1794,7 @@ private:
 
             if (!m_recordingSubscriptionDescriptorPoller->subscription()->isConnected())
             {
-                throw ArchiveException("subscription to archive is not connected", SOURCEINFO);
+                throw ArchiveException("response channel from archive is not connected", SOURCEINFO);
             }
 
             checkDeadline(deadlineNs, "awaiting subscription descriptors", correlationId);

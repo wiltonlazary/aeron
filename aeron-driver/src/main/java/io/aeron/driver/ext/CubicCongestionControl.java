@@ -33,8 +33,10 @@ import static io.aeron.driver.CongestionControl.packOutcome;
 /**
  * CUBIC congestion control manipulation of the receiver window length.
  * <p>
- * <a target="_blank" href="https://research.csc.ncsu.edu/netsrv/?q=content/bic-and-cubic">
- * https://research.csc.ncsu.edu/netsrv/?q=content/bic-and-cubic</a>
+ * <a target="_blank" href="https://tools.ietf.org/id/draft-rhee-tcpm-cubic-02.txt">
+ * https://tools.ietf.org/id/draft-rhee-tcpm-cubic-02.txt</a> and
+ * <a target="_blank" href="https://dl.acm.org/doi/10.1145/1400097.1400105">
+ * https://dl.acm.org/doi/10.1145/1400097.1400105</a>
  * <p>
  * {@code W_cubic = C(T - K)^3 + w_max}
  * <p>
@@ -74,7 +76,7 @@ public class CubicCongestionControl implements CongestionControl
     private long lastUpdateTimestampNs;
     private long lastRttTimestampNs = 0;
     private final long windowUpdateTimeoutNs;
-    private long rttInNs;
+    private long rttNs;
     private double k;
     private int cwnd;
     private int w_max;
@@ -104,11 +106,11 @@ public class CubicCongestionControl implements CongestionControl
         maxCwnd = maxWindow / mtu;
         cwnd = 1;
         w_max = maxCwnd; // initially set w_max to max window and act in the TCP and concave region initially
-        k = Math.cbrt((double)w_max * B / C);
+        k = StrictMath.cbrt((double)w_max * B / C);
 
         // determine interval for adjustment based on heuristic of MTU, max window, and/or RTT estimate
-        rttInNs = CubicCongestionControlConfiguration.INITIAL_RTT_NS;
-        windowUpdateTimeoutNs = rttInNs;
+        rttNs = CubicCongestionControlConfiguration.INITIAL_RTT_NS;
+        windowUpdateTimeoutNs = rttNs;
 
         rttIndicator = PerImageIndicator.allocate(
             context.tempBuffer(),
@@ -155,7 +157,7 @@ public class CubicCongestionControl implements CongestionControl
     {
         outstandingRttMeasurements--;
         lastRttTimestampNs = nowNs;
-        this.rttInNs = rttNs;
+        this.rttNs = rttNs;
         rttIndicator.setOrdered(rttNs);
     }
 
@@ -173,8 +175,8 @@ public class CubicCongestionControl implements CongestionControl
         if (lossOccurred)
         {
             w_max = cwnd;
-            k = Math.cbrt((double)w_max * B / C);
-            cwnd = Math.min(1, (int)(cwnd * (1.0 - B)));
+            k = StrictMath.cbrt((double)w_max * B / C);
+            cwnd = Math.max(1, (int)(cwnd * (1.0 - B)));
             lastLossTimestampNs = nowNs;
             forceStatusMessage = true;
         }
@@ -192,9 +194,9 @@ public class CubicCongestionControl implements CongestionControl
             {
                 // W_tcp(t) = w_max * (1 - B) + 3 * B / (2 - B) * t / RTT
 
-                final double rttInSeconds = (double)rttInNs / (double)SECOND_IN_NS;
+                final double rttInSeconds = (double)rttNs / (double)SECOND_IN_NS;
                 final double wTcp =
-                    (double)w_max * (1.0 - B) + ((3.0 * B / (2.0 * B)) * (durationSinceDecr / rttInSeconds));
+                    (double)w_max * (1.0 - B) + ((3.0 * B / (2.0 - B)) * (durationSinceDecr / rttInSeconds));
 
                 cwnd = Math.max(cwnd, (int)wTcp);
             }

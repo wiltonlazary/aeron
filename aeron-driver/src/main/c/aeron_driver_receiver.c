@@ -19,12 +19,10 @@
 #define _GNU_SOURCE
 #endif
 
-#include "aeron_socket.h"
 #include <stdio.h>
 #include "util/aeron_arrayutil.h"
 #include "media/aeron_receive_channel_endpoint.h"
 #include "aeron_driver_receiver.h"
-#include "aeron_publication_image.h"
 
 #if !defined(HAVE_STRUCT_MMSGHDR)
 struct mmsghdr
@@ -69,6 +67,7 @@ int aeron_driver_receiver_init(
         context->udp_channel_incoming_interceptor_bindings,
         context->udp_channel_transport_bindings,
         aeron_receive_channel_endpoint_dispatch,
+        context,
         AERON_UDP_CHANNEL_TRANSPORT_AFFINITY_RECEIVER) < 0)
     {
         return -1;
@@ -206,7 +205,7 @@ int aeron_driver_receiver_do_work(void *clientd)
                 }
 
                 aeron_array_fast_unordered_remove(
-                    (uint8_t *) receiver->pending_setups.array,
+                    (uint8_t *)receiver->pending_setups.array,
                     sizeof(aeron_driver_receiver_pending_setup_entry_t),
                     (size_t)i,
                     (size_t)last_index);
@@ -265,33 +264,13 @@ void aeron_driver_receiver_on_add_endpoint(void *clientd, void *command)
     aeron_driver_receiver_t *receiver = (aeron_driver_receiver_t *)clientd;
     aeron_command_base_t *cmd = (aeron_command_base_t *)command;
     aeron_receive_channel_endpoint_t *endpoint = (aeron_receive_channel_endpoint_t *)cmd->item;
-    aeron_udp_channel_t *udp_channel = endpoint->conductor_fields.udp_channel;
 
-    if (receiver->context->udp_channel_transport_bindings->poller_add_func(&receiver->poller, &endpoint->transport) < 0)
+    if (aeron_receive_channel_endpoint_add_poll_transports(endpoint, &receiver->poller) < 0)
     {
         AERON_DRIVER_RECEIVER_ERROR(receiver, "receiver on_add_endpoint: %s", aeron_errmsg());
     }
 
-    if (udp_channel->has_explicit_control)
-    {
-        if (aeron_driver_receiver_add_pending_setup(receiver, endpoint, 0, 0, &udp_channel->local_control) < 0)
-        {
-            AERON_DRIVER_RECEIVER_ERROR(receiver, "receiver on_add_endpoint: %s", aeron_errmsg());
-        }
-
-        if (aeron_receive_channel_endpoint_send_sm(
-            endpoint,
-            &udp_channel->local_control,
-            0,
-            0,
-            0,
-            0,
-            0,
-            AERON_STATUS_MESSAGE_HEADER_SEND_SETUP_FLAG) < 0)
-        {
-            AERON_DRIVER_RECEIVER_ERROR(receiver, "receiver on_add_endpoint send SM: %s", aeron_errmsg());
-        }
-    }
+    aeron_receive_channel_endpoint_add_pending_setup(endpoint, receiver);
 }
 
 void aeron_driver_receiver_on_remove_endpoint(void *clientd, void *command)
@@ -300,7 +279,7 @@ void aeron_driver_receiver_on_remove_endpoint(void *clientd, void *command)
     aeron_command_base_t *cmd = (aeron_command_base_t *)command;
     aeron_receive_channel_endpoint_t *endpoint = (aeron_receive_channel_endpoint_t *)cmd->item;
 
-    if (receiver->context->udp_channel_transport_bindings->poller_remove_func(&receiver->poller, &endpoint->transport) < 0)
+    if (aeron_receive_channel_endpoint_remove_poll_transports(endpoint, &receiver->poller) < 0)
     {
         AERON_DRIVER_RECEIVER_ERROR(receiver, "receiver on_remove_endpoint: %s", aeron_errmsg());
     }
@@ -312,7 +291,7 @@ void aeron_driver_receiver_on_remove_endpoint(void *clientd, void *command)
         if (entry->endpoint == endpoint)
         {
             aeron_array_fast_unordered_remove(
-                (uint8_t *) receiver->pending_setups.array,
+                (uint8_t *)receiver->pending_setups.array,
                 sizeof(aeron_driver_receiver_pending_setup_entry_t),
                 (size_t)i,
                 (size_t)last_index);
@@ -321,7 +300,7 @@ void aeron_driver_receiver_on_remove_endpoint(void *clientd, void *command)
         }
     }
 
-    aeron_receive_channel_endpoint_receiver_release(endpoint);
+    aeron_driver_conductor_proxy_on_receive_endpoint_removed(receiver->context->conductor_proxy, endpoint);
 }
 
 void aeron_driver_receiver_on_add_subscription(void *clientd, void *item)
@@ -345,6 +324,127 @@ void aeron_driver_receiver_on_remove_subscription(void *clientd, void *item)
     if (aeron_receive_channel_endpoint_on_remove_subscription(endpoint, cmd->stream_id) < 0)
     {
         AERON_DRIVER_RECEIVER_ERROR(receiver, "receiver on_remove_subscription: %s", aeron_errmsg());
+    }
+}
+
+void aeron_driver_receiver_on_add_subscription_by_session(void *clientd, void *item)
+{
+    aeron_driver_receiver_t *receiver = (aeron_driver_receiver_t *)clientd;
+    aeron_command_subscription_t *cmd = (aeron_command_subscription_t *)item;
+    aeron_receive_channel_endpoint_t *endpoint = (aeron_receive_channel_endpoint_t *)cmd->endpoint;
+
+    if (aeron_receive_channel_endpoint_on_add_subscription_by_session(endpoint, cmd->stream_id, cmd->session_id) < 0)
+    {
+        AERON_DRIVER_RECEIVER_ERROR(receiver, "receiver on_add_subscription: %s", aeron_errmsg());
+    }
+}
+
+void aeron_driver_receiver_on_remove_subscription_by_session(void *clientd, void *item)
+{
+    aeron_driver_receiver_t *receiver = (aeron_driver_receiver_t *)clientd;
+    aeron_command_subscription_t *cmd = (aeron_command_subscription_t *)item;
+    aeron_receive_channel_endpoint_t *endpoint = (aeron_receive_channel_endpoint_t *)cmd->endpoint;
+
+    if (aeron_receive_channel_endpoint_on_remove_subscription_by_session(endpoint, cmd->stream_id, cmd->session_id) < 0)
+    {
+        AERON_DRIVER_RECEIVER_ERROR(receiver, "receiver on_remove_subscription: %s", aeron_errmsg());
+    }
+}
+
+void aeron_driver_receiver_on_add_destination(void *clientd, void *item)
+{
+    aeron_driver_receiver_t *receiver = (aeron_driver_receiver_t *)clientd;
+    aeron_command_add_rcv_destination_t *command = (aeron_command_add_rcv_destination_t *)item;
+    aeron_receive_channel_endpoint_t *endpoint = (aeron_receive_channel_endpoint_t *)command->endpoint;
+    aeron_receive_destination_t *destination = (aeron_receive_destination_t *)command->destination;
+
+    if (aeron_receive_channel_endpoint_add_destination(endpoint, destination) < 0)
+    {
+        AERON_DRIVER_RECEIVER_ERROR(receiver, "on_add_destination, add to endpoint: %s", aeron_errmsg());
+        return;
+    }
+
+    if (aeron_udp_channel_interceptors_transport_notifications(
+        destination->data_paths,
+        &destination->transport,
+        destination->conductor_fields.udp_channel,
+        &endpoint->dispatcher,
+        AERON_UDP_CHANNEL_INTERCEPTOR_ADD_NOTIFICATION) < 0)
+    {
+        AERON_DRIVER_RECEIVER_ERROR(
+            receiver, "on_add_destination, interceptors transport notifications: %s", aeron_errmsg());
+    }
+
+    if (endpoint->transport_bindings->poller_add_func(&receiver->poller, &destination->transport) < 0)
+    {
+        AERON_DRIVER_RECEIVER_ERROR(receiver, "on_add_destination, add to poller: %s", aeron_errmsg());
+
+        // Clean up earlier steps...
+        aeron_receive_channel_endpoint_remove_destination(endpoint, destination->conductor_fields.udp_channel, NULL);
+
+        return;
+    }
+
+    if (destination->conductor_fields.udp_channel->has_explicit_control)
+    {
+        if (aeron_receive_channel_endpoint_add_pending_setup_destination(endpoint, receiver, destination) < 0)
+        {
+            AERON_DRIVER_RECEIVER_ERROR(receiver, "on_add_destination, pending_setup: %s", aeron_errmsg());
+
+            // Clean up earlier steps...
+            aeron_receive_channel_endpoint_remove_destination(endpoint, destination->conductor_fields.udp_channel, NULL);
+            endpoint->transport_bindings->poller_remove_func(&receiver->poller, &destination->transport);
+            endpoint->transport_bindings->close_func(&destination->transport);
+
+            return;
+        }
+    }
+
+    for (size_t i = 0, len = receiver->images.length; i < len; i++)
+    {
+        aeron_publication_image_t *image = receiver->images.array[i].image;
+        if (endpoint == image->endpoint)
+        {
+            aeron_publication_image_add_destination(image, destination);
+        }
+    }
+}
+
+void aeron_driver_receiver_on_remove_destination(void *clientd, void *item)
+{
+    aeron_driver_receiver_t *receiver = (aeron_driver_receiver_t *)clientd;
+    aeron_command_remove_rcv_destination_t *command = (aeron_command_remove_rcv_destination_t *)item;
+    aeron_receive_channel_endpoint_t *endpoint = (aeron_receive_channel_endpoint_t *)command->endpoint;
+    aeron_udp_channel_t *channel = (aeron_udp_channel_t *)command->channel;
+    aeron_receive_destination_t *destination = NULL;
+
+    if (0 < aeron_receive_channel_endpoint_remove_destination(endpoint, channel, &destination) && NULL != destination)
+    {
+        if (aeron_udp_channel_interceptors_transport_notifications(
+            destination->data_paths,
+            &destination->transport,
+            destination->conductor_fields.udp_channel,
+            &endpoint->dispatcher,
+            AERON_UDP_CHANNEL_INTERCEPTOR_REMOVE_NOTIFICATION) < 0)
+        {
+            AERON_DRIVER_RECEIVER_ERROR(
+                receiver, "on_add_destination, interceptors transport notifications: %s", aeron_errmsg());
+        }
+
+        endpoint->transport_bindings->poller_remove_func(&receiver->poller, &destination->transport);
+        endpoint->transport_bindings->close_func(&destination->transport);
+
+        for (size_t i = 0, len = receiver->images.length; i < len; i++)
+        {
+            aeron_publication_image_t *image = receiver->images.array[i].image;
+            if (endpoint == image->endpoint)
+            {
+                aeron_publication_image_remove_destination(image, channel);
+            }
+        }
+
+        aeron_driver_conductor_proxy_on_delete_receive_destination(
+            receiver->context->conductor_proxy, destination, channel);
     }
 }
 
@@ -405,6 +505,7 @@ void aeron_driver_receiver_on_resolution_change(void *clientd, void *item)
     aeron_driver_receiver_t *receiver = clientd;
     aeron_command_receiver_resolution_change_t *cmd = item;
     aeron_receive_channel_endpoint_t *endpoint = cmd->endpoint;
+    aeron_receive_destination_t *destination = cmd->destination;
 
     // MDS is not supported in the C driver yet, would need to look up transport index here.
 
@@ -412,19 +513,22 @@ void aeron_driver_receiver_on_resolution_change(void *clientd, void *item)
     {
         aeron_driver_receiver_pending_setup_entry_t *pending_setup = &receiver->pending_setups.array[i];
 
-        if (pending_setup->endpoint == cmd->endpoint && pending_setup->is_periodic)
+        if (pending_setup->endpoint == endpoint &&
+            pending_setup->destination == destination &&
+            pending_setup->is_periodic)
         {
             memcpy(&pending_setup->control_addr, &cmd->new_addr, sizeof(pending_setup->control_addr));
             aeron_counter_add_ordered(receiver->resolution_changes_counter, 1);
         }
     }
 
-    aeron_receive_channel_endpoint_update_control_address(endpoint, &cmd->new_addr);
+    aeron_receive_channel_endpoint_update_control_address(endpoint, destination, &cmd->new_addr);
 }
 
 int aeron_driver_receiver_add_pending_setup(
     aeron_driver_receiver_t *receiver,
     aeron_receive_channel_endpoint_t *endpoint,
+    aeron_receive_destination_t *destination,
     int32_t session_id,
     int32_t stream_id,
     struct sockaddr_storage *control_addr)
@@ -443,6 +547,7 @@ int aeron_driver_receiver_add_pending_setup(
         &receiver->pending_setups.array[receiver->pending_setups.length++];
 
     entry->endpoint = endpoint;
+    entry->destination = destination;
     entry->session_id = session_id;
     entry->stream_id = stream_id;
     entry->time_of_status_message_ns = aeron_clock_cached_nano_time(receiver->context->cached_clock);

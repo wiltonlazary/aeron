@@ -18,8 +18,6 @@
 #define AERON_CONCURRENT_EXCLUSIVE_TERM_APPENDER_H
 
 #include <functional>
-#include <util/Index.h>
-#include <concurrent/AtomicBuffer.h>
 #include "HeaderWriter.h"
 #include "LogBufferDescriptor.h"
 #include "BufferClaim.h"
@@ -332,7 +330,7 @@ private:
 
     inline void putRawTailOrdered(const std::int64_t termId, const std::int32_t termOffset)
     {
-        aeron::concurrent::atomic::putInt64Ordered(m_tailAddr, (termId * ((int64_t(1) << 32))) | uint32_t(termOffset));
+        aeron::concurrent::atomic::putInt64Ordered(m_tailAddr, (termId * ((INT64_C(1) << 32))) | uint32_t(termOffset));
     }
 };
 

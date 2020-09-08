@@ -87,9 +87,10 @@ public abstract class UdpChannelTransport implements AutoCloseable
     }
 
     /**
-     * Create the underlying channel for reading and writing.
+     * Open the underlying channel for reading and writing.
      *
-     * @param statusIndicator to set for error status
+     * @param statusIndicator to set for {@link ChannelEndpointStatus} which could be
+     *                        {@link ChannelEndpointStatus#ERRORED}.
      */
     public void openDatagramChannel(final AtomicCounter statusIndicator)
     {
@@ -160,17 +161,17 @@ public abstract class UdpChannelTransport implements AutoCloseable
             sendDatagramChannel = null;
             receiveDatagramChannel = null;
 
-            throw new AeronException(
-                "channel error - " + ex.getMessage() +
-                " (at " + ex.getStackTrace()[0].toString() + "): " +
-                udpChannel.originalUriString(), ex);
+            final String message = "channel error - " + ex.getMessage() +
+                " (at " + ex.getStackTrace()[0].toString() + "): " + udpChannel.originalUriString();
+
+            throw new AeronException(message, ex);
         }
     }
 
     /**
      * Register this transport for reading from a {@link UdpTransportPoller}.
      *
-     * @param transportPoller to register read with
+     * @param transportPoller to register for read with.
      */
     public void registerForRead(final UdpTransportPoller transportPoller)
     {
@@ -179,9 +180,9 @@ public abstract class UdpChannelTransport implements AutoCloseable
     }
 
     /**
-     * Return underlying {@link UdpChannel}
+     * Return underlying {@link UdpChannel}.
      *
-     * @return underlying channel
+     * @return underlying channel.
      */
     public UdpChannel udpChannel()
     {
@@ -220,17 +221,16 @@ public abstract class UdpChannelTransport implements AutoCloseable
         try
         {
             final InetSocketAddress localAddress = (InetSocketAddress)receiveDatagramChannel.getLocalAddress();
-            if (null == localAddress)
+            if (null != localAddress)
             {
-                return "";
+                return NetworkUtil.formatAddressAndPort(localAddress.getAddress(), localAddress.getPort());
             }
-
-            return localAddress.getAddress().getHostAddress() + ":" + localAddress.getPort();
         }
-        catch (final IOException ex)
+        catch (final IOException ignore)
         {
-            return "";
         }
+
+        return "";
     }
 
     /**
@@ -267,9 +267,9 @@ public abstract class UdpChannelTransport implements AutoCloseable
     }
 
     /**
-     * Is transport representing a multicast media or unicast
+     * Is transport representing a multicast media?
      *
-     * @return if transport is multicast media
+     * @return true if transport is multicast media, otherwise false.
      */
     public boolean isMulticast()
     {
@@ -370,10 +370,10 @@ public abstract class UdpChannelTransport implements AutoCloseable
                 statusIndicator.setOrdered(ChannelEndpointStatus.ERRORED);
             }
 
-            throw new AeronException(
-                "re-resolve endpoint channel error - " + ex.getMessage() +
-                    " (at " + ex.getStackTrace()[0].toString() + "): " +
-                    udpChannel.originalUriString(), ex);
+            final String message = "re-resolve endpoint channel error - " + ex.getMessage() +
+                " (at " + ex.getStackTrace()[0].toString() + "): " + udpChannel.originalUriString();
+
+            throw new AeronException(message, ex);
         }
     }
 }

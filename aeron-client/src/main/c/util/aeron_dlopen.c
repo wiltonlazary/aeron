@@ -20,7 +20,14 @@
 #endif
 
 #include <stdio.h>
+#include <string.h>
+#include <errno.h>
+#include <inttypes.h>
+
 #include "aeron_dlopen.h"
+#include "aeron_error.h"
+#include "aeron_strutil.h"
+#include "aeron_alloc.h"
 
 #if defined(AERON_COMPILER_GCC)
 
@@ -38,17 +45,18 @@ const char *aeron_dlinfo(const void *addr, char *buffer, size_t max_buffer_lengt
     return buffer;
 }
 
-#elif defined(AERON_COMPILER_MSVC) && defined(AERON_CPU_X64)
+#elif defined(AERON_COMPILER_MSVC)
 
 #include "concurrent/aeron_counters_manager.h"
 #include "aeronc.h"
+#include <Windows.h>
 
-void* aeron_dlsym_fallback(LPCSTR name)
+void *aeron_dlsym_fallback(LPCSTR name)
 {
     return NULL;
 }
 
-static HMODULE* modules = NULL;
+static HMODULE *modules = NULL;
 static size_t modules_size = 0;
 static size_t modules_capacity = 10;
 
@@ -65,7 +73,7 @@ HMODULE GetCurrentModule()
 
 void aeron_init_dlopen_support()
 {
-    if (modules == NULL)
+    if (NULL == modules)
     {
         modules = (HMODULE*)malloc(sizeof(HMODULE) * modules_capacity);
         memset(modules, 0, sizeof(HMODULE) * modules_capacity);
@@ -74,16 +82,16 @@ void aeron_init_dlopen_support()
     }
 }
 
-void* aeron_dlsym(HMODULE module, LPCSTR name)
+void *aeron_dlsym(HMODULE module, const char *name)
 {
     aeron_init_dlopen_support();
 
-    if (module == RTLD_DEFAULT)
+    if (RTLD_DEFAULT == module)
     {
         for (size_t i = 1; i <= modules_size; i++)
         {
-            void* res = aeron_dlsym(modules[modules_size - i], name);
-            if (res != NULL)
+            void *res = aeron_dlsym(modules[modules_size - i], name);
+            if (NULL != res)
             {
                 return res;
             }
@@ -92,18 +100,18 @@ void* aeron_dlsym(HMODULE module, LPCSTR name)
         return aeron_dlsym_fallback(name);
     }
 
-    if (module == RTLD_NEXT)
+    if (RTLD_NEXT == module)
     {
         BOOL firstFound = FALSE;
         for (size_t i = 1; i <= modules_size; i++)
         {
-            void* res = aeron_dlsym(modules[modules_size - i], name);
-            if (res != NULL && firstFound)
+            void *res = aeron_dlsym(modules[modules_size - i], name);
+            if (NULL != res && firstFound)
             {
                 return res;
             }
 
-            if (res != NULL && !firstFound)
+            if (NULL != res && !firstFound)
             {
                 firstFound = TRUE;
             }
@@ -115,7 +123,7 @@ void* aeron_dlsym(HMODULE module, LPCSTR name)
     return GetProcAddress(module, name);
 }
 
-HMODULE aeron_dlopen(LPCSTR filename)
+void *aeron_dlopen(const char *filename)
 {
     aeron_init_dlopen_support();
 
@@ -132,11 +140,11 @@ HMODULE aeron_dlopen(LPCSTR filename)
     return module;
 }
 
-char* aeron_dlerror()
+char *aeron_dlerror()
 {
     DWORD errorMessageID = GetLastError();
     LPSTR messageBuffer = NULL;
-    size_t size = FormatMessageA(
+    FormatMessageA(
         FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
         NULL,
         errorMessageID,
@@ -150,7 +158,7 @@ char* aeron_dlerror()
     return messageBuffer;
 }
 
-const char *aeron_dlinfo(const void *addr, char* buffer, size_t max_buffer_length)
+const char *aeron_dlinfo(const void *addr, char *buffer, size_t max_buffer_length)
 {
     buffer[0] = '\0';
     return buffer;
@@ -159,3 +167,87 @@ const char *aeron_dlinfo(const void *addr, char* buffer, size_t max_buffer_lengt
 #else
 #error Unsupported platform!
 #endif
+
+#define AERON_MAX_DL_LIBS_LEN (4094)
+#define AERON_MAX_DL_LIB_NAMES (10)
+
+int aeron_dl_load_libs(aeron_dl_loaded_libs_state_t **state, const char *libs)
+{
+    char libs_dup[AERON_MAX_DL_LIBS_LEN];
+    char *lib_names[AERON_MAX_DL_LIB_NAMES];
+    aeron_dl_loaded_libs_state_t *_state;
+    const size_t libs_length = strlen(libs);
+
+    *state = NULL;
+
+    if (libs_length >= (size_t)AERON_MAX_DL_LIBS_LEN)
+    {
+        aeron_set_err(
+            EINVAL,
+            "dl libs list too long, must have: %" PRIu32 " < %d",
+            (uint32_t)libs_length, AERON_MAX_DL_LIBS_LEN);
+        return -1;
+    }
+
+    strcpy(libs_dup, libs);
+
+    const int num_libs = aeron_tokenise(libs_dup, ',', AERON_MAX_DL_LIB_NAMES, lib_names);
+
+    if (-ERANGE == num_libs)
+    {
+        aeron_set_err(EINVAL, "Too many dl libs defined, limit %d: %s", AERON_MAX_DL_LIB_NAMES, libs);
+        return -1;
+    }
+    else if (num_libs < 0)
+    {
+        aeron_set_err(EINVAL, "Failed to parse dl libs: %s", libs != NULL ? libs : "(null)");
+        return -1;
+    }
+
+    if (aeron_alloc((void **)&_state, sizeof(aeron_dl_loaded_libs_state_t)) < 0 ||
+        aeron_alloc((void **)&_state->libs, sizeof(aeron_dl_loaded_lib_state_t) * num_libs) < 0)
+    {
+        aeron_set_err(aeron_errcode(), "could not allocate dl_loaded_libs: %s", aeron_errmsg());
+        return -1;
+    }
+    _state->num_libs = (size_t)num_libs;
+
+    for (int i = 0; i < num_libs; i++)
+    {
+        const char *lib_name = lib_names[i];
+        aeron_dl_loaded_lib_state_t *lib = &_state->libs[i];
+
+        if (NULL == (lib->handle = aeron_dlopen(lib_name)))
+        {
+            aeron_set_err(EINVAL, "failed to load dl_lib %s: %s", lib_name, aeron_dlerror());
+            return -1;
+        }
+    }
+
+    *state = _state;
+    return 0;
+}
+
+int aeron_dl_load_libs_delete(aeron_dl_loaded_libs_state_t *state)
+{
+    if (NULL != state)
+    {
+        for (size_t i = 0; i < state->num_libs; i++)
+        {
+            aeron_dl_loaded_lib_state_t *lib = &state->libs[i];
+
+#if defined(AERON_COMPILER_GCC)
+            dlclose(lib->handle);
+#elif defined(AERON_COMPILER_MSVC) && defined(AERON_CPU_X64)
+            FreeLibrary(lib->handle);
+#else
+#error Unsupported platform!
+#endif
+        }
+
+        aeron_free(state->libs);
+        aeron_free(state);
+    }
+
+    return 0;
+}

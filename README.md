@@ -17,20 +17,25 @@ three clients can exchange messages across machines, or on the same machine via 
 can be recorded by the [Archive](https://github.com/real-logic/aeron/tree/master/aeron-archive) module to persistent
 storage for later, or real-time, replay.
 
-Performance is the key focus. Aeron is designed to be the highest throughput with the lowest and most predictable
-latency of any messaging system. Aeron integrates with
-[Simple Binary Encoding (SBE)](https://github.com/real-logic/simple-binary-encoding) for the best possible performance
-in message encoding and decoding. Many of the data structures used in the creation of Aeron have been factored out to
+Performance is the key focus. A design goal for Aeron is to be the highest throughput with the lowest and most
+predictable latency of any messaging system. Aeron integrates with
+[Simple Binary Encoding (SBE)](https://github.com/real-logic/simple-binary-encoding) for the best possible message
+encoding and decoding performance. Many of the data structures used in the creation of Aeron have been factored out to
 the [Agrona](https://github.com/real-logic/agrona) project.
 
 For details of usage, protocol specification, FAQ, etc. please check out the
 [Wiki](https://github.com/real-logic/aeron/wiki).
 
 For those who prefer to watch a video then try [Aeron Messaging](https://www.youtube.com/watch?v=tM4YskS94b0) from
-StrangeLoop 2014. Things have advanced quite a bit with performance and features but the basic design still applies.
+StrangeLoop 2014. Things have advanced quite a bit with performance and features, but the basic design still applies.
 
 For the latest version information and changes see the [Change Log](https://github.com/real-logic/aeron/wiki/Change-Log)
 with Java **downloads** at [Maven Central](http://search.maven.org/#search%7Cga%7C1%7Caeron).
+
+Commercial support, training, and development on Aeron is available from
+[sales@real-logic.co.uk](mailto:sales@real-logic.co.uk?subject=Aeron). Premium features such as Solarflare ef_vi
+transport bindings for a further 40-60% reduction in latency, and security with ATS (Aeron Transport Security) for
+encrypted communications is available to customers on commercial support.
 
 ### How do I use Aeron?
 
@@ -41,6 +46,7 @@ with Java **downloads** at [Maven Central](http://search.maven.org/#search%7Cga%
 1. [Configuration Options](https://github.com/real-logic/aeron/wiki/Configuration-Options)
 1. [Channel Specific Configuration](https://github.com/real-logic/aeron/wiki/Channel-Configuration)
 1. [Aeron Archive (Durable/Persistent Stream Storage)](https://github.com/real-logic/aeron/wiki/Aeron-Archive)
+1. [Aeron Cluster (Fault Tolerant Services)](https://github.com/real-logic/aeron/tree/master/aeron-cluster)
 
 ### How does Aeron work?
 
@@ -60,21 +66,13 @@ Build
 
 ### Java Build
 
-The project is built with [Gradle](http://gradle.org/) using this
+Build the project with [Gradle](http://gradle.org/) using this
 [build.gradle](https://github.com/real-logic/aeron/blob/master/build.gradle) file.
 
-You require the following to build Aeron:
+You will require the Java 8+ to build Aeron:
 
-* [JDK 8](https://adoptopenjdk.net/index.html) or later, Java versions before 1.8.0_65 are very buggy and can cause tests to fail. Aeron is tested and supported on Java 8 & Java 11.
-
-You must first build and install [Agrona](https://github.com/real-logic/agrona) and
-[Simple Binary Encoding (SBE)](https://github.com/real-logic/simple-binary-encoding) into the local maven repository **if** the current master for Aeron depends on changes to Agrona or SBE. However we will try to not have this as the typical case.
-
-```shell
-    $ ./gradlew
-```
-
-After Agrona & SBE are compiled and installed, then you can build Aeron.
+* [JDK 8](https://adoptopenjdk.net/index.html) or later, Java versions before 1.8.0_65 are very buggy and can cause
+tests to fail.
 
 Full clean and build of all modules
 
@@ -96,17 +94,16 @@ You require the following to build the C++ API for Aeron:
     $ sudo apt-get install libz-dev
 ```
 
-__Note__: Aeron is supported on Linux, Mac, and Windows. Windows builds require Visual Studio and are being developed
-with Visual Studio 2017 with 64-bit builds only. Cygwin, MSys, etc. may work, but are not maintained at this time.
-Windows builds require 7z to unzip the zlib source archive.
+__Note__: 64-bit Linux, OSX, and Windows are supported. A Windows build requires Visual Studio 64-bit plus
+[7z](https://www.7-zip.org/download.html) to unzip the `zlib` source archive.
 
-For convenience, a script is provided that does a full clean, build, and test of all targets as a Release build.
+For convenience, the `cppbuild` script does a full clean, build, and test of all targets as a Release build.
 
 ```shell
     $ ./cppbuild/cppbuild
 ```
 
-If you are comfortable with using CMake, then a full clean, build, and test looks like:
+For those comfortable with CMake - then a clean, build, and test looks like:
 
 ```shell
     $ mkdir -p cppbuild/Debug
@@ -121,7 +118,7 @@ If you are comfortable with using CMake, then a full clean, build, and test look
 By default, the C Media Driver is built as part of the C++ Build. However, it can be disabled via the CMake
 option `BUILD_AERON_DRIVER` being set to `OFF`.
 
-__Note__: C Media Driver is currently only supported on Mac and Linux (Windows version is experimental).
+__Note__: C Media Driver is supported on Mac and Linux, the Windows version is experimental.
 
 For dependencies and other information, see the
 [README](https://github.com/real-logic/aeron/blob/master/aeron-driver/src/main/c/README.md).

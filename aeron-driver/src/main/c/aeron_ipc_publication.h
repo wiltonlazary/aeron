@@ -17,18 +17,16 @@
 #ifndef AERON_IPC_PUBLICATION_H
 #define AERON_IPC_PUBLICATION_H
 
-#include "aeron_driver_common.h"
 #include "util/aeron_bitutil.h"
 #include "uri/aeron_uri.h"
-#include "aeron_driver_context.h"
 #include "util/aeron_fileutil.h"
-#include "concurrent/aeron_counters_manager.h"
+#include "aeron_driver_context.h"
 #include "aeron_system_counters.h"
 
 typedef enum aeron_ipc_publication_state_enum
 {
     AERON_IPC_PUBLICATION_STATE_ACTIVE,
-    AERON_IPC_PUBLICATION_STATE_INACTIVE,
+    AERON_IPC_PUBLICATION_STATE_DRAINING,
     AERON_IPC_PUBLICATION_STATE_LINGER
 }
 aeron_ipc_publication_state_t;
@@ -51,7 +49,7 @@ typedef struct aeron_ipc_publication_stct
         int64_t clean_position;
         int64_t consumer_position;
         int64_t last_consumer_position;
-        int64_t time_of_last_consumer_position_change;
+        int64_t time_of_last_consumer_position_change_ns;
     }
     conductor_fields;
 
@@ -59,6 +57,7 @@ typedef struct aeron_ipc_publication_stct
     int64_t term_window_length;
     int64_t trip_gain;
     int64_t unblock_timeout_ns;
+    int64_t tag;
     int32_t session_id;
     int32_t stream_id;
     int32_t initial_term_id;
@@ -66,6 +65,7 @@ typedef struct aeron_ipc_publication_stct
     size_t position_bits_to_shift;
     bool is_exclusive;
     aeron_map_raw_log_close_func_t map_raw_log_close_func;
+    aeron_untethered_subscription_state_change_func_t untethered_subscription_state_change_func;
 
     int64_t *unblocked_publications_counter;
 }

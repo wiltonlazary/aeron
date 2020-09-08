@@ -25,12 +25,14 @@
 
 typedef struct aeron_udp_destination_entry_stct
 {
+    uint8_t padding_before[AERON_CACHE_LINE_LENGTH];
     int64_t time_of_last_activity_ns;
     int64_t destination_timeout_ns;
     int64_t receiver_id;
     bool is_receiver_id_valid;
     aeron_uri_t *uri;
     struct sockaddr_storage addr;
+    uint8_t padding_after[AERON_CACHE_LINE_LENGTH];
 }
 aeron_udp_destination_entry_t;
 
@@ -60,7 +62,10 @@ int aeron_udp_destination_tracker_init(
 int aeron_udp_destination_tracker_close(aeron_udp_destination_tracker_t *tracker);
 
 int aeron_udp_destination_tracker_sendmmsg(
-    aeron_udp_destination_tracker_t *tracker, aeron_udp_channel_transport_t *transport, struct mmsghdr *mmsghdr, size_t vlen);
+    aeron_udp_destination_tracker_t *tracker,
+    aeron_udp_channel_transport_t *transport,
+    struct mmsghdr *mmsghdr,
+    size_t vlen);
 int aeron_udp_destination_tracker_sendmsg(
     aeron_udp_destination_tracker_t *tracker, aeron_udp_channel_transport_t *transport, struct msghdr *msghdr);
 
@@ -74,7 +79,9 @@ int aeron_udp_destination_tracker_manual_add_destination(
     struct sockaddr_storage *addr);
 
 int aeron_udp_destination_tracker_remove_destination(
-    aeron_udp_destination_tracker_t *tracker, struct sockaddr_storage *addr);
+    aeron_udp_destination_tracker_t *tracker,
+    struct sockaddr_storage *addr,
+    aeron_uri_t **removed_uri);
 
 void aeron_udp_destination_tracker_check_for_re_resolution(
     aeron_udp_destination_tracker_t *tracker,

@@ -22,15 +22,10 @@
 #include <string.h>
 #include <errno.h>
 #include <inttypes.h>
-#include "aeron_socket.h"
 #include <stdio.h>
-#include <uri/aeron_uri.h>
 #include "aeron_alloc.h"
-#include "util/aeron_strutil.h"
-#include "util/aeron_netutil.h"
 #include "util/aeron_error.h"
 #include "media/aeron_udp_channel.h"
-#include "concurrent/aeron_atomic.h"
 #include "command/aeron_control_protocol.h"
 
 int aeron_ipv4_multicast_control_address(struct sockaddr_in *data_addr, struct sockaddr_in *control_addr)
@@ -102,47 +97,6 @@ int aeron_find_multicast_interface(
     return aeron_find_interface(NULL == interface_str ? wildcard_str : interface_str, interface_addr, interface_index);
 }
 
-#define AERON_URI_ADDRESS_HOST_LEN (INET6_ADDRSTRLEN + 2)
-#define AERON_URI_ADDRESS_PORT_LEN (NI_MAXSERV + 1)
-
-/**
- * Internal (assumes sizes of buffers)...  Will prefix the port_buffer with a ':' and wrap IPv6 addresses with '[' and
- * ']'
- *
- * @param addr
- * @param host_buffer assumes at least AERON_URI_ADDRESS_HOST_LEN of space.
- * @param port_buffer assumes at least AERON_URI_ADDRESS_PORT_LEN of space.
- * @return
- */
-static int aeron_uri_format_address(struct sockaddr_storage *addr, char *host_buffer, char *port_buffer)
-{
-    int host_index = addr->ss_family == AF_INET6 ? 1 : 0;
-
-    int result = getnameinfo(
-        (const struct sockaddr *)addr, sizeof(struct sockaddr_storage),
-        &host_buffer[host_index], INET6_ADDRSTRLEN,
-        &port_buffer[1], NI_MAXSERV,
-        NI_NUMERICHOST | NI_NUMERICSERV);
-
-    if (0 != result)
-    {
-        aeron_set_err(EINVAL, "Failed to format ip address: %s", gai_strerror(result));
-        return -1;
-    }
-
-    port_buffer[0] = ':';
-
-    if (addr->ss_family == AF_INET6)
-    {
-        host_buffer[0] = '[';
-        size_t len = strlen(host_buffer);
-        host_buffer[len] = ']';
-        host_buffer[len + 1] = '\0';
-    }
-
-    return 0;
-}
-
 static int32_t unique_canonical_form_value = 0;
 
 int aeron_uri_udp_canonicalise(
@@ -152,25 +106,24 @@ int aeron_uri_udp_canonicalise(
     struct sockaddr_storage *local_data,
     const char *remote_param_value,
     struct sockaddr_storage *remote_data,
-    bool make_unique)
+    bool make_unique,
+    int64_t tag)
 {
-    char unique_suffix[4 * sizeof(unique_canonical_form_value)] = "";
-    char local_data_formatted_addr[AERON_URI_ADDRESS_HOST_LEN];
-    char remote_data_formatted_addr[AERON_URI_ADDRESS_HOST_LEN];
-    char local_port_str[AERON_URI_ADDRESS_PORT_LEN] = "";
-    char remote_port_str[AERON_URI_ADDRESS_PORT_LEN] = "";
+    char unique_suffix[32] = "";
+    char local_data_buffer[AERON_NETUTIL_FORMATTED_MAX_LENGTH];
+    char remote_data_buffer[AERON_NETUTIL_FORMATTED_MAX_LENGTH];
 
     const char *local_data_str;
     const char *remote_data_str;
 
     if (NULL == local_param_value)
     {
-        if (aeron_uri_format_address(local_data, local_data_formatted_addr, local_port_str) < 0)
+        if (aeron_format_source_identity(local_data_buffer, sizeof(local_data_buffer), local_data) < 0)
         {
             return -1;
         }
 
-        local_data_str = local_data_formatted_addr;
+        local_data_str = local_data_buffer;
     }
     else
     {
@@ -179,12 +132,12 @@ int aeron_uri_udp_canonicalise(
 
     if (NULL == remote_param_value)
     {
-        if (aeron_uri_format_address(remote_data, remote_data_formatted_addr, remote_port_str) < 0)
+        if (aeron_format_source_identity(remote_data_buffer, sizeof(remote_data_buffer), remote_data) < 0)
         {
             return -1;
         }
 
-        remote_data_str = remote_data_formatted_addr;
+        remote_data_str = remote_data_buffer;
     }
     else
     {
@@ -193,15 +146,19 @@ int aeron_uri_udp_canonicalise(
 
     if (make_unique)
     {
-        int32_t result = 0;
-
-        AERON_GET_AND_ADD_INT32(result, unique_canonical_form_value, 1);
-        snprintf(unique_suffix, sizeof(unique_suffix) - 1, "-%" PRId32, result);
+        if (AERON_URI_INVALID_TAG != tag)
+        {
+            snprintf(unique_suffix, sizeof(unique_suffix) - 1, "#%" PRId64, tag);
+        }
+        else
+        {
+            int32_t result = 0;
+            AERON_GET_AND_ADD_INT32(result, unique_canonical_form_value, 1);
+            snprintf(unique_suffix, sizeof(unique_suffix) - 1, "-%" PRId32, result);
+        }
     }
 
-    return snprintf(
-        canonical_form, length, "UDP-%s%s-%s%s%s",
-        local_data_str, local_port_str, remote_data_str, remote_port_str, unique_suffix);
+    return snprintf(canonical_form, length, "UDP-%s-%s%s", local_data_str, remote_data_str, unique_suffix);
 }
 
 int aeron_udp_channel_parse(
@@ -236,11 +193,13 @@ int aeron_udp_channel_parse(
     _channel->original_uri[copy_length] = '\0';
     _channel->uri_length = copy_length;
 
+    _channel->has_explicit_endpoint = NULL != _channel->uri.params.udp.endpoint;
     _channel->has_explicit_control = false;
     _channel->is_manual_control_mode = false;
     _channel->is_dynamic_control_mode = false;
     _channel->is_multicast = false;
     _channel->tag_id = AERON_URI_INVALID_TAG;
+    _channel->ats_status = AERON_URI_ATS_STATUS_DEFAULT;
 
     if (_channel->uri.type != AERON_URI_UDP)
     {
@@ -296,6 +255,11 @@ int aeron_udp_channel_parse(
         }
     }
 
+    bool requires_additional_suffix =
+        (NULL == _channel->uri.params.udp.endpoint && NULL == _channel->uri.params.udp.control) ||
+        (NULL != _channel->uri.params.udp.endpoint && aeron_is_wildcard_port(&endpoint_addr)) ||
+        (NULL != _channel->uri.params.udp.control && aeron_is_wildcard_port(&explicit_control_addr));
+
     if (NULL != _channel->uri.params.udp.channel_tag)
     {
         if ((_channel->tag_id = aeron_uri_parse_tag(_channel->uri.params.udp.channel_tag)) == AERON_URI_INVALID_TAG)
@@ -304,6 +268,11 @@ int aeron_udp_channel_parse(
                 _channel->uri.params.udp.channel_tag);
             goto error_cleanup;
         }
+    }
+
+    if (aeron_uri_get_ats(&_channel->uri.params.udp.additional_params, &_channel->ats_status) < 0)
+    {
+        goto error_cleanup;
     }
 
     if (aeron_is_addr_multicast(&endpoint_addr))
@@ -315,12 +284,12 @@ int aeron_udp_channel_parse(
         }
 
         if (aeron_find_multicast_interface(
-                endpoint_addr.ss_family, _channel->uri.params.udp.bind_interface, &interface_addr, &interface_index) < 0)
+            endpoint_addr.ss_family, _channel->uri.params.udp.bind_interface, &interface_addr, &interface_index) < 0)
         {
             aeron_set_err(
-                    -AERON_ERROR_CODE_INVALID_CHANNEL,
-                    "could not find interface=(%s): %s",
-                    _channel->uri.params.udp.bind_interface, aeron_errmsg());
+                -AERON_ERROR_CODE_INVALID_CHANNEL,
+                "could not find interface=(%s): %s",
+                _channel->uri.params.udp.bind_interface, aeron_errmsg());
             goto error_cleanup;
         }
 
@@ -332,7 +301,8 @@ int aeron_udp_channel_parse(
             _channel->canonical_form, sizeof(_channel->canonical_form),
             NULL, &interface_addr,
             NULL, &endpoint_addr,
-            false);
+            false,
+            AERON_URI_INVALID_TAG);
         _channel->canonical_length = strlen(_channel->canonical_form);
         _channel->is_multicast = true;
     }
@@ -348,14 +318,15 @@ int aeron_udp_channel_parse(
             _channel->canonical_form, sizeof(_channel->canonical_form),
             _channel->uri.params.udp.control, &explicit_control_addr,
             _channel->uri.params.udp.endpoint, &endpoint_addr,
-            false);
+            requires_additional_suffix,
+            _channel->tag_id);
         _channel->canonical_length = strlen(_channel->canonical_form);
         _channel->has_explicit_control = true;
     }
     else
     {
         if (aeron_find_unicast_interface(
-                endpoint_addr.ss_family, _channel->uri.params.udp.bind_interface, &interface_addr, &interface_index) < 0)
+            endpoint_addr.ss_family, _channel->uri.params.udp.bind_interface, &interface_addr, &interface_index) < 0)
         {
             goto error_cleanup;
         }
@@ -371,7 +342,8 @@ int aeron_udp_channel_parse(
             sizeof(_channel->canonical_form),
             NULL, &interface_addr,
             _channel->uri.params.udp.endpoint, &endpoint_addr,
-            has_no_distinguishing_characteristic);
+            requires_additional_suffix,
+            _channel->tag_id);
         _channel->canonical_length = strlen(_channel->canonical_form);
     }
 
@@ -385,7 +357,7 @@ int aeron_udp_channel_parse(
             aeron_udp_channel_delete(_channel);
         }
 
-        return -1;
+    return -1;
 }
 
 void aeron_udp_channel_delete(const aeron_udp_channel_t *channel)
@@ -398,3 +370,5 @@ void aeron_udp_channel_delete(const aeron_udp_channel_t *channel)
 }
 
 extern bool aeron_udp_channel_is_wildcard(aeron_udp_channel_t *channel);
+
+extern bool aeron_udp_channel_equals(aeron_udp_channel_t *a, aeron_udp_channel_t *b);

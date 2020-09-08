@@ -26,6 +26,12 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * Interface which a service must implement to be contained in the cluster.
+ * <p>
+ * The {@code cluster} object should only be used to send messages to the cluster or schedule timers in
+ * response to other messages and timers. Sending messages and timers should not happen from cluster lifecycle
+ * methods like {@link #onStart(Cluster, Image)}, {@link #onRoleChange(Cluster.Role)} or
+ * {@link #onTakeSnapshot(ExclusivePublication)}, or {@link #onTerminate(Cluster)}, with the exception of
+ * the session lifecycle methods.
  */
 public interface ClusteredService
 {
@@ -34,7 +40,7 @@ public interface ClusteredService
      * The snapshot image can be null if no previous snapshot exists.
      * <p>
      * <b>Note:</b> As this is a potentially long running operation the implementation should use
-     * {@link Cluster#idleStrategy()} and then occasional call {@link org.agrona.concurrent.IdleStrategy#idle()} or
+     * {@link Cluster#idleStrategy()} and then occasionally call {@link org.agrona.concurrent.IdleStrategy#idle()} or
      * {@link org.agrona.concurrent.IdleStrategy#idle(int)}, especially when polling the {@link Image} returns 0.
      *
      * @param cluster       with which the service can interact.
@@ -89,9 +95,9 @@ public interface ClusteredService
      * The service should take a snapshot and store its state to the provided archive {@link Publication}.
      * <p>
      * <b>Note:</b> As this is a potentially long running operation the implementation should use
-     * {@link Cluster#idleStrategy()} and then occasional call {@link org.agrona.concurrent.IdleStrategy#idle()} or
+     * {@link Cluster#idleStrategy()} and then occasionally call {@link org.agrona.concurrent.IdleStrategy#idle()} or
      * {@link org.agrona.concurrent.IdleStrategy#idle(int)},
-     * especially when polling the snapshot {@link ExclusivePublication} returns {@link Publication#BACK_PRESSURED}.
+     * especially when the snapshot {@link ExclusivePublication} returns {@link Publication#BACK_PRESSURED}.
      *
      * @param snapshotPublication to which the state should be recorded.
      */

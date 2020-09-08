@@ -17,6 +17,8 @@
 #ifndef AERON_AERON_NAME_RESOLVER_CACHE_H
 #define AERON_AERON_NAME_RESOLVER_CACHE_H
 
+#include "protocol/aeron_udp_protocol.h"
+
 typedef struct aeron_name_resolver_cache_addr_stct
 {
     uint8_t address[AERON_RES_HEADER_ADDRESS_LENGTH_IP6];
@@ -55,7 +57,7 @@ int aeron_name_resolver_cache_add_or_update(
     const char *name,
     size_t name_length,
     aeron_name_resolver_cache_addr_t *cache_addr,
-    int64_t time_of_last_activity,
+    int64_t time_of_last_activity_ms,
     int64_t *cache_entries_counter);
 
 int aeron_name_resolver_cache_lookup_by_name(

@@ -17,7 +17,9 @@
 #ifndef AERON_C_CNC_FILE_DESCRIPTOR_H
 #define AERON_C_CNC_FILE_DESCRIPTOR_H
 
-#include <stdint.h>
+#include "util/aeron_bitutil.h"
+#include "concurrent/aeron_atomic.h"
+#include "util/aeron_fileutil.h"
 
 #define AERON_CNC_FILE "cnc.dat"
 
@@ -38,7 +40,7 @@ typedef struct aeron_cnc_metadata_stct
 aeron_cnc_metadata_t;
 #pragma pack(pop)
 
-#define AERON_CNC_VERSION_AND_META_DATA_LENGTH (AERON_ALIGN(sizeof(aeron_cnc_metadata_t), AERON_CACHE_LINE_LENGTH * 2))
+#define AERON_CNC_VERSION_AND_META_DATA_LENGTH (AERON_ALIGN(sizeof(aeron_cnc_metadata_t), AERON_CACHE_LINE_LENGTH * 2u))
 
 inline uint8_t *aeron_cnc_to_driver_buffer(aeron_cnc_metadata_t *metadata)
 {
@@ -74,6 +76,30 @@ inline uint8_t *aeron_cnc_error_log_buffer(aeron_cnc_metadata_t *metadata)
         metadata->counter_values_buffer_length;
 }
 
-#define AERON_CNC_VERSION (aeron_semantic_version_compose(0, 0, 16))
+inline size_t aeron_cnc_computed_length(size_t total_length_of_buffers, size_t alignment)
+{
+    return AERON_ALIGN(AERON_CNC_VERSION_AND_META_DATA_LENGTH + total_length_of_buffers, alignment);
+}
+
+inline bool aeron_cnc_is_file_length_sufficient(aeron_mapped_file_t *cnc_mmap)
+{
+    if (cnc_mmap->length < AERON_CNC_VERSION_AND_META_DATA_LENGTH)
+    {
+        return false;
+    }
+
+    aeron_cnc_metadata_t *metadata = (aeron_cnc_metadata_t *)cnc_mmap->addr;
+    size_t cnc_length = AERON_CNC_VERSION_AND_META_DATA_LENGTH +
+        (size_t)metadata->to_driver_buffer_length +
+        (size_t)metadata->to_clients_buffer_length +
+        (size_t)metadata->counter_metadata_buffer_length +
+        (size_t)metadata->counter_values_buffer_length;
+
+    return cnc_mmap->length >= cnc_length;
+}
+
+int32_t aeron_cnc_version_volatile(aeron_cnc_metadata_t *metadata);
+
+#define AERON_CNC_VERSION (aeron_semantic_version_compose(0, 2, 0))
 
 #endif //AERON_C_CNC_FILE_DESCRIPTOR_H

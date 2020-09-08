@@ -15,12 +15,13 @@
 ## limitations under the License.
 ##
 
-VERSION=`cat ../../../version.txt`
+VERSION=$(cat ../../../version.txt)
 
 ${JAVA_HOME}/bin/java \
     -cp ../../../aeron-all/build/libs/aeron-all-${VERSION}.jar \
     -XX:+UnlockExperimentalVMOptions \
     -XX:+TrustFinalNonStaticFields \
+    -XX:+UseBiasedLocking \
     -XX:BiasedLockingStartupDelay=0 \
     -XX:+UseParallelOldGC \
     -Djava.net.preferIPv4Stack=true \
@@ -28,12 +29,13 @@ ${JAVA_HOME}/bin/java \
     -Daeron.sample.messageLength=32 \
     -Daeron.sample.messages=100000000 \
     -Daeron.term.buffer.sparse.file=false \
-    -Daeron.mtu.length=16k \
-    -Daeron.ipc.mtu.length=16K \
+    -Daeron.mtu.length=8k \
+    -Daeron.ipc.mtu.length=8k \
     -Daeron.archive.control.mtu.length=4k \
     -Daeron.socket.so_sndbuf=2m \
     -Daeron.socket.so_rcvbuf=2m \
     -Daeron.rcv.initial.window.length=2m \
     -Daeron.archive.file.sync.level=0 \
+    -Daeron.archive.file.io.max.length=1m \
     -Daeron.sample.channel=aeron:ipc \
     ${JVM_OPTS} io.aeron.samples.archive.EmbeddedRecordingThroughput "$@"

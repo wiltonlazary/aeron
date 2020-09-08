@@ -87,8 +87,8 @@ public class ArchiveLoggingAgentTest
         testArchiveLogging(CMD_OUT_RESPONSE.name(), EnumSet.of(CMD_OUT_RESPONSE));
     }
 
-    private void testArchiveLogging(
-        final String enabledEvents, final EnumSet<ArchiveEventCode> expectedEvents) throws InterruptedException
+    private void testArchiveLogging(final String enabledEvents, final EnumSet<ArchiveEventCode> expectedEvents)
+        throws InterruptedException
     {
         before(enabledEvents, expectedEvents);
 
@@ -105,14 +105,13 @@ public class ArchiveLoggingAgentTest
             .controlRequestChannel("aeron:udp?term-length=64k|endpoint=localhost:8010")
             .controlRequestStreamId(100)
             .controlResponseChannel("aeron:udp?term-length=64k|endpoint=localhost:8020")
-            .controlResponseStreamId(101)
-            .recordingEventsChannel("aeron:udp?control-mode=dynamic|control=localhost:8030");
+            .controlResponseStreamId(101);
 
         final Archive.Context archiveCtx = new Archive.Context()
-            .aeronDirectoryName(aeronDirectoryName)
             .errorHandler(Tests::onError)
             .archiveDir(new File(testDir, "archive"))
             .deleteArchiveOnStart(true)
+            .recordingEventsEnabled(false)
             .controlChannel(aeronArchiveContext.controlRequestChannel())
             .controlStreamId(aeronArchiveContext.controlRequestStreamId())
             .localControlStreamId(aeronArchiveContext.controlRequestStreamId())

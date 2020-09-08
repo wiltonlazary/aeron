@@ -29,7 +29,6 @@ typedef struct aeron_publication_stct
     const char *channel;
 
     aeron_log_buffer_t *log_buffer;
-//    aeron_mapped_raw_log_t mapped_raw_log;
     aeron_logbuffer_metadata_t *log_meta_data;
 
     int64_t *position_limit;
@@ -46,6 +45,12 @@ typedef struct aeron_publication_stct
     size_t position_bits_to_shift;
     int32_t initial_term_id;
 
+    int32_t position_limit_counter_id;
+    int32_t channel_status_indicator_id;
+
+    aeron_notification_t on_close_complete;
+    void *on_close_complete_clientd;
+
     bool is_closed;
 }
 aeron_publication_t;
@@ -56,13 +61,16 @@ int aeron_publication_create(
     const char *channel,
     int32_t stream_id,
     int32_t session_id,
+    int32_t position_limit_counter_id,
     int64_t *position_limit_addr,
+    int32_t channel_status_indicator_id,
     int64_t *channel_status_addr,
     aeron_log_buffer_t *log_buffer,
     int64_t original_registration_id,
     int64_t registration_id);
 
 int aeron_publication_delete(aeron_publication_t *publication);
+void aeron_publication_force_close(aeron_publication_t *publication);
 
 inline int64_t aeron_publication_new_position(
     aeron_publication_t *publication,

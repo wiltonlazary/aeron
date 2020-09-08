@@ -22,7 +22,6 @@
 extern "C"
 {
 #include "concurrent/aeron_term_appender.h"
-#include "concurrent/aeron_logbuffer_descriptor.h"
 }
 
 #define TERM_BUFFER_CAPACITY (AERON_LOGBUFFER_TERM_MIN_LENGTH)
@@ -74,8 +73,8 @@ protected:
     AERON_DECL_ALIGNED(term_buffer_t m_logBuffer, 16);
     AERON_DECL_ALIGNED(meta_data_buffer_t m_stateBuffer, 16);
 
-    aeron_mapped_buffer_t m_term_buffer;
-    volatile int64_t *m_term_tail_counter;
+    aeron_mapped_buffer_t m_term_buffer = {};
+    volatile int64_t *m_term_tail_counter = nullptr;
 };
 
 TEST_F(CTermAppenderTest, shouldAppendFrameToEmptyLog)

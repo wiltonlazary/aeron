@@ -18,9 +18,8 @@
 
 extern size_t aeron_int64_to_ptr_hash_map_hash_key(int64_t key, size_t mask);
 
-extern int64_t aeron_int64_to_ptr_hash_map_compound_key(int32_t high, int32_t low);
-
-extern int aeron_int64_to_ptr_hash_map_init(aeron_int64_to_ptr_hash_map_t *map, size_t initial_capacity, float load_factor);
+extern int aeron_int64_to_ptr_hash_map_init(
+    aeron_int64_to_ptr_hash_map_t *map, size_t initial_capacity, float load_factor);
 extern void aeron_int64_to_ptr_hash_map_delete(aeron_int64_to_ptr_hash_map_t *map);
 extern int aeron_int64_to_ptr_hash_map_rehash(aeron_int64_to_ptr_hash_map_t *map, size_t new_capacity);
 extern int aeron_int64_to_ptr_hash_map_put(aeron_int64_to_ptr_hash_map_t *map, const int64_t key, void *value);
@@ -30,4 +29,7 @@ extern void aeron_int64_to_ptr_hash_map_compact_chain(aeron_int64_to_ptr_hash_ma
 
 extern void *aeron_int64_to_ptr_hash_map_remove(aeron_int64_to_ptr_hash_map_t *map, int64_t key);
 extern void aeron_int64_to_ptr_hash_map_for_each(
-        aeron_int64_to_ptr_hash_map_t *map, aeron_int64_to_ptr_hash_map_for_each_func_t func, void *clientd);
+    aeron_int64_to_ptr_hash_map_t *map, aeron_int64_to_ptr_hash_map_for_each_func_t func, void *clientd);
+extern void aeron_int64_to_ptr_hash_map_remove_if(
+    aeron_int64_to_ptr_hash_map_t *map, aeron_int64_to_ptr_hash_map_predicate_func_t func, void *clientd);
+

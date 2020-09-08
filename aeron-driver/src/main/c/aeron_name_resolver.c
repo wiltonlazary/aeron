@@ -19,14 +19,14 @@
 #define _GNU_SOURCE
 #endif
 
-#include <stdlib.h>
+#include <errno.h>
 #include <string.h>
+#include "aeron_socket.h"
 #include "util/aeron_error.h"
 #include "util/aeron_parse_util.h"
 #include "util/aeron_netutil.h"
 #include "util/aeron_dlopen.h"
 #include "aeron_name_resolver.h"
-#include "aeron_driver_context.h"
 
 #ifdef _MSC_VER
 #define strdup _strdup
@@ -53,6 +53,7 @@ int aeron_default_name_resolver_supplier(
     resolver->do_work_func = aeron_default_name_resolver_do_work;
     resolver->close_func = aeron_default_name_resolver_close;
     resolver->state = NULL;
+
     return 0;
 }
 
@@ -163,15 +164,15 @@ aeron_name_resolver_supplier_func_t aeron_name_resolver_supplier_load(const char
         return NULL;
     }
 
-    if (0 == strncmp(name, AERON_NAME_RESOLVER_SUPPLIER_DEFAULT, strlen(AERON_NAME_RESOLVER_SUPPLIER_DEFAULT) + 1))
+    if (0 == strncmp(name, AERON_NAME_RESOLVER_SUPPLIER_DEFAULT, sizeof(AERON_NAME_RESOLVER_SUPPLIER_DEFAULT)))
     {
         supplier_func = aeron_default_name_resolver_supplier;
     }
-    else if (0 == strncmp(name, AERON_NAME_RESOLVER_CSV_TABLE, strlen(AERON_NAME_RESOLVER_CSV_TABLE) + 1))
+    else if (0 == strncmp(name, AERON_NAME_RESOLVER_CSV_TABLE, sizeof(AERON_NAME_RESOLVER_CSV_TABLE)))
     {
         supplier_func = aeron_name_resolver_supplier_load("aeron_csv_table_name_resolver_supplier");
     }
-    else if (0 == strncmp(name, AERON_NAME_RESOLVER_DRIVER, strlen(AERON_NAME_RESOLVER_DRIVER) + 1))
+    else if (0 == strncmp(name, AERON_NAME_RESOLVER_DRIVER, sizeof(AERON_NAME_RESOLVER_DRIVER)))
     {
         supplier_func = aeron_name_resolver_supplier_load("aeron_driver_name_resolver_supplier");
     }
@@ -207,7 +208,7 @@ static void aeron_name_resolver_set_err(
     char dl_name_buffer[128];
     const char *address_or_null = NULL != address_str ? address_str : "null";
     aeron_set_err(
-        -EINVAL,
+        EINVAL,
         "Unresolved - %s=%s, name-and-port=%s, name-resolver-lookup=%s, name-resolver-resolve=%s",
         uri_param_name,
         name,

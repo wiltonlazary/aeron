@@ -27,7 +27,7 @@ int aeron_retransmit_handler_init(
     uint64_t linger_timeout_ns)
 {
     if (aeron_int64_to_ptr_hash_map_init(
-        &handler->active_retransmits_map, 8, AERON_INT64_TO_PTR_HASH_MAP_DEFAULT_LOAD_FACTOR) < 0)
+        &handler->active_retransmits_map, 8, AERON_MAP_DEFAULT_LOAD_FACTOR) < 0)
     {
         aeron_set_err_from_last_err_code("could not init retransmit handler map");
         return -1;
@@ -90,7 +90,7 @@ int aeron_retransmit_handler_on_nak(
 
     if (!aeron_retransmit_handler_is_invalid(handler, term_offset, term_length))
     {
-        const int64_t key = aeron_int64_to_ptr_hash_map_compound_key(term_id, term_offset);
+        const int64_t key = aeron_map_compound_key(term_id, term_offset);
 
         if (NULL == aeron_int64_to_ptr_hash_map_get(&handler->active_retransmits_map, key) &&
             handler->active_retransmits_map.size < AERON_RETRANSMIT_HANDLER_MAX_RETRANSMITS)
@@ -113,12 +113,12 @@ int aeron_retransmit_handler_on_nak(
             {
                 result = resend(resend_clientd, term_id, term_offset, action->length);
                 action->state = AERON_RETRANSMIT_ACTION_STATE_LINGERING;
-                action->expire_ns = now_ns + handler->linger_timeout_ns;
+                action->expiry_ns = now_ns + handler->linger_timeout_ns;
             }
             else
             {
                 action->state = AERON_RETRANSMIT_ACTION_STATE_DELAYED;
-                action->expire_ns = now_ns + handler->delay_timeout_ns;
+                action->expiry_ns = now_ns + handler->delay_timeout_ns;
             }
 
             if (aeron_int64_to_ptr_hash_map_put(&handler->active_retransmits_map, key, action) < 0)
@@ -149,9 +149,9 @@ int aeron_retransmit_handler_process_timeouts(
 
             if (AERON_RETRANSMIT_ACTION_STATE_LINGERING == action->state)
             {
-                if (now_ns > action->expire_ns)
+                if (now_ns > action->expiry_ns)
                 {
-                    const int64_t key = aeron_int64_to_ptr_hash_map_compound_key(action->term_id, action->term_offset);
+                    const int64_t key = aeron_map_compound_key(action->term_id, action->term_offset);
 
                     action->state = AERON_RETRANSMIT_ACTION_STATE_INACTIVE;
                     aeron_int64_to_ptr_hash_map_remove(&handler->active_retransmits_map, key);
@@ -162,11 +162,11 @@ int aeron_retransmit_handler_process_timeouts(
             }
             else if (AERON_RETRANSMIT_ACTION_STATE_DELAYED == action->state)
             {
-                if (now_ns > action->expire_ns)
+                if (now_ns > action->expiry_ns)
                 {
                     result = resend(resend_clientd, action->term_id, action->term_offset, action->length);
                     action->state = AERON_RETRANSMIT_ACTION_STATE_LINGERING;
-                    action->expire_ns = now_ns + handler->linger_timeout_ns;
+                    action->expiry_ns = now_ns + handler->linger_timeout_ns;
                     result++;
                 }
 

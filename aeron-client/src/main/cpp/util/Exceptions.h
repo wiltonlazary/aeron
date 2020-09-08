@@ -19,20 +19,22 @@
 #include <cstdint>
 #include <string>
 #include <stdexcept>
+#include <functional>
 #include "MacroUtil.h"
 
-namespace aeron { namespace util {
+namespace aeron { namespace util
+{
 
 #ifdef _MSC_VER
-#define AERON_PATH_SEP '\\'
+#define AERON_FILE_SEP '\\'
 #else
-#define AERON_PATH_SEP '/'
+#define AERON_FILE_SEP '/'
 #endif
 
-static constexpr const char* past_prefix(const char * const prefix, const char * const filename)
+static constexpr const char *past_prefix(const char * const prefix, const char * const filename)
 {
     return *prefix == *filename ?
-        past_prefix(prefix + 1, filename + 1) : *filename == AERON_PATH_SEP ? filename + 1 : filename;
+        past_prefix(prefix + 1, filename + 1) : (*filename == AERON_FILE_SEP ? filename + 1 : filename);
 }
 
 #ifdef __PROJECT_SOURCE_DIR__
@@ -46,6 +48,15 @@ static constexpr const char* past_prefix(const char * const prefix, const char *
 #else
     #define SOURCEINFO  __PRETTY_FUNCTION__,  __SHORT_FILE__, __LINE__
 #endif
+
+/**
+ * Callback to indicate an exception has occurred.
+ *
+ * This handler may be called in a context of noexcept so the handler can not safely throw.
+ *
+ * @param exception that has occurred.
+ */
+typedef std::function<void(const std::exception &exception)> exception_handler_t;
 
 enum class ExceptionCategory : std::int64_t
 {
@@ -64,9 +75,9 @@ private:
 public:
     SourcedException(
         ExceptionCategory category,
-        const std::string& what,
-        const std::string& function,
-        const std::string& file,
+        const std::string &what,
+        const std::string &function,
+        const std::string &file,
         const int line) :
         m_where(function + " : " + file + " : " + std::to_string(line)),
         m_what(what),
@@ -74,17 +85,17 @@ public:
     {
     }
 
-    SourcedException(const std::string &what, const std::string& function, const std::string& file, const int line) :
+    SourcedException(const std::string &what, const std::string &function, const std::string &file, const int line) :
         SourcedException(ExceptionCategory::EXCEPTION_CATEGORY_ERROR, what, function, file, line)
     {
     }
 
-    virtual const char * what() const noexcept
+    virtual const char *what() const noexcept
     {
         return m_what.c_str();
     }
 
-    const char * where() const noexcept
+    const char *where() const noexcept
     {
         return m_where.c_str();
     }
@@ -95,14 +106,14 @@ public:
     }
 };
 
-#define AERON_DECLARE_SOURCED_EXCEPTION(exceptionName,category) \
+#define AERON_DECLARE_SOURCED_EXCEPTION(exceptionName, category) \
 class exceptionName : public aeron::util::SourcedException     \
 {                                                              \
 public:                                                        \
     exceptionName(                                             \
-        const std::string& what,                               \
-        const std::string& function,                           \
-        const std::string& file,                               \
+        const std::string &what,                               \
+        const std::string &function,                           \
+        const std::string &file,                               \
         const int line) :                                      \
         SourcedException(category, what, function, file, line) \
     {                                                          \
@@ -131,11 +142,12 @@ private:
 public:
     RegistrationException(
         std::int32_t errorCode,
-        const std::string& what,
-        const std::string& function,
-        const std::string& file,
+        ExceptionCategory exceptionCategory,
+        const std::string &what,
+        const std::string &function,
+        const std::string &file,
         const int line) :
-        SourcedException(what, function, file, line),
+        SourcedException(exceptionCategory, what, function, file, line),
         m_errorCode(errorCode)
     {
     }
@@ -150,9 +162,9 @@ class TimeoutException : public AeronException
 {
 public:
     TimeoutException(
-        const std::string& what,
-        const std::string& function,
-        const std::string& file,
+        const std::string &what,
+        const std::string &function,
+        const std::string &file,
         const int line) :
         AeronException(what, function, file, line)
     {
@@ -167,9 +179,9 @@ private:
 public:
     ChannelEndpointException(
         std::int32_t statusIndicatorCounterId,
-        const std::string& what,
-        const std::string& function,
-        const std::string& file,
+        const std::string &what,
+        const std::string &function,
+        const std::string &file,
         const int line) :
         AeronException(what, function, file, line),
         m_statusIndicatorCounterId(statusIndicatorCounterId)

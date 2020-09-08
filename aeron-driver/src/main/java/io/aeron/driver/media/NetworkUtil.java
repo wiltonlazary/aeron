@@ -29,7 +29,7 @@ import static java.lang.Math.min;
 import static java.util.Collections.sort;
 
 /**
- * Collection of network specific utility functions
+ * Collection of network specific utility functions.
  */
 public class NetworkUtil
 {
@@ -49,6 +49,63 @@ public class NetworkUtil
         throws SocketException
     {
         return filterBySubnet(NetworkInterfaceShim.DEFAULT, address, subnetPrefix);
+    }
+
+    /**
+     * Allocate a direct {@link ByteBuffer} that is padded at the end with at least alignment bytes.
+     *
+     * @param capacity  for the buffer.
+     * @param alignment for the buffer.
+     * @return the direct {@link ByteBuffer}.
+     */
+    public static ByteBuffer allocateDirectAlignedAndPadded(final int capacity, final int alignment)
+    {
+        final ByteBuffer buffer = BufferUtil.allocateDirectAligned(capacity + alignment, alignment);
+
+        buffer.limit(buffer.limit() - alignment);
+
+        return buffer.slice();
+    }
+
+    /**
+     * Format an address and port pair so they can be used in a URI endpoint.
+     *
+     * @param address part of the endpoint.
+     * @param port    part of the endpoint.
+     * @return The formatted string for a the address, IPv4 or IPv6, and port separated by a ':'.
+     */
+    public static String formatAddressAndPort(final InetAddress address, final int port)
+    {
+        if (address instanceof Inet6Address)
+        {
+            return "[" + address.getHostAddress() + "]:" + port;
+        }
+        else
+        {
+            return address.getHostAddress() + ":" + port;
+        }
+    }
+
+    /**
+     * Get the {@link ProtocolFamily} to which the address belongs.
+     *
+     * @param address to get the {@link ProtocolFamily} for.
+     * @return the {@link ProtocolFamily} to which the address belongs.
+     */
+    public static ProtocolFamily getProtocolFamily(final InetAddress address)
+    {
+        if (address instanceof Inet4Address)
+        {
+            return StandardProtocolFamily.INET;
+        }
+        else if (address instanceof Inet6Address)
+        {
+            return StandardProtocolFamily.INET6;
+        }
+        else
+        {
+            throw new IllegalStateException("Unknown ProtocolFamily");
+        }
     }
 
     static NetworkInterface[] filterBySubnet(
@@ -84,18 +141,13 @@ public class NetworkUtil
         return results;
     }
 
-    public static InetAddress findAddressOnInterface(
+    static InetAddress findAddressOnInterface(
         final NetworkInterface networkInterface, final InetAddress address, final int subnetPrefix)
     {
-        final InterfaceAddress interfaceAddress =
-            findAddressOnInterface(NetworkInterfaceShim.DEFAULT, networkInterface, address.getAddress(), subnetPrefix);
+        final InterfaceAddress interfaceAddress = findAddressOnInterface(
+            NetworkInterfaceShim.DEFAULT, networkInterface, address.getAddress(), subnetPrefix);
 
-        if (null == interfaceAddress)
-        {
-            return null;
-        }
-
-        return interfaceAddress.getAddress();
+        return null == interfaceAddress ? null : interfaceAddress.getAddress();
     }
 
     static InterfaceAddress findAddressOnInterface(
@@ -104,19 +156,22 @@ public class NetworkUtil
         final byte[] queryAddress,
         final int prefixLength)
     {
-        InterfaceAddress foundInterfaceAddress = null;
-
         for (final InterfaceAddress interfaceAddress : shim.getInterfaceAddresses(networkInterface))
         {
-            final byte[] candidateAddress = interfaceAddress.getAddress().getAddress();
-            if (isMatchWithPrefix(candidateAddress, queryAddress, prefixLength))
+            if (null != interfaceAddress)
             {
-                foundInterfaceAddress = interfaceAddress;
-                break;
+                final InetAddress address = interfaceAddress.getAddress();
+                if (null != address)
+                {
+                    if (isMatchWithPrefix(address.getAddress(), queryAddress, prefixLength))
+                    {
+                        return interfaceAddress;
+                    }
+                }
             }
         }
 
-        return foundInterfaceAddress;
+        return null;
     }
 
     static boolean isMatchWithPrefix(final byte[] candidate, final byte[] expected, final int prefixLength)
@@ -139,10 +194,10 @@ public class NetworkUtil
 
             return
                 (upperMask & toLong(candidate, 0)) == (upperMask & toLong(expected, 0)) &&
-                    (lowerMask & toLong(candidate, 8)) == (lowerMask & toLong(expected, 8));
+                (lowerMask & toLong(candidate, 8)) == (lowerMask & toLong(expected, 8));
         }
 
-        throw new IllegalArgumentException("How many bytes does an IP address have again?");
+        throw new IllegalArgumentException("how many bytes does an IP address have again?");
     }
 
     private static int prefixLengthToIpV4Mask(final int subnetPrefix)
@@ -170,22 +225,6 @@ public class NetworkUtil
             ((b[offset + 2] & 0xFFL) << 40) +
             ((b[offset + 1] & 0xFFL) << 48) +
             (((long)b[offset]) << 56);
-    }
-
-    public static ProtocolFamily getProtocolFamily(final InetAddress address)
-    {
-        if (address instanceof Inet4Address)
-        {
-            return StandardProtocolFamily.INET;
-        }
-        else if (address instanceof Inet6Address)
-        {
-            return StandardProtocolFamily.INET6;
-        }
-        else
-        {
-            throw new IllegalStateException("Unknown ProtocolFamily");
-        }
     }
 
     static class FilterResult implements Comparable<FilterResult>
@@ -217,21 +256,5 @@ public class NetworkUtil
                 return compare(isLoopback, other.isLoopback);
             }
         }
-    }
-
-    /**
-     * Allocate a direct {@link ByteBuffer} that is padded at the end with at least alignment bytes.
-     *
-     * @param capacity  for the buffer.
-     * @param alignment for the buffer.
-     * @return the direct {@link ByteBuffer}.
-     */
-    public static ByteBuffer allocateDirectAlignedAndPadded(final int capacity, final int alignment)
-    {
-        final ByteBuffer buffer = BufferUtil.allocateDirectAligned(capacity + alignment, alignment);
-
-        buffer.limit(buffer.limit() - alignment);
-
-        return buffer.slice();
     }
 }

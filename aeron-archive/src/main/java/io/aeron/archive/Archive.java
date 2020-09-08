@@ -58,7 +58,7 @@ import static org.agrona.SystemUtil.*;
 /**
  * The Aeron Archive which allows for the recording and replay of local and remote {@link io.aeron.Publication}s .
  */
-public class Archive implements AutoCloseable
+public final class Archive implements AutoCloseable
 {
     private final Context ctx;
     private final AgentRunner conductorRunner;
@@ -125,24 +125,13 @@ public class Archive implements AutoCloseable
         return ctx;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     public void close()
     {
         CloseHelper.close(conductorInvoker);
         CloseHelper.close(conductorRunner);
-    }
-
-    private Archive start()
-    {
-        if (ArchiveThreadingMode.INVOKER == ctx.threadingMode())
-        {
-            conductorInvoker.start();
-        }
-        else
-        {
-            AgentRunner.startOnThread(conductorRunner, ctx.threadFactory());
-        }
-
-        return this;
     }
 
     /**
@@ -174,7 +163,17 @@ public class Archive implements AutoCloseable
      */
     public static Archive launch(final Context ctx)
     {
-        return new Archive(ctx).start();
+        final Archive archive = new Archive(ctx);
+        if (ArchiveThreadingMode.INVOKER == ctx.threadingMode())
+        {
+            archive.conductorInvoker.start();
+        }
+        else
+        {
+            AgentRunner.startOnThread(archive.conductorRunner, ctx.threadFactory());
+        }
+
+        return archive;
     }
 
     /**
@@ -195,9 +194,14 @@ public class Archive implements AutoCloseable
         static final String RECORDING_SEGMENT_SUFFIX = ".rec";
 
         /**
-         * Maximum block length of data read from disk in a single operation during a replay.
+         * Default block length of data in a single IO operation during a recording or replay.
          */
-        static final int MAX_BLOCK_LENGTH = 2 * 1024 * 1024;
+        public static final int FILE_IO_MAX_LENGTH_DEFAULT = 1024 * 1024;
+
+        /**
+         * Maximum length of a file IO operation for recording or replay. Must be a power of 2.
+         */
+        public static final String FILE_IO_MAX_LENGTH_PROP_NAME = "aeron.archive.file.io.max.length";
 
         /**
          * Directory in which the archive stores it files such as the catalog and recordings.
@@ -422,6 +426,16 @@ public class Archive implements AutoCloseable
         public static String archiveDirName()
         {
             return System.getProperty(ARCHIVE_DIR_PROP_NAME, ARCHIVE_DIR_DEFAULT);
+        }
+
+        /**
+         * The maximum length of a file IO operation.
+         *
+         * @return the maximum length of a file IO operation.
+         */
+        public static int fileIoMaxLength()
+        {
+            return getSizeAsInt(FILE_IO_MAX_LENGTH_PROP_NAME, FILE_IO_MAX_LENGTH_DEFAULT);
         }
 
         /**
@@ -714,6 +728,7 @@ public class Archive implements AutoCloseable
         private int catalogFileSyncLevel = Configuration.catalogFileSyncLevel();
         private int maxConcurrentRecordings = Configuration.maxConcurrentRecordings();
         private int maxConcurrentReplays = Configuration.maxConcurrentReplays();
+        private int fileIoMaxLength = Configuration.fileIoMaxLength();
 
         private ArchiveThreadingMode threadingMode = Configuration.threadingMode();
         private ThreadFactory threadFactory;
@@ -770,6 +785,11 @@ public class Archive implements AutoCloseable
             {
                 throw new ConfigurationException(
                     "catalogFileSyncLevel " + catalogFileSyncLevel + " < fileSyncLevel " + fileSyncLevel);
+            }
+
+            if (fileIoMaxLength < TERM_MIN_LENGTH || !BitUtil.isPowerOfTwo(fileIoMaxLength))
+            {
+                throw new ConfigurationException("invalid fileIoMaxLength=" + fileIoMaxLength);
             }
 
             if (null == archiveDir)
@@ -832,7 +852,7 @@ public class Archive implements AutoCloseable
 
                 if (null == errorCounter)
                 {
-                    errorCounter = aeron.addCounter(Configuration.ARCHIVE_ERROR_COUNT_TYPE_ID, "Archive errors");
+                    errorCounter = aeron.addCounter(Configuration.ARCHIVE_ERROR_COUNT_TYPE_ID, "Archive Errors");
                 }
             }
 
@@ -1493,6 +1513,7 @@ public class Archive implements AutoCloseable
          * Get the file length used for recording data segment files.
          *
          * @return the file length used for recording data segment files
+         * @see Configuration#SEGMENT_FILE_LENGTH_PROP_NAME
          */
         int segmentFileLength()
         {
@@ -1505,6 +1526,7 @@ public class Archive implements AutoCloseable
          *
          * @param segmentFileLength the file length to be used for recording data segment files.
          * @return this for a fluent API.
+         * @see Configuration#SEGMENT_FILE_LENGTH_PROP_NAME
          */
         public Context segmentFileLength(final int segmentFileLength)
         {
@@ -1654,6 +1676,7 @@ public class Archive implements AutoCloseable
          * Get the archive threading mode.
          *
          * @return the archive threading mode.
+         * @see Configuration#THREADING_MODE_PROP_NAME
          */
         public ArchiveThreadingMode threadingMode()
         {
@@ -1665,6 +1688,7 @@ public class Archive implements AutoCloseable
          *
          * @param threadingMode archive threading mode.
          * @return this for a fluent API.
+         * @see Configuration#THREADING_MODE_PROP_NAME
          */
         public Context threadingMode(final ArchiveThreadingMode threadingMode)
         {
@@ -1768,6 +1792,7 @@ public class Archive implements AutoCloseable
          * Get the max number of concurrent recordings.
          *
          * @return the max number of concurrent recordings.
+         * @see Configuration#MAX_CONCURRENT_RECORDINGS_PROP_NAME
          */
         public int maxConcurrentRecordings()
         {
@@ -1779,6 +1804,7 @@ public class Archive implements AutoCloseable
          *
          * @param maxConcurrentRecordings the max number of concurrent recordings.
          * @return this for a fluent API.
+         * @see Configuration#MAX_CONCURRENT_RECORDINGS_PROP_NAME
          */
         public Context maxConcurrentRecordings(final int maxConcurrentRecordings)
         {
@@ -1790,6 +1816,7 @@ public class Archive implements AutoCloseable
          * Get the max number of concurrent replays.
          *
          * @return the max number of concurrent replays.
+         * @see Configuration#MAX_CONCURRENT_REPLAYS_PROP_NAME
          */
         public int maxConcurrentReplays()
         {
@@ -1801,10 +1828,35 @@ public class Archive implements AutoCloseable
          *
          * @param maxConcurrentReplays the max number of concurrent replays.
          * @return this for a fluent API.
+         * @see Configuration#MAX_CONCURRENT_REPLAYS_PROP_NAME
          */
         public Context maxConcurrentReplays(final int maxConcurrentReplays)
         {
             this.maxConcurrentReplays = maxConcurrentReplays;
+            return this;
+        }
+
+        /**
+         * Get the max length of a file IO operation.
+         *
+         * @return the max length of a file IO operation.
+         * @see Configuration#FILE_IO_MAX_LENGTH_PROP_NAME
+         */
+        public int fileIoMaxLength()
+        {
+            return fileIoMaxLength;
+        }
+
+        /**
+         * Set the max length of a file IO operation.
+         *
+         * @param fileIoMaxLength the max length of a file IO operation.
+         * @return this for a fluent API.
+         * @see Configuration#FILE_IO_MAX_LENGTH_PROP_NAME
+         */
+        public Context fileIoMaxLength(final int fileIoMaxLength)
+        {
+            this.fileIoMaxLength = fileIoMaxLength;
             return this;
         }
 
@@ -2032,6 +2084,7 @@ public class Archive implements AutoCloseable
             {
                 dataBuffer = allocateBuffer();
             }
+
             return dataBuffer;
         }
 
@@ -2084,7 +2137,7 @@ public class Archive implements AutoCloseable
 
         private UnsafeBuffer allocateBuffer()
         {
-            return new UnsafeBuffer(allocateDirectAligned(Configuration.MAX_BLOCK_LENGTH, CACHE_LINE_LENGTH));
+            return new UnsafeBuffer(allocateDirectAligned(fileIoMaxLength, CACHE_LINE_LENGTH));
         }
 
         /**

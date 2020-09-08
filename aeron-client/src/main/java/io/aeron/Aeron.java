@@ -43,7 +43,6 @@ import static java.nio.channels.FileChannel.MapMode.READ_WRITE;
 import static java.nio.file.StandardOpenOption.READ;
 import static java.nio.file.StandardOpenOption.WRITE;
 import static java.util.concurrent.atomic.AtomicIntegerFieldUpdater.newUpdater;
-import static org.agrona.BitUtil.SIZE_OF_INT;
 import static org.agrona.SystemUtil.getDurationInNanos;
 
 /**
@@ -218,6 +217,7 @@ public class Aeron implements AutoCloseable
      * @return true in the command is still in active processing or false if completed successfully or errored.
      * @see Publication#asyncAddDestination(String)
      * @see Subscription#asyncAddDestination(String)
+     * @see #hasActiveCommands()
      */
     public boolean isCommandActive(final long correlationId)
     {
@@ -225,11 +225,25 @@ public class Aeron implements AutoCloseable
     }
 
     /**
+     * Does the client have any active asynchronous commands?
+     * <p>
+     * When close operations are performed on {@link Publication}s, {@link Subscription}s, and {@link Counter}s the
+     * commands are sent asynchronously to the driver. The client tracks active commands in case errors need to be
+     * reported. If you wish to wait for acknowledgement of close operations then wait for this method to return false.
+     *
+     * @return true if any commands are currently active otherwise false.
+     */
+    public boolean hasActiveCommands()
+    {
+        return conductor.hasActiveCommands();
+    }
+
+    /**
      * Clean up and release all Aeron client resources and shutdown conductor thread if not using
      * {@link Context#useConductorAgentInvoker(boolean)}.
      * <p>
      * This will close all currently open {@link Publication}s, {@link Subscription}s, and {@link Counter}s created
-     * from this client.
+     * from this client. To check for the command being acknowledged by the driver
      */
     public void close()
     {
@@ -393,10 +407,22 @@ public class Aeron implements AutoCloseable
      * Add a handler to the list be called when {@link Counter}s become available.
      *
      * @param handler to be called when {@link Counter}s become available.
+     * @return registration id for the handler which can be used to remove it.
      */
-    public void addAvailableCounterHandler(final AvailableCounterHandler handler)
+    public long addAvailableCounterHandler(final AvailableCounterHandler handler)
     {
-        conductor.addAvailableCounterHandler(handler);
+        return conductor.addAvailableCounterHandler(handler);
+    }
+
+    /**
+     * Remove a previously added handler to the list be called when {@link Counter}s become available.
+     *
+     * @param registrationId to be removed which was returned from add method.
+     * @return true if found and removed otherwise false.
+     */
+    public boolean removeAvailableCounterHandler(final long registrationId)
+    {
+        return conductor.removeAvailableCounterHandler(registrationId);
     }
 
     /**
@@ -404,7 +430,9 @@ public class Aeron implements AutoCloseable
      *
      * @param handler to be removed.
      * @return true if found and removed otherwise false.
+     * @deprecated please use {@link #removeAvailableCounterHandler(long)}.
      */
+    @Deprecated
     public boolean removeAvailableCounterHandler(final AvailableCounterHandler handler)
     {
         return conductor.removeAvailableCounterHandler(handler);
@@ -414,10 +442,22 @@ public class Aeron implements AutoCloseable
      * Add a handler to the list be called when {@link Counter}s become unavailable.
      *
      * @param handler to be called when {@link Counter}s become unavailable.
+     * @return registration id for the handler which can be used to remove it.
      */
-    public void addUnavailableCounterHandler(final UnavailableCounterHandler handler)
+    public long addUnavailableCounterHandler(final UnavailableCounterHandler handler)
     {
-        conductor.addUnavailableCounterHandler(handler);
+        return conductor.addUnavailableCounterHandler(handler);
+    }
+
+    /**
+     * Remove a previously added handler to the list be called when {@link Counter}s become unavailable.
+     *
+     * @param registrationId to be removed which was returned from add method.
+     * @return true if found and removed otherwise false.
+     */
+    public boolean removeUnavailableCounterHandler(final long registrationId)
+    {
+        return conductor.removeUnavailableCounterHandler(registrationId);
     }
 
     /**
@@ -425,7 +465,9 @@ public class Aeron implements AutoCloseable
      *
      * @param handler to be removed.
      * @return true if found and removed otherwise false.
+     * @deprecated please use {@link #removeUnavailableCounterHandler(long)}.
      */
+    @Deprecated
     public boolean removeUnavailableCounterHandler(final UnavailableCounterHandler handler)
     {
         return conductor.removeUnavailableCounterHandler(handler);
@@ -435,10 +477,22 @@ public class Aeron implements AutoCloseable
      * Add a handler to the list be called when the Aeron client is closed.
      *
      * @param handler to be called when the Aeron client is closed.
+     * @return registration id for the handler which can be used to remove it.
      */
-    public void addCloseHandler(final Runnable handler)
+    public long addCloseHandler(final Runnable handler)
     {
-        conductor.addCloseHandler(handler);
+        return conductor.addCloseHandler(handler);
+    }
+
+    /**
+     * Remove a previously added handler to the list be called when the Aeron client is closed.
+     *
+     * @param registrationId of the handler from when it was added.
+     * @return true if found and removed otherwise false.
+     */
+    public boolean removeCloseHandler(final long registrationId)
+    {
+        return conductor.removeCloseHandler(registrationId);
     }
 
     /**
@@ -446,10 +500,12 @@ public class Aeron implements AutoCloseable
      *
      * @param handler to be removed.
      * @return true if found and removed otherwise false.
+     * @deprecated please use {@link #removeCloseHandler(long)}.
      */
+    @Deprecated
     public boolean removeCloseHandler(final Runnable handler)
     {
-        return conductor.removeCloserHandler(handler);
+        return conductor.removeCloseHandler(handler);
     }
 
     /**
@@ -951,18 +1007,6 @@ public class Aeron implements AutoCloseable
         }
 
         /**
-         * This method is used for testing and debugging.
-         *
-         * @param toDriverBuffer Injected RingBuffer.
-         * @return this for a fluent API.
-         */
-        Context toDriverBuffer(final RingBuffer toDriverBuffer)
-        {
-            this.toDriverBuffer = toDriverBuffer;
-            return this;
-        }
-
-        /**
          * Get the {@link RingBuffer} used for sending commands to the media driver.
          *
          * @return the {@link RingBuffer} used for sending commands to the media driver.
@@ -1201,6 +1245,8 @@ public class Aeron implements AutoCloseable
 
         /**
          * Set the timeout between service calls the to {@link ClientConductor} duty cycles in nanoseconds.
+         * <p>
+         * <b>Note:</b> the method is used for testing only.
          *
          * @param interServiceTimeout the timeout (ns) between service calls the to {@link ClientConductor} duty cycle.
          * @return this for a fluent API.
@@ -1214,11 +1260,11 @@ public class Aeron implements AutoCloseable
         /**
          * Return the timeout between service calls to the duty cycle for the client.
          * <p>
-         * When exceeded, {@link #errorHandler()} will be called and the active {@link Publication}s and {@link Image}s
-         * closed.
+         * When exceeded, {@link #errorHandler()} will be called and the active {@link Publication}s, {@link Image}s,
+         * and {@link Counter}s will be closed.
          * <p>
          * This value is controlled by the driver and included in the CnC file. It can be configured by adjusting
-         * the {@code aeron.client.liveness.timeout} property on the media driver.
+         * the {@code aeron.client.liveness.timeout} property set on the media driver.
          *
          * @return the timeout in nanoseconds between service calls as an allowed maximum.
          */
@@ -1328,8 +1374,7 @@ public class Aeron implements AutoCloseable
 
         private void connectToDriver()
         {
-            final long startTimeMs = epochClock.time();
-            final long deadlineMs = startTimeMs + driverTimeoutMs();
+            final long deadlineMs = epochClock.time() + driverTimeoutMs();
             final File cncFile = cncFile();
 
             while (null == toDriverBuffer)
@@ -1344,7 +1389,7 @@ public class Aeron implements AutoCloseable
                     sleep(Configuration.IDLE_SLEEP_MS);
                 }
 
-                cncByteBuffer = waitForFileMapping(cncFile, deadlineMs, epochClock);
+                cncByteBuffer = waitForFileMapping(cncFile, epochClock, deadlineMs);
                 cncMetaDataBuffer = CncFileDescriptor.createMetaDataBuffer(cncByteBuffer);
 
                 int cncVersion;
@@ -1359,6 +1404,21 @@ public class Aeron implements AutoCloseable
                 }
 
                 CncFileDescriptor.checkVersion(cncVersion);
+                if (SemanticVersion.minor(cncVersion) < SemanticVersion.minor(CncFileDescriptor.CNC_VERSION))
+                {
+                    throw new AeronException("driverVersion=" + SemanticVersion.toString(cncVersion) +
+                        " insufficient for clientVersion=" + SemanticVersion.toString(CncFileDescriptor.CNC_VERSION));
+                }
+
+                if (!CncFileDescriptor.isCncFileLengthSufficient(cncMetaDataBuffer, cncByteBuffer.capacity()))
+                {
+                    IoUtil.unmap(cncByteBuffer);
+                    cncByteBuffer = null;
+                    cncMetaDataBuffer = null;
+
+                    sleep(Configuration.AWAITING_IDLE_SLEEP_MS);
+                    continue;
+                }
 
                 final ManyToOneRingBuffer ringBuffer = new ManyToOneRingBuffer(
                     CncFileDescriptor.createToDriverBuffer(cncByteBuffer, cncMetaDataBuffer));
@@ -1381,10 +1441,9 @@ public class Aeron implements AutoCloseable
                         throw new DriverTimeoutException("no driver heartbeat detected");
                     }
 
-                    final MappedByteBuffer cncByteBuffer = this.cncByteBuffer;
-                    this.cncByteBuffer = null;
-                    cncMetaDataBuffer = null;
                     IoUtil.unmap(cncByteBuffer);
+                    cncByteBuffer = null;
+                    cncMetaDataBuffer = null;
 
                     sleep(100);
                     continue;
@@ -1395,26 +1454,31 @@ public class Aeron implements AutoCloseable
         }
     }
 
-    private static MappedByteBuffer waitForFileMapping(
-        final File cncFile, final long deadlineMs, final EpochClock epochClock)
+    private static MappedByteBuffer waitForFileMapping(final File file, final EpochClock clock, final long deadlineMs)
     {
-        try (FileChannel fileChannel = FileChannel.open(cncFile.toPath(), READ, WRITE))
+        while (true)
         {
-            while (fileChannel.size() < CncFileDescriptor.CNC_VERSION_FIELD_OFFSET + SIZE_OF_INT)
+            try (FileChannel fileChannel = FileChannel.open(file.toPath(), READ, WRITE))
             {
-                if (epochClock.time() > deadlineMs)
+                final long fileSize = fileChannel.size();
+                if (fileSize < CncFileDescriptor.META_DATA_LENGTH)
                 {
-                    throw new AeronException("CnC file is created but not populated");
+                    if (clock.time() > deadlineMs)
+                    {
+                        throw new DriverTimeoutException("CnC file is created but not populated");
+                    }
+
+                    fileChannel.close();
+                    sleep(Configuration.IDLE_SLEEP_MS);
+                    continue;
                 }
 
-                sleep(Configuration.IDLE_SLEEP_MS);
+                return fileChannel.map(READ_WRITE, 0, fileSize);
             }
-
-            return fileChannel.map(READ_WRITE, 0, fileChannel.size());
-        }
-        catch (final IOException ex)
-        {
-            throw new AeronException("cannot open CnC file", ex);
+            catch (final IOException ex)
+            {
+                throw new AeronException("cannot open CnC file", ex);
+            }
         }
     }
 

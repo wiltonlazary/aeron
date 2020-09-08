@@ -19,12 +19,13 @@ import io.aeron.protocol.DataHeaderFlyweight;
 import io.aeron.protocol.HeaderFlyweight;
 import io.aeron.protocol.RttMeasurementFlyweight;
 import io.aeron.protocol.SetupFlyweight;
-import org.agrona.BitUtil;
 import org.agrona.BufferUtil;
 
 import java.nio.ByteBuffer;
 
-class NetworkPublicationThreadLocals
+import static org.agrona.BitUtil.CACHE_LINE_LENGTH;
+
+final class NetworkPublicationThreadLocals
 {
     private final ByteBuffer heartbeatBuffer;
     private final DataHeaderFlyweight dataHeader;
@@ -35,17 +36,19 @@ class NetworkPublicationThreadLocals
 
     NetworkPublicationThreadLocals()
     {
-        final ByteBuffer byteBuffer = BufferUtil.allocateDirectAligned(192, BitUtil.CACHE_LINE_LENGTH);
+        final ByteBuffer byteBuffer = BufferUtil.allocateDirectAligned(CACHE_LINE_LENGTH * 3, CACHE_LINE_LENGTH);
 
         byteBuffer.limit(DataHeaderFlyweight.HEADER_LENGTH);
         heartbeatBuffer = byteBuffer.slice();
         dataHeader = new DataHeaderFlyweight(heartbeatBuffer);
 
-        byteBuffer.limit(64 + SetupFlyweight.HEADER_LENGTH).position(64);
+        int position = CACHE_LINE_LENGTH;
+        byteBuffer.limit(position + SetupFlyweight.HEADER_LENGTH).position(position);
         setupBuffer = byteBuffer.slice();
         setupHeader = new SetupFlyweight(setupBuffer);
 
-        byteBuffer.limit(128 + RttMeasurementFlyweight.HEADER_LENGTH).position(128);
+        position += CACHE_LINE_LENGTH;
+        byteBuffer.limit(position + RttMeasurementFlyweight.HEADER_LENGTH).position(position);
         rttMeasurementBuffer = byteBuffer.slice();
         rttMeasurementHeader = new RttMeasurementFlyweight(rttMeasurementBuffer);
 
@@ -66,32 +69,32 @@ class NetworkPublicationThreadLocals
             .frameLength(RttMeasurementFlyweight.HEADER_LENGTH);
     }
 
-    public ByteBuffer heartbeatBuffer()
+    ByteBuffer heartbeatBuffer()
     {
         return heartbeatBuffer;
     }
 
-    public DataHeaderFlyweight heartbeatDataHeader()
+    DataHeaderFlyweight heartbeatDataHeader()
     {
         return dataHeader;
     }
 
-    public ByteBuffer setupBuffer()
+    ByteBuffer setupBuffer()
     {
         return setupBuffer;
     }
 
-    public SetupFlyweight setupHeader()
+    SetupFlyweight setupHeader()
     {
         return setupHeader;
     }
 
-    public ByteBuffer rttMeasurementBuffer()
+    ByteBuffer rttMeasurementBuffer()
     {
         return rttMeasurementBuffer;
     }
 
-    public RttMeasurementFlyweight rttMeasurementHeader()
+    RttMeasurementFlyweight rttMeasurementHeader()
     {
         return rttMeasurementHeader;
     }

@@ -19,7 +19,24 @@
 #define _GNU_SOURCE
 #endif
 
+#include "aeron_alloc.h"
 #include "concurrent/aeron_thread.h"
+#if !defined(_WIN32)
+#include <unistd.h>
+#else
+#include <windows.h>
+
+struct aeron_thread_stct
+{
+    HANDLE handle;
+    void *(*callback)(void *);
+    void *arg0;
+    void *result;
+};
+
+#endif
+
+#define SECOND_AS_NANOSECONDS (1000 * 1000 * 1000LL)
 
 void aeron_nano_sleep(uint64_t nanoseconds)
 {
@@ -42,13 +59,29 @@ void aeron_nano_sleep(uint64_t nanoseconds)
     WaitForSingleObject(timer, INFINITE);
     CloseHandle(timer);
 #else
-    nanosleep(&(struct timespec) { .tv_nsec = (long)nanoseconds }, NULL);
+    time_t seconds = nanoseconds / SECOND_AS_NANOSECONDS;
+    struct timespec ts =
+    {
+        .tv_sec = seconds,
+        .tv_nsec = (long)nanoseconds - (seconds * SECOND_AS_NANOSECONDS)
+    };
+
+    nanosleep(&ts, NULL);
+#endif
+}
+
+void aeron_micro_sleep(size_t microseconds)
+{
+#ifdef _WIN32
+    aeron_nano_sleep(1000 * microseconds);
+#else
+    usleep(microseconds);
 #endif
 }
 
 #if defined(AERON_COMPILER_GCC)
 
-void aeron_thread_set_name(const char* role_name)
+void aeron_thread_set_name(const char *role_name)
 {
 #if defined(Darwin)
     pthread_setname_np(role_name);
@@ -57,36 +90,36 @@ void aeron_thread_set_name(const char* role_name)
 #endif
 }
 
-#elif defined(AERON_COMPILER_MSVC) && defined(AERON_CPU_X64)
+#elif defined(AERON_COMPILER_MSVC)
 
-static BOOL aeron_thread_once_callback(PINIT_ONCE init_once, void (*callback)(void), void** context)
+static BOOL WINAPI aeron_thread_once_callback(PINIT_ONCE init_once, void (*callback)(void), void **context)
 {
     callback();
     return TRUE;
 }
 
-void aeron_thread_once(AERON_INIT_ONCE* s_init_once, void* callback)
+void aeron_thread_once(AERON_INIT_ONCE *s_init_once, void *callback)
 {
-    InitOnceExecuteOnce(s_init_once, aeron_thread_once_callback, callback, NULL);
+    InitOnceExecuteOnce((PINIT_ONCE)s_init_once, (PINIT_ONCE_FN)aeron_thread_once_callback, callback, NULL);
 }
 
-int aeron_mutex_init(aeron_mutex_t* mutex, void* attr)
+int aeron_mutex_init(aeron_mutex_t *mutex, void *attr)
 {
     *mutex = CreateMutexA(NULL, FALSE, NULL);
     return *mutex ? 0 : -1;
 }
 
-int aeron_mutex_lock(aeron_mutex_t* mutex)
+int aeron_mutex_lock(aeron_mutex_t *mutex)
 {
     return WaitForSingleObject(*mutex, INFINITE) == WAIT_OBJECT_0 ? 0 : EINVAL;
 }
 
-int aeron_mutex_unlock(aeron_mutex_t* mutex)
+int aeron_mutex_unlock(aeron_mutex_t *mutex)
 {
     return ReleaseMutex(*mutex) ? 0 : EINVAL;
 }
 
-int aeron_mutex_destroy(aeron_mutex_t* mutex)
+int aeron_mutex_destroy(aeron_mutex_t *mutex)
 {
     if (*mutex)
     {
@@ -98,76 +131,100 @@ int aeron_mutex_destroy(aeron_mutex_t* mutex)
     return EINVAL;
 }
 
-int aeron_thread_attr_init(pthread_attr_t* attr)
+int aeron_thread_attr_init(pthread_attr_t *attr)
 {
     return 0;
 }
 
 static DWORD WINAPI aeron_thread_proc(LPVOID parameter)
 {
-    aeron_thread_t* thread = (aeron_thread_t*)parameter;
-    thread->result = thread->callback(thread->arg0);
+    aeron_thread_t *thread = (aeron_thread_t *)parameter;
+    (*thread)->result = (*thread)->callback((*thread)->arg0);
+
     return 0;
 }
 
-int aeron_thread_create(aeron_thread_t* thread, void* attr, void*(*callback)(void*), void* arg0)
+int aeron_thread_create(aeron_thread_t *thread_ptr, void *attr, void *(*callback)(void *), void *arg0)
 {
-    thread->callback = callback;
-    thread->arg0 = arg0;
-	
-    DWORD id;
-    thread->handle = CreateThread(
-        NULL,              // default security attributes
-        0,                 // use default stack size
-        aeron_thread_proc, // thread function name
-        thread,            // argument to thread function
-        0,                 // use default creation flags
-        &id);              // returns the thread identifier
+    if (NULL == thread_ptr)
+    {
+        return -1;
+    }
 
-    return thread->handle ? 0 : -1;
+    if (aeron_alloc((void **)thread_ptr, sizeof(struct aeron_thread_stct)) < 0)
+    {
+        return -1;
+    }
+
+    (*thread_ptr)->callback = callback;
+    (*thread_ptr)->arg0 = arg0;
+    DWORD id;
+
+    (*thread_ptr)->handle = CreateThread(
+        NULL,  // default security attributes
+        0,         // use default stack size
+        aeron_thread_proc,    // thread function name
+        thread_ptr,           // argument to thread function
+        0,      // use default creation flags
+        &id);                 // returns the thread identifier
+
+    if (!(*thread_ptr)->handle)
+    {
+        aeron_free(*thread_ptr);
+        return -1;
+    }
+
+    return 0;
 }
 
-void aeron_thread_set_name(const char* role_name)
+void aeron_thread_set_name(const char *role_name)
 {
-    size_t wn = mbstowcs(NULL, role_name, 0);
-    wchar_t * buf = malloc(sizeof(wchar_t) * (wn + 1));  // value-initialize to 0 (see below)
-    if (!buf)
+    size_t wchar_count = mbstowcs(NULL, role_name, 0);
+    wchar_t *buf;
+    if (aeron_alloc((void **)&buf, sizeof(wchar_t) * (wchar_count + 1)) < 0)  // value-initialize to 0 (see below)
     {
         return;
     }
-	
-    mbstowcs(buf, role_name, wn + 1);
+
+    mbstowcs(buf, role_name, wchar_count + 1);
     SetThreadDescription(GetCurrentThread(), buf);
 
-    free(buf);
+    aeron_free(buf);
 }
 
 int aeron_thread_join(aeron_thread_t thread, void **value_ptr)
 {
-    if (thread.handle)
-    {
-        WaitForSingleObject(thread.handle, INFINITE);
-        CloseHandle(thread.handle);
-    }
-    else
+    if (!thread)
     {
         return EINVAL;
     }
 
-    if (value_ptr)
+    int result = 0;
+    if (thread->handle)
     {
-        *value_ptr = thread.result;
+        WaitForSingleObject(thread->handle, INFINITE);
+        CloseHandle(thread->handle);
+        if (value_ptr)
+        {
+            *value_ptr = thread->result;
+        }
+    }
+    else
+    {
+        result = EINVAL;
     }
 
-    return 0;
+    aeron_free(thread);
+
+    return result;
 }
 
-int aeron_thread_key_create(pthread_key_t *key, void(*destr_function) (void *))
+int aeron_thread_key_create(pthread_key_t *key_ptr, void (*destr_func)(void *))
 {
     DWORD dkey = TlsAlloc();
     if (dkey != TLS_OUT_OF_INDEXES)
     {
-        *key = dkey;
+        *key_ptr = dkey;
         return 0;
     }
     else
@@ -200,11 +257,16 @@ int aeron_thread_set_specific(pthread_key_t key, const void *pointer)
     }
 }
 
-void * aeron_thread_get_specific(pthread_key_t key)
+void *aeron_thread_get_specific(pthread_key_t key)
 {
     return TlsGetValue(key);
 }
 
+int sched_yield(void)
+{
+    SwitchToThread();
+    return 0;
+}
 
 #else
 #error Unsupported platform!
@@ -221,7 +283,7 @@ void proc_yield()
     __asm__ volatile("pause\n": : : "memory");
 }
 
-#elif defined(AERON_COMPILER_MSVC) && defined(AERON_CPU_X64)
+#elif defined(AERON_COMPILER_MSVC)
 
 #else
 #error Unsupported platform!

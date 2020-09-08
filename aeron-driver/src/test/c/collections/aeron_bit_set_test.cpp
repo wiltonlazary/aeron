@@ -26,7 +26,7 @@ class BitSetTest : public testing::Test
 public:
     BitSetTest() = default;
 
-    void assertGetAndSet(aeron_bit_set_t* bit_set)
+    static void assertGetAndSet(aeron_bit_set_t *bit_set)
     {
         bool result;
 
@@ -112,7 +112,6 @@ TEST_F(BitSetTest, shouldSetAndGetHeap)
 
     aeron_bit_set_heap_free(bit_set);
 }
-
 
 TEST_F(BitSetTest, shouldSetAndGet)
 {
@@ -215,10 +214,13 @@ TEST_F(BitSetTest, shouldHandleOutOfRangeRequests)
     bool result;
 
     EXPECT_EQ(aeron_bit_set_stack_init(bit_set_length, bits, STATIC_ARRAY_LEN, false, &bit_set), 0);
+    EXPECT_EQ(aeron_bit_set_set(NULL, 0, true), -EINVAL);
     EXPECT_EQ(aeron_bit_set_set(&bit_set, bit_set_length, true), -EINVAL);
     EXPECT_EQ(aeron_bit_set_set(&bit_set, bit_set_length + 1, true), -EINVAL);
     EXPECT_EQ(aeron_bit_set_set(&bit_set, -1, true), -EINVAL);
 
+    EXPECT_EQ(aeron_bit_set_get(NULL, 0, &result), -EINVAL);
+    EXPECT_EQ(aeron_bit_set_get(&bit_set, 0, NULL), -EINVAL);
     EXPECT_EQ(aeron_bit_set_get(&bit_set, bit_set_length, &result), -EINVAL);
     EXPECT_EQ(aeron_bit_set_get(&bit_set, bit_set_length + 1, &result), -EINVAL);
     EXPECT_EQ(aeron_bit_set_get(&bit_set, -1, &result), -EINVAL);
@@ -238,7 +240,7 @@ TEST_F(BitSetTest, shouldHeapAllocateIfBitsRequiredIsTooLarge)
 
     aeron_bit_set_stack_free(&bit_set);
 
-    EXPECT_EQ(aeron_bit_set_stack_init(bit_set_length + 64, NULL, 0, true, &bit_set), 0);
+    EXPECT_EQ(aeron_bit_set_stack_init(bit_set_length + 64, nullptr, 0, true, &bit_set), 0);
     EXPECT_NE(bit_set.bits, bit_set.static_array);
 
     aeron_bit_set_stack_free(&bit_set);

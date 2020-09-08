@@ -18,6 +18,7 @@
 #define AERON_UDP_PROTOCOL_H
 
 #include <stdint.h>
+#include <stddef.h>
 
 #pragma pack(push)
 #pragma pack(4)
@@ -97,8 +98,8 @@ aeron_rttm_header_t;
 
 #pragma pack(pop)
 
-#define AERON_RES_HEADER_ADDRESS_LENGTH_IP4 (4)
-#define AERON_RES_HEADER_ADDRESS_LENGTH_IP6 (16)
+#define AERON_RES_HEADER_ADDRESS_LENGTH_IP4 (4u)
+#define AERON_RES_HEADER_ADDRESS_LENGTH_IP6 (16u)
 
 #pragma pack(push)
 #pragma pack(1)
@@ -126,6 +127,13 @@ typedef struct aeron_resolution_header_ipv6_stct
     int16_t name_length;
 }
 aeron_resolution_header_ipv6_t;
+
+typedef struct aeron_option_hdeader_stct
+{
+    uint16_t option_length;
+    uint16_t type;
+}
+aeron_option_header_t;
 #pragma pack(pop)
 
 int aeron_udp_protocol_group_tag(aeron_status_message_header_t *sm, int64_t *group_tag);
@@ -140,6 +148,9 @@ int aeron_udp_protocol_group_tag(aeron_status_message_header_t *sm, int64_t *gro
 #define AERON_HDR_TYPE_SETUP (0x05)
 #define AERON_HDR_TYPE_RTTM (0x06)
 #define AERON_HDR_TYPE_RES (0x07)
+#define AERON_HDR_TYPE_ATS_DATA (0x08)
+#define AERON_HDR_TYPE_ATS_SETUP (0x09)
+#define AERON_HDR_TYPE_ATS_SM (0x0A)
 #define AERON_HDR_TYPE_EXT (0xFFFF)
 
 #define AERON_DATA_HEADER_LENGTH (sizeof(aeron_data_header_t))
@@ -147,6 +158,8 @@ int aeron_udp_protocol_group_tag(aeron_status_message_header_t *sm, int64_t *gro
 #define AERON_DATA_HEADER_BEGIN_FLAG ((uint8_t)(0x80))
 #define AERON_DATA_HEADER_END_FLAG ((uint8_t)(0x40))
 #define AERON_DATA_HEADER_EOS_FLAG ((uint8_t)(0x20))
+
+#define AERON_DATA_HEADER_UNFRAGMENTED ((uint8_t)(AERON_DATA_HEADER_BEGIN_FLAG | AERON_DATA_HEADER_END_FLAG))
 
 #define AERON_DATA_HEADER_DEFAULT_RESERVED_VALUE (0L)
 
@@ -158,7 +171,18 @@ int aeron_udp_protocol_group_tag(aeron_status_message_header_t *sm, int64_t *gro
 #define AERON_RES_HEADER_TYPE_NAME_TO_IP6_MD (0x02)
 #define AERON_RES_HEADER_SELF_FLAG UINT8_C(0x80)
 
-#define AERON_FRAME_MAX_MESSAGE_LENGTH (16 * 1024 * 1024)
+#define AERON_FRAME_MAX_MESSAGE_LENGTH (16u * 1024u * 1024u)
+
+#define AERON_OPTION_HEADER_IGNORE_FLAG ((uint16_t)(0x8000))
+
+#define AERON_OPT_HDR_TYPE_ATS_SUITE ((uint16_t)0x0001)
+#define AERON_OPT_HDR_TYPE_ATS_RSA_KEY ((uint16_t)0x0002)
+#define AERON_OPT_HDR_TYPE_ATS_RSA_KEY_ID ((uint16_t)0x0003)
+#define AERON_OPT_HDR_TYPE_ATS_EC_KEY ((uint16_t)0x0004)
+#define AERON_OPT_HDR_TYPE_ATS_EC_SIG ((uint16_t)0x0005)
+#define AERON_OPT_HDR_TYPE_ATS_SECRET ((uint16_t)0x0006)
+
+#define AERON_OPT_HDR_ALIGNMENT (4u)
 
 inline size_t aeron_res_header_address_length(int8_t res_type)
 {
@@ -166,9 +190,12 @@ inline size_t aeron_res_header_address_length(int8_t res_type)
         AERON_RES_HEADER_ADDRESS_LENGTH_IP6 : AERON_RES_HEADER_ADDRESS_LENGTH_IP4;
 }
 
-inline size_t aeron_frame_compute_max_message_length(size_t term_length)
+inline size_t aeron_compute_max_message_length(size_t term_length)
 {
-    return (term_length < AERON_FRAME_MAX_MESSAGE_LENGTH) ? term_length : AERON_FRAME_MAX_MESSAGE_LENGTH;
+    size_t max_length_for_term = term_length / 8;
+
+    return max_length_for_term < AERON_FRAME_MAX_MESSAGE_LENGTH ?
+        max_length_for_term : AERON_FRAME_MAX_MESSAGE_LENGTH;
 }
 
 size_t aeron_res_header_entry_length_ipv4(aeron_resolution_header_ipv4_t *header);

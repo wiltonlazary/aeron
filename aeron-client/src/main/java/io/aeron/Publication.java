@@ -16,11 +16,17 @@
 package io.aeron;
 
 import io.aeron.exceptions.AeronException;
-import io.aeron.logbuffer.*;
+import io.aeron.logbuffer.BufferClaim;
+import io.aeron.logbuffer.FrameDescriptor;
+import io.aeron.logbuffer.HeaderWriter;
+import io.aeron.logbuffer.LogBufferDescriptor;
+import io.aeron.status.LocalSocketAddressStatus;
 import io.aeron.status.ChannelEndpointStatus;
 import org.agrona.DirectBuffer;
 import org.agrona.concurrent.UnsafeBuffer;
 import org.agrona.concurrent.status.ReadablePosition;
+
+import java.util.List;
 
 import static io.aeron.logbuffer.LogBufferDescriptor.*;
 import static io.aeron.protocol.DataHeaderFlyweight.HEADER_LENGTH;
@@ -107,7 +113,7 @@ public abstract class Publication implements AutoCloseable
         this.termBufferLength = logBuffers.termLength();
         this.maxMessageLength = FrameDescriptor.computeMaxMessageLength(termBufferLength);
         this.maxPayloadLength = LogBufferDescriptor.mtuLength(logMetaDataBuffer) - HEADER_LENGTH;
-        this.maxPossiblePosition = termBufferLength * (1L << 31L);
+        this.maxPossiblePosition = termBufferLength * (1L << 31);
         this.conductor = clientConductor;
         this.channel = channel;
         this.streamId = streamId;
@@ -314,6 +320,29 @@ public abstract class Publication implements AutoCloseable
     public int channelStatusId()
     {
         return channelStatusId;
+    }
+
+    /**
+     * Fetches the local socket address for this publication. If the channel is not
+     * {@link io.aeron.status.ChannelEndpointStatus#ACTIVE}, then this will return an empty list.
+     *
+     * The format is as follows:
+     * <br>
+     * <br>
+     * IPv4: <code>ip address:port</code>
+     * <br>
+     * IPv6: <code>[ip6 address]:port</code>
+     * <br>
+     * <br>
+     * This is to match the formatting used in the Aeron URI. For publications this will be the control address and
+     * is likely to only contain a single entry.
+     *
+     * @return local socket addresses for this publication.
+     * @see #channelStatus()
+     */
+    public List<String> localSocketAddresses()
+    {
+        return LocalSocketAddressStatus.findAddresses(conductor.countersReader(), channelStatus(), channelStatusId);
     }
 
     /**

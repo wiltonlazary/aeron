@@ -21,8 +21,7 @@
 
 #include <gtest/gtest.h>
 
-#include <concurrent/AtomicBuffer.h>
-#include <util/Exceptions.h>
+#include "concurrent/AtomicBuffer.h"
 
 using namespace aeron::concurrent;
 using namespace aeron::util;
@@ -90,7 +89,7 @@ TEST (atomicBufferTests, stringStore)
 
     ASSERT_EQ((size_t)ab.getInt32(256), testString.length());
 
-    std::string result(reinterpret_cast<char*>(&testBuffer[256] + sizeof (std::int32_t)));
+    std::string result(reinterpret_cast<char *>(&testBuffer[256] + sizeof (std::int32_t)));
 
     ASSERT_EQ(testString, result);
 }
@@ -118,8 +117,8 @@ TEST (atomicBufferTests, concurrentTest)
 
     for (int i = 0; i < 8; i++)
     {
-        threads.push_back(
-            std::thread([&]()
+        threads.push_back(std::thread(
+            [&]()
             {
                 for (size_t n = 0; n < incCount; n++)
                 {

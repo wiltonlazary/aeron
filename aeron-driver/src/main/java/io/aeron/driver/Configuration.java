@@ -23,6 +23,7 @@ import io.aeron.exceptions.AeronException;
 import io.aeron.exceptions.ConfigurationException;
 import io.aeron.driver.media.ReceiveChannelEndpoint;
 import io.aeron.driver.media.SendChannelEndpoint;
+import io.aeron.logbuffer.BufferClaim;
 import io.aeron.logbuffer.FrameDescriptor;
 import io.aeron.protocol.DataHeaderFlyweight;
 import org.agrona.BitUtil;
@@ -237,7 +238,7 @@ public class Configuration
     public static final int SEND_TO_STATUS_POLL_RATIO_DEFAULT = 6;
 
     /**
-     * Property name for SO_RCVBUF setting on UDP sockets which must be sufficient for Bandwidth Delay Produce (BDP).
+     * Property name for SO_RCVBUF setting on UDP sockets which must be sufficient for Bandwidth Delay Product (BDP).
      */
     public static final String SOCKET_RCVBUF_LENGTH_PROP_NAME = "aeron.socket.so_rcvbuf";
 
@@ -309,6 +310,10 @@ public class Configuration
 
     /**
      * Property name for {@link Publication} unblock timeout.
+     * <p>
+     * A publication can become blocked if the client crashes while publishing or if
+     * {@link io.aeron.Publication#tryClaim(int, BufferClaim)} is used without following up by calling
+     * {@link BufferClaim#commit()} or {@link BufferClaim#abort()}.
      */
     public static final String PUBLICATION_UNBLOCK_TIMEOUT_PROP_NAME = "aeron.publication.unblock.timeout";
 
@@ -328,7 +333,9 @@ public class Configuration
     public static final long PUBLICATION_CONNECTION_TIMEOUT_DEFAULT_NS = TimeUnit.SECONDS.toNanos(5);
 
     /**
-     * Property name for if spy subscriptions simulate a connection.
+     * Property name for if spy subscriptions simulate a connection to a network publication.
+     * <p>
+     * If true then this will override the min group size of the min and tagged flow control strategies.
      */
     public static final String SPIES_SIMULATE_CONNECTION_PROP_NAME = "aeron.spies.simulate.connection";
 
@@ -900,38 +907,38 @@ public class Configuration
 
         switch (strategyName)
         {
-            case "noop":
+            case NoOpIdleStrategy.ALIAS:
             case "org.agrona.concurrent.NoOpIdleStrategy":
                 idleStrategy = NoOpIdleStrategy.INSTANCE;
                 break;
 
-            case "spin":
+            case BusySpinIdleStrategy.ALIAS:
             case "org.agrona.concurrent.BusySpinIdleStrategy":
                 idleStrategy = BusySpinIdleStrategy.INSTANCE;
                 break;
 
-            case "yield":
+            case YieldingIdleStrategy.ALIAS:
             case "org.agrona.concurrent.YieldingIdleStrategy":
                 idleStrategy = YieldingIdleStrategy.INSTANCE;
                 break;
 
-            case "sleep-ns":
+            case SleepingIdleStrategy.ALIAS:
             case "org.agrona.concurrent.SleepingIdleStrategy":
                 idleStrategy = new SleepingIdleStrategy();
                 break;
 
-            case "sleep-ms":
+            case SleepingMillisIdleStrategy.ALIAS:
             case "org.agrona.concurrent.SleepingMillisIdleStrategy":
                 idleStrategy = new SleepingMillisIdleStrategy();
                 break;
 
-            case "backoff":
+            case BackoffIdleStrategy.ALIAS:
             case DEFAULT_IDLE_STRATEGY:
                 idleStrategy = new BackoffIdleStrategy(
                     IDLE_MAX_SPINS, IDLE_MAX_YIELDS, IDLE_MIN_PARK_NS, IDLE_MAX_PARK_NS);
                 break;
 
-            case "controllable":
+            case ControllableIdleStrategy.ALIAS:
             case CONTROLLABLE_IDLE_STRATEGY:
                 Objects.requireNonNull(controllableStatus);
                 controllableStatus.setOrdered(ControllableIdleStrategy.PARK);
@@ -1272,10 +1279,10 @@ public class Configuration
      */
     public static void validateMtuLength(final int mtuLength)
     {
-        if (mtuLength < DataHeaderFlyweight.HEADER_LENGTH || mtuLength > MAX_UDP_PAYLOAD_LENGTH)
+        if (mtuLength <= DataHeaderFlyweight.HEADER_LENGTH || mtuLength > MAX_UDP_PAYLOAD_LENGTH)
         {
             throw new ConfigurationException(
-                "mtuLength must be a >= HEADER_LENGTH and <= MAX_UDP_PAYLOAD_LENGTH: " + mtuLength);
+                "mtuLength must be a > HEADER_LENGTH and <= MAX_UDP_PAYLOAD_LENGTH: " + mtuLength);
         }
 
         if ((mtuLength & (FrameDescriptor.FRAME_ALIGNMENT - 1)) != 0)
@@ -1427,7 +1434,7 @@ public class Configuration
 
         if (Math.abs((long)high - low) > Integer.MAX_VALUE)
         {
-            throw new ConfigurationException("reserved range to too large");
+            throw new ConfigurationException("reserved range too large");
         }
     }
 
@@ -1465,6 +1472,32 @@ public class Configuration
         {
             throw new ConfigurationException(
                 "clientLivenessTimeoutNs=" + clientLivenessTimeoutNs +
+                " <= timerIntervalNs=" + timerIntervalNs);
+        }
+    }
+
+    /**
+     * Validate that the timeouts for untethered subscriptions are greater than timer interval.
+     *
+     * @param untetheredWindowLimitTimeoutNs after which an untethered subscription will be lingered.
+     * @param untetheredRestingTimeoutNs     after which an untethered subscription that is lingered can become active.
+     * @param timerIntervalNs                interval at which the driver will check timeouts.
+     * @throws ConfigurationException if the values are not valid.
+     */
+    public static void validateUntetheredTimeouts(
+        final long untetheredWindowLimitTimeoutNs, final long untetheredRestingTimeoutNs, final long timerIntervalNs)
+    {
+        if (untetheredWindowLimitTimeoutNs <= timerIntervalNs)
+        {
+            throw new ConfigurationException(
+                "untetheredWindowLimitTimeoutNs=" + untetheredWindowLimitTimeoutNs +
+                " <= timerIntervalNs=" + timerIntervalNs);
+        }
+
+        if (untetheredRestingTimeoutNs <= timerIntervalNs)
+        {
+            throw new ConfigurationException(
+                "untetheredRestingTimeoutNs=" + untetheredRestingTimeoutNs +
                 " <= timerIntervalNs=" + timerIntervalNs);
         }
     }

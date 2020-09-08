@@ -30,23 +30,17 @@
 #include <thread>
 #include <atomic>
 
-extern "C"
-{
 #include "aeronmd.h"
-}
 
 namespace aeron
 {
 
+const char *TERMINATION_KEY = "Exit please";
+
 class EmbeddedMediaDriver
 {
 public:
-    EmbeddedMediaDriver() :
-        m_running(true),
-        m_context(nullptr),
-        m_driver(nullptr)
-    {
-    }
+    EmbeddedMediaDriver() = default;
 
     ~EmbeddedMediaDriver()
     {
@@ -68,11 +62,23 @@ public:
         m_thread.join();
     }
 
+    void joinAndClose()
+    {
+        m_running = false;
+        m_thread.join();
+
+        aeron_driver_close(m_driver);
+        aeron_driver_context_close(m_context);
+
+        m_driver = nullptr;
+        m_context = nullptr;
+    }
+
     void start()
     {
         if (init() < 0)
         {
-            throw std::runtime_error("could not initialize");
+            throw std::runtime_error("failed to initialize");
         }
 
         m_thread = std::thread(
@@ -80,6 +86,11 @@ public:
             {
                 driverLoop();
             });
+    }
+
+    const char *directory()
+    {
+        return aeron_driver_context_get_dir(m_context);
     }
 
 protected:
@@ -94,9 +105,11 @@ protected:
         aeron_driver_context_set_threading_mode(m_context, AERON_THREADING_MODE_SHARED);
         aeron_driver_context_set_dir_delete_on_start(m_context, true);
         aeron_driver_context_set_dir_delete_on_shutdown(m_context, true);
-        aeron_driver_context_set_shared_idle_strategy(m_context, "sleeping");
+        aeron_driver_context_set_shared_idle_strategy(m_context, "sleep-ns");
         aeron_driver_context_set_term_buffer_sparse_file(m_context, true);
         aeron_driver_context_set_term_buffer_length(m_context, 64 * 1024);
+        aeron_driver_context_set_driver_termination_validator(m_context, validateTermination, nullptr);
+        aeron_driver_context_set_driver_termination_hook(m_context, terminationHook, this);
 
         if (aeron_driver_init(&m_driver, m_context) < 0)
         {
@@ -114,10 +127,22 @@ protected:
     }
 
 private:
-    std::atomic<bool> m_running;
+    std::atomic<bool> m_running = { true };
     std::thread m_thread;
-    aeron_driver_context_t *m_context;
-    aeron_driver_t *m_driver;
+    aeron_driver_context_t *m_context = nullptr;
+    aeron_driver_t *m_driver = nullptr;
+
+    static bool validateTermination(void *state, uint8_t *buffer, int32_t length)
+    {
+        auto key_length = static_cast<int32_t>(strlen(TERMINATION_KEY));
+        return key_length == length && 0 == memcmp(TERMINATION_KEY, buffer, static_cast<size_t>(length));
+    }
+
+    static void terminationHook(void *clientd)
+    {
+        auto *driver = static_cast<EmbeddedMediaDriver *>(clientd);
+        driver->m_running = false;
+    }
 };
 
 }

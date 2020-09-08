@@ -24,8 +24,8 @@
 
 typedef struct aeron_image_list_stct
 {
+    int64_t change_number;
     uint32_t length;
-    int32_t change_number;
     volatile struct aeron_image_list_stct *next_list;
     aeron_image_t **array;
 }
@@ -41,25 +41,31 @@ typedef struct aeron_subscription_stct
 
     struct subscription_conductor_fields_stct
     {
+        uint8_t pre_fields_padding[AERON_CACHE_LINE_LENGTH];
         aeron_image_list_t image_lists_head;
-        int32_t next_change_number;
+        int64_t next_change_number;
+        uint8_t post_fields_padding[AERON_CACHE_LINE_LENGTH];
     }
     conductor_fields;
 
     int64_t *channel_status_indicator;
 
-    int64_t registration_id;
-    int32_t stream_id;
-
-    int32_t last_image_list_change_number;
+    int64_t last_image_list_change_number;
 
     aeron_on_available_image_t on_available_image;
     void *on_available_image_clientd;
     aeron_on_unavailable_image_t on_unavailable_image;
     void *on_unavailable_image_clientd;
+    aeron_notification_t on_close_complete;
+    void *on_close_complete_clientd;
 
+    int64_t registration_id;
+    int32_t stream_id;
+    int32_t channel_status_indicator_id;
     size_t round_robin_index;
+
     bool is_closed;
+    uint8_t post_fields_padding[AERON_CACHE_LINE_LENGTH];
 }
 aeron_subscription_t;
 
@@ -69,6 +75,7 @@ int aeron_subscription_create(
     const char *channel,
     int32_t stream_id,
     int64_t registration_id,
+    int32_t channel_status_indicator_id,
     int64_t *channel_status_indicator_addr,
     aeron_on_available_image_t on_available_image,
     void *on_available_image_clientd,
@@ -76,11 +83,17 @@ int aeron_subscription_create(
     void *on_unavailable_image_clientd);
 
 int aeron_subscription_delete(aeron_subscription_t *subscription);
+void aeron_subscription_force_close(aeron_subscription_t *subscription);
 
 int aeron_subscription_alloc_image_list(volatile aeron_image_list_t **image_list, size_t length);
 
 int aeron_client_conductor_subscription_add_image(aeron_subscription_t *subscription, aeron_image_t *image);
 int aeron_client_conductor_subscription_remove_image(aeron_subscription_t *subscription, aeron_image_t *image);
+
+inline volatile aeron_image_list_t *aeron_client_conductor_subscription_image_list(aeron_subscription_t *subscription)
+{
+    return subscription->conductor_fields.image_lists_head.next_list;
+}
 
 int aeron_client_conductor_subscription_install_new_image_list(
     aeron_subscription_t *subscription, volatile aeron_image_list_t *image_list);
@@ -100,6 +113,24 @@ inline int aeron_subscription_find_image_index(volatile aeron_image_list_t *imag
     }
 
     return -1;
+}
+
+inline int64_t aeron_subscription_last_image_list_change_number(aeron_subscription_t *subscription)
+{
+    int64_t last_image_list_change_number;
+
+    AERON_GET_VOLATILE(last_image_list_change_number, subscription->last_image_list_change_number);
+
+    return last_image_list_change_number;
+}
+
+inline void aeron_subscription_propose_last_image_change_number(
+    aeron_subscription_t *subscription, int64_t change_number)
+{
+    if (change_number > subscription->last_image_list_change_number)
+    {
+        AERON_PUT_ORDERED(subscription->last_image_list_change_number, change_number);
+    }
 }
 
 #endif //AERON_C_SUBSCRIPTION_H

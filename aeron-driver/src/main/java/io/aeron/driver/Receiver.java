@@ -22,9 +22,7 @@ import io.aeron.driver.media.UdpChannel;
 import org.agrona.CloseHelper;
 import org.agrona.collections.ArrayListUtil;
 import org.agrona.collections.ArrayUtil;
-import org.agrona.concurrent.Agent;
-import org.agrona.concurrent.NanoClock;
-import org.agrona.concurrent.OneToOneConcurrentArrayQueue;
+import org.agrona.concurrent.*;
 import org.agrona.concurrent.status.AtomicCounter;
 
 import java.net.InetSocketAddress;
@@ -40,12 +38,13 @@ import static io.aeron.driver.status.SystemCounterDescriptor.RESOLUTION_CHANGES;
  */
 public class Receiver implements Agent
 {
+    private static final PublicationImage[] EMPTY_IMAGES = new PublicationImage[0];
     private final DataTransportPoller dataTransportPoller;
     private final OneToOneConcurrentArrayQueue<Runnable> commandQueue;
     private final AtomicCounter totalBytesReceived;
     private final AtomicCounter resolutionChanges;
-    private final NanoClock nanoClock;
-    private final ArrayList<PublicationImage> publicationImages = new ArrayList<>();
+    private final CachedNanoClock cachedNanoClock;
+    private PublicationImage[] publicationImages = EMPTY_IMAGES;
     private final ArrayList<PendingSetupMessageFromSource> pendingSetupMessages = new ArrayList<>();
     private final DriverConductorProxy conductorProxy;
     private final long reResolutionCheckIntervalNs;
@@ -57,10 +56,10 @@ public class Receiver implements Agent
         commandQueue = ctx.receiverCommandQueue();
         totalBytesReceived = ctx.systemCounters().get(BYTES_RECEIVED);
         resolutionChanges = ctx.systemCounters().get(RESOLUTION_CHANGES);
-        nanoClock = ctx.cachedNanoClock();
+        cachedNanoClock = ctx.cachedNanoClock();
         conductorProxy = ctx.driverConductorProxy();
         reResolutionCheckIntervalNs = ctx.reResolutionCheckIntervalNs();
-        reResolutionDeadlineNs = nanoClock.nanoTime() + reResolutionCheckIntervalNs;
+        reResolutionDeadlineNs = cachedNanoClock.nanoTime() + reResolutionCheckIntervalNs;
     }
 
     public void onClose()
@@ -78,12 +77,12 @@ public class Receiver implements Agent
         int workCount = commandQueue.drain(Runnable::run, Configuration.COMMAND_DRAIN_LIMIT);
         final int bytesReceived = dataTransportPoller.pollTransports();
         totalBytesReceived.getAndAddOrdered(bytesReceived);
-        final long nowNs = nanoClock.nanoTime();
+        final long nowNs = cachedNanoClock.nanoTime();
 
-        final ArrayList<PublicationImage> publicationImages = this.publicationImages;
-        for (int lastIndex = publicationImages.size() - 1, i = lastIndex; i >= 0; i--)
+        final PublicationImage[] publicationImages = this.publicationImages;
+        for (int lastIndex = publicationImages.length - 1, i = lastIndex; i >= 0; i--)
         {
-            final PublicationImage image = publicationImages.get(i);
+            final PublicationImage image = publicationImages[i];
             if (image.hasActivityAndNotEndOfStream(nowNs))
             {
                 workCount += image.sendPendingStatusMessage();
@@ -92,8 +91,9 @@ public class Receiver implements Agent
             }
             else
             {
-                ArrayListUtil.fastUnorderedRemove(publicationImages, i, lastIndex--);
                 image.removeFromDispatcher();
+                this.publicationImages = 1 == this.publicationImages.length ?
+                    EMPTY_IMAGES : ArrayUtil.remove(this.publicationImages, i);
             }
         }
 
@@ -102,7 +102,6 @@ public class Receiver implements Agent
         if (reResolutionCheckIntervalNs > 0 && (reResolutionDeadlineNs - nowNs) < 0)
         {
             dataTransportPoller.checkForReResolutions(nowNs, conductorProxy);
-
             reResolutionDeadlineNs = nowNs + reResolutionCheckIntervalNs;
         }
 
@@ -120,7 +119,7 @@ public class Receiver implements Agent
         final PendingSetupMessageFromSource cmd = new PendingSetupMessageFromSource(
             sessionId, streamId, transportIndex, channelEndpoint, periodic, controlAddress);
 
-        cmd.timeOfStatusMessageNs(nanoClock.nanoTime());
+        cmd.timeOfStatusMessageNs(cachedNanoClock.nanoTime());
         pendingSetupMessages.add(cmd);
     }
 
@@ -148,7 +147,7 @@ public class Receiver implements Agent
 
     public void onNewPublicationImage(final ReceiveChannelEndpoint channelEndpoint, final PublicationImage image)
     {
-        publicationImages.add(image);
+        publicationImages = ArrayUtil.add(publicationImages, image);
         channelEndpoint.addPublicationImage(image);
     }
 
@@ -245,10 +244,9 @@ public class Receiver implements Agent
     public void onResolutionChange(
         final ReceiveChannelEndpoint channelEndpoint, final UdpChannel channel, final InetSocketAddress newAddress)
     {
-        final int transportIndex = channelEndpoint.hasDestinationControl() ?
-            channelEndpoint.destination(channel) : 0;
+        final int transportIndex = channelEndpoint.hasDestinationControl() ? channelEndpoint.destination(channel) : 0;
 
-        for (final PendingSetupMessageFromSource pending : this.pendingSetupMessages)
+        for (final PendingSetupMessageFromSource pending : pendingSetupMessages)
         {
             if (pending.channelEndpoint() == channelEndpoint &&
                 pending.isPeriodic() &&

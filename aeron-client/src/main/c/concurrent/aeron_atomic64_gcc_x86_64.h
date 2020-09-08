@@ -18,6 +18,7 @@
 #define AERON_ATOMIC64_GCC_X86_64_H
 
 #include <stdbool.h>
+#include <stdint.h>
 
 #define AERON_GET_VOLATILE(dst, src) \
 do \
@@ -40,7 +41,7 @@ do \
 { \
     __asm__ volatile("" ::: "memory"); \
     dst = src; \
-    __asm__ volatile("" ::: "memory"); \
+    __asm__ volatile("lock; addl $0, 0(%%rsp)" ::: "cc", "memory"); \
 } \
 while (false)
 
@@ -64,7 +65,7 @@ do \
 } \
 while (false)
 
-inline bool aeron_cmpxchg64(volatile int64_t* destination, int64_t expected, int64_t desired)
+inline bool aeron_cmpxchg64(volatile int64_t *destination, int64_t expected, int64_t desired)
 {
     int64_t original;
     __asm__ volatile(
@@ -75,7 +76,7 @@ inline bool aeron_cmpxchg64(volatile int64_t* destination, int64_t expected, int
     return original == expected;
 }
 
-inline bool aeron_cmpxchgu64(volatile uint64_t* destination, uint64_t expected, uint64_t desired)
+inline bool aeron_cmpxchgu64(volatile uint64_t *destination, uint64_t expected, uint64_t desired)
 {
     uint64_t original;
     __asm__ volatile(
@@ -86,7 +87,7 @@ inline bool aeron_cmpxchgu64(volatile uint64_t* destination, uint64_t expected, 
     return original == expected;
 }
 
-inline bool aeron_cmpxchg32(volatile int32_t* destination, int32_t expected, int32_t desired)
+inline bool aeron_cmpxchg32(volatile int32_t *destination, int32_t expected, int32_t desired)
 {
     int32_t original;
     __asm__ volatile(
@@ -97,31 +98,18 @@ inline bool aeron_cmpxchg32(volatile int32_t* destination, int32_t expected, int
     return original == expected;
 }
 
-/* loadFence */
 inline void aeron_acquire()
 {
-    volatile int64_t* dummy;
+    volatile int64_t *dummy;
     __asm__ volatile("movq 0(%%rsp), %0" : "=r" (dummy) : : "memory");
 }
 
-/* storeFence */
 inline void aeron_release()
 {
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wunused-variable"
     volatile int64_t dummy = 0;
+    (void)dummy;
 }
-#pragma GCC diagnostic pop
 
-#define AERON_CMPXCHG32(original, dst, expected, desired) \
-do \
-{ \
-    asm volatile( \
-        "lock; cmpxchgl %2, %1" \
-        : "=a"(original), "+m"(dst) \
-        : "q"(desired), "0"(expected)); \
-} \
-while (false)
 
 /*-------------------------------------
  *  Alignment

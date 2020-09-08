@@ -32,9 +32,9 @@ import static org.agrona.concurrent.status.CountersReader.*;
 public class HeartbeatTimestamp
 {
     /**
-     * Type id of an Aeron client heartbeat.
+     * Type id of a heartbeat counter.
      */
-    public static final int CLIENT_HEARTBEAT_TYPE_ID = 11;
+    public static final int HEARTBEAT_TYPE_ID = 11;
 
     /**
      * Offset in the key meta data for the registration id of the counter.
@@ -115,15 +115,18 @@ public class HeartbeatTimestamp
 
         for (int i = 0, size = countersReader.maxCounterId(); i < size; i++)
         {
-            if (countersReader.getCounterState(i) == RECORD_ALLOCATED)
+            final int counterState = countersReader.getCounterState(i);
+            if (counterState == RECORD_ALLOCATED)
             {
-                final int recordOffset = CountersReader.metaDataOffset(i);
-
-                if (buffer.getInt(recordOffset + TYPE_ID_OFFSET) == counterTypeId &&
-                    buffer.getLong(recordOffset + KEY_OFFSET + REGISTRATION_ID_OFFSET) == registrationId)
+                if (countersReader.getCounterTypeId(i) == counterTypeId &&
+                    buffer.getLong(metaDataOffset(i) + KEY_OFFSET + REGISTRATION_ID_OFFSET) == registrationId)
                 {
                     return i;
                 }
+            }
+            else if (RECORD_UNUSED == counterState)
+            {
+                break;
             }
         }
 
@@ -145,7 +148,7 @@ public class HeartbeatTimestamp
         final DirectBuffer buffer = countersReader.metaDataBuffer();
         final int recordOffset = CountersReader.metaDataOffset(counterId);
 
-        return buffer.getInt(recordOffset + TYPE_ID_OFFSET) == counterTypeId &&
+        return countersReader.getCounterTypeId(counterId) == counterTypeId &&
             buffer.getLong(recordOffset + KEY_OFFSET + REGISTRATION_ID_OFFSET) == registrationId &&
             countersReader.getCounterState(counterId) == RECORD_ALLOCATED;
     }

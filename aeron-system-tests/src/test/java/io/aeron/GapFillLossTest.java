@@ -53,7 +53,7 @@ public class GapFillLossTest
     private static final AtomicLong FINAL_POSITION = new AtomicLong(Long.MAX_VALUE);
 
     @RegisterExtension
-    MediaDriverTestWatcher watcher = new MediaDriverTestWatcher();
+    final MediaDriverTestWatcher watcher = new MediaDriverTestWatcher();
 
     @Test
     @Timeout(10)
@@ -93,8 +93,7 @@ public class GapFillLossTest
 
                 while ((position = publication.offer(srcBuffer)) < 0L)
                 {
-                    Thread.yield();
-                    Tests.checkInterruptStatus();
+                    Tests.yield();
                 }
             }
 
@@ -122,11 +121,7 @@ public class GapFillLossTest
 
         public void run()
         {
-            while (!subscription.isConnected())
-            {
-                Thread.yield();
-                Tests.checkInterruptStatus();
-            }
+            Tests.awaitConnected(subscription);
 
             final Image image = subscription.imageAtIndex(0);
 
@@ -135,12 +130,11 @@ public class GapFillLossTest
                 final int fragments = subscription.poll(this, FRAGMENT_COUNT_LIMIT);
                 if (0 == fragments)
                 {
-                    Thread.yield();
-                    Tests.checkInterruptStatus();
                     if (subscription.isClosed())
                     {
                         return;
                     }
+                    Tests.yield();
                 }
             }
         }

@@ -23,6 +23,8 @@ import io.aeron.archive.status.RecordingPos;
 import io.aeron.driver.MediaDriver;
 import io.aeron.driver.ThreadingMode;
 import io.aeron.logbuffer.LogBufferDescriptor;
+import io.aeron.test.MediaDriverTestWatcher;
+import io.aeron.test.TestMediaDriver;
 import io.aeron.test.Tests;
 import org.agrona.CloseHelper;
 import org.agrona.SystemUtil;
@@ -31,6 +33,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.extension.RegisterExtension;
 
 import java.io.File;
 
@@ -52,14 +55,18 @@ public class ManageRecordingHistoryTest
         .mtu(MTU_LENGTH)
         .termLength(Common.TERM_LENGTH);
 
-    private ArchivingMediaDriver archivingMediaDriver;
+    private TestMediaDriver archivingMediaDriver;
+    private Archive archive;
     private Aeron aeron;
     private AeronArchive aeronArchive;
+
+    @RegisterExtension
+    public final MediaDriverTestWatcher testWatcher = new MediaDriverTestWatcher();
 
     @BeforeEach
     public void before()
     {
-        archivingMediaDriver = ArchivingMediaDriver.launch(
+        archivingMediaDriver = TestMediaDriver.launch(
             new MediaDriver.Context()
                 .publicationTermBufferLength(Common.TERM_LENGTH)
                 .termBufferSparseFile(true)
@@ -67,6 +74,9 @@ public class ManageRecordingHistoryTest
                 .errorHandler(Tests::onError)
                 .spiesSimulateConnection(true)
                 .dirDeleteOnStart(true),
+            testWatcher);
+
+        archive = Archive.launch(
             new Archive.Context()
                 .maxCatalogEntries(Common.MAX_CATALOG_ENTRIES)
                 .segmentFileLength(SEGMENT_LENGTH)
@@ -85,10 +95,10 @@ public class ManageRecordingHistoryTest
     @AfterEach
     public void after()
     {
-        CloseHelper.closeAll(aeronArchive, aeron, archivingMediaDriver);
+        CloseHelper.closeAll(aeronArchive, aeron, archive, archivingMediaDriver);
 
-        archivingMediaDriver.archive().context().deleteDirectory();
-        archivingMediaDriver.mediaDriver().context().deleteDirectory();
+        archive.context().deleteDirectory();
+        archivingMediaDriver.context().deleteDirectory();
     }
 
     @Test

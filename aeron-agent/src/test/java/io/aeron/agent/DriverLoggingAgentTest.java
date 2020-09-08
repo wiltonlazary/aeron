@@ -139,7 +139,7 @@ public class DriverLoggingAgentTest
             .timerIntervalNs(TimeUnit.MILLISECONDS.toNanos(1))
             .aeronDirectoryName(aeronDirectoryName);
 
-        try (MediaDriver ignore = MediaDriver.launchEmbedded(driverCtx))
+        try (MediaDriver ignore = MediaDriver.launch(driverCtx))
         {
             final Aeron.Context clientCtx = new Aeron.Context()
                 .aeronDirectoryName(driverCtx.aeronDirectoryName());
@@ -151,8 +151,7 @@ public class DriverLoggingAgentTest
                 final UnsafeBuffer offerBuffer = new UnsafeBuffer(new byte[32]);
                 while (publication.offer(offerBuffer) < 0)
                 {
-                    Thread.yield();
-                    Tests.checkInterruptStatus();
+                    Tests.yield();
                 }
 
                 final MutableInteger counter = new MutableInteger();
@@ -160,8 +159,7 @@ public class DriverLoggingAgentTest
 
                 while (0 == subscription.poll(handler, 1))
                 {
-                    Thread.yield();
-                    Tests.checkInterruptStatus();
+                    Tests.yield();
                 }
 
                 assertEquals(counter.get(), 1);

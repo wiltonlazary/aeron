@@ -19,8 +19,13 @@ import io.aeron.Counter;
 import io.aeron.cluster.client.AeronCluster;
 import io.aeron.exceptions.AeronException;
 import io.aeron.test.Tests;
-import org.agrona.*;
-import org.agrona.concurrent.*;
+import org.agrona.ErrorHandler;
+import org.agrona.ExpandableArrayBuffer;
+import org.agrona.LangUtil;
+import org.agrona.SystemUtil;
+import org.agrona.concurrent.AgentTerminationException;
+import org.agrona.concurrent.IdleStrategy;
+import org.agrona.concurrent.YieldingIdleStrategy;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -32,7 +37,7 @@ class ClusterTests
     static final String NO_OP_MSG = "No op!           ";
     static final String REGISTER_TIMER_MSG = "Register a timer!";
     static final String ECHO_IPC_INGRESS_MSG = "Echo as IPC ingress";
-    static final String POISON_MSG = "You should never get this message!";
+    static final String UNEXPECTED_MSG = "Should never get this message because it is not going to be committed!";
 
     private static final AtomicReference<Throwable> CLUSTER_ERROR = new AtomicReference<>();
 
@@ -112,16 +117,15 @@ class ClusterTests
         }
     }
 
-    public static void awaitElectionState(final Counter electionStateCounter, final Election.State state)
+    public static void awaitElectionState(final Counter electionStateCounter, final ElectionState state)
     {
         while (electionStateCounter.get() != state.code())
         {
-            Thread.yield();
-            Tests.checkInterruptStatus();
+            Tests.yield();
         }
     }
 
-    public static Thread startMessageThread(final TestCluster cluster, final long intervalNs)
+    public static Thread startMessageThread(final TestCluster cluster, final long backoffIntervalNs)
     {
         final Thread thread = new Thread(
             () ->
@@ -135,7 +139,7 @@ class ClusterTests
                 {
                     if (client.offer(msgBuffer, 0, HELLO_WORLD_MSG.length()) < 0)
                     {
-                        LockSupport.parkNanos(intervalNs);
+                        LockSupport.parkNanos(backoffIntervalNs);
                     }
 
                     idleStrategy.idle(client.pollEgress());
@@ -144,6 +148,7 @@ class ClusterTests
 
         thread.setDaemon(true);
         thread.setName("message-thread");
+        thread.start();
 
         return thread;
     }

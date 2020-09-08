@@ -17,11 +17,13 @@ package io.aeron;
 
 import io.aeron.driver.MediaDriver;
 import io.aeron.driver.ThreadingMode;
+import io.aeron.test.MediaDriverTestWatcher;
 import io.aeron.test.TestMediaDriver;
 import io.aeron.test.Tests;
 import org.agrona.CloseHelper;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.extension.RegisterExtension;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
@@ -44,11 +46,14 @@ public class ImageAvailabilityTest
 
     private static final int STREAM_ID = 1001;
 
+    @RegisterExtension
+    public final MediaDriverTestWatcher testWatcher = new MediaDriverTestWatcher();
+
     private final TestMediaDriver driver = TestMediaDriver.launch(new MediaDriver.Context()
         .errorHandler(Tests::onError)
         .dirDeleteOnStart(true)
         .timerIntervalNs(TimeUnit.MILLISECONDS.toNanos(20))
-        .threadingMode(ThreadingMode.SHARED));
+        .threadingMode(ThreadingMode.SHARED), testWatcher);
 
     private final Aeron aeron = Aeron.connect(new Aeron.Context()
         .useConductorAgentInvoker(true)
@@ -80,8 +85,7 @@ public class ImageAvailabilityTest
         {
             while (!subOne.isConnected() || !subTwo.isConnected() || !publication.isConnected())
             {
-                Thread.yield();
-                Tests.checkInterruptStatus();
+                Tests.yield();
                 aeron.conductorAgentInvoker().invoke();
             }
 
@@ -100,8 +104,7 @@ public class ImageAvailabilityTest
 
             while (subOne.isConnected() || subTwo.isConnected())
             {
-                Thread.yield();
-                Tests.checkInterruptStatus();
+                Tests.yield();
                 aeron.conductorAgentInvoker().invoke();
             }
 
@@ -137,8 +140,7 @@ public class ImageAvailabilityTest
         {
             while (!subOne.isConnected() || !subTwo.isConnected() || !publication.isConnected())
             {
-                Thread.yield();
-                Tests.checkInterruptStatus();
+                Tests.yield();
                 aeron.conductorAgentInvoker().invoke();
             }
 
@@ -157,8 +159,7 @@ public class ImageAvailabilityTest
 
             while (subOne.isConnected() || subTwo.isConnected())
             {
-                Thread.yield();
-                Tests.checkInterruptStatus();
+                Tests.yield();
                 aeron.conductorAgentInvoker().invoke();
             }
 

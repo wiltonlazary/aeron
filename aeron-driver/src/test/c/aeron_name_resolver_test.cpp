@@ -29,7 +29,7 @@ extern "C"
 }
 
 #define METADATA_LENGTH (16 * 1024)
-#define VALUES_LENGTH (METADATA_LENGTH / 2)
+#define VALUES_LENGTH (METADATA_LENGTH / 4)
 #define ERROR_LOG_LENGTH (8192)
 
 class NameResolverTest : public testing::Test
@@ -37,9 +37,9 @@ class NameResolverTest : public testing::Test
 public:
     NameResolverTest()
     {
-        m_a.context = NULL;
-        m_b.context = NULL;
-        m_c.context = NULL;
+        m_a.context = nullptr;
+        m_b.context = nullptr;
+        m_c.context = nullptr;
     }
 
 protected:
@@ -67,7 +67,7 @@ protected:
         close(&m_c);
     }
 
-    static void initResolver(
+    void initResolver(
         resolver_fields_t *resolver_fields,
         const char *resolver_supplier_name,
         const char *args,
@@ -90,7 +90,7 @@ protected:
             &resolver_fields->counters,
             &resolver_fields->counters_buffer[0], METADATA_LENGTH,
             &resolver_fields->counters_buffer[METADATA_LENGTH], VALUES_LENGTH,
-            aeron_epoch_clock, 1000);
+            &m_cached_clock, 1000);
         aeron_system_counters_init(&resolver_fields->system_counters, &resolver_fields->counters);
 
         aeron_distinct_error_log_init(
@@ -99,7 +99,7 @@ protected:
             ERROR_LOG_LENGTH,
             aeron_epoch_clock,
             [](void *clientd, uint8_t *resource){},
-            NULL);
+            nullptr);
 
         resolver_fields->context->counters_manager = &resolver_fields->counters;
         resolver_fields->context->system_counters = &resolver_fields->system_counters;
@@ -125,11 +125,11 @@ protected:
         size_t label_length,
         void *clientd)
     {
-        counters_clientd_t *counters_clientd = static_cast<NameResolverTest::counters_clientd_t *>(clientd);
+        auto *counters_clientd = static_cast<NameResolverTest::counters_clientd_t *>(clientd);
         if (counters_clientd->type_id == type_id)
         {
-            int64_t *counter_addr = aeron_counters_manager_addr((aeron_counters_manager_t *) counters_clientd->counters,
-                                                                id);
+            int64_t *counter_addr = aeron_counters_manager_addr(
+                (aeron_counters_manager_t *)counters_clientd->counters, id);
             AERON_GET_VOLATILE(counters_clientd->value, *counter_addr);
         }
     }
@@ -141,8 +141,8 @@ protected:
         clientd.type_id = type_id;
         clientd.value = -1;
 
-        aeron_counters_reader_foreach_metadata(counters->metadata, counters->metadata_length, foreachFilterByTypeId,
-                                               &clientd);
+        aeron_counters_reader_foreach_metadata(
+            counters->metadata, counters->metadata_length, foreachFilterByTypeId, &clientd);
 
         return clientd.value;
     }
@@ -159,8 +159,7 @@ protected:
 
     static int64_t readSystemCounter(const resolver_fields_t *resolver, aeron_system_counter_enum_t counter)
     {
-        return aeron_counter_get(
-            aeron_system_counter_addr(resolver->context->system_counters, counter));
+        return aeron_counter_get(aeron_system_counter_addr(resolver->context->system_counters, counter));
     }
 
     static int64_t shortSends(const resolver_fields_t *resolver)
@@ -170,7 +169,7 @@ protected:
 
     static void printCounters(std::ostream &output, const resolver_fields_t *resolver, const char *name)
     {
-        if (NULL != resolver->context)
+        if (nullptr != resolver->context)
         {
             output
                 << " " << name << "(" << shortSends(resolver) << "," << readNeighborCounter(resolver)
@@ -186,14 +185,15 @@ protected:
         return output;
     }
 
-    resolver_fields_t m_a;
-    resolver_fields_t m_b;
-    resolver_fields_t m_c;
+    resolver_fields_t m_a = {};
+    resolver_fields_t m_b = {};
+    resolver_fields_t m_c = {};
+    aeron_clock_cache_t m_cached_clock = {};
 
 private:
     static void close(resolver_fields_t *resolver_fields)
     {
-        if (NULL != resolver_fields->context)
+        if (nullptr != resolver_fields->context)
         {
             resolver_fields->resolver.close_func(&resolver_fields->resolver);
             aeron_system_counters_close(&resolver_fields->system_counters);
@@ -367,7 +367,7 @@ TEST_F(NameResolverTest, shouldHandleSettingNameOnHeader)
 {
     uint8_t buffer[1024];
     const char *hostname = "this.is.the.hostname";
-    aeron_resolution_header_t *resolution_header = (aeron_resolution_header_t *)&buffer[0];
+    auto *resolution_header = (aeron_resolution_header_t *)&buffer[0];
     uint8_t flags = 0;
     struct sockaddr_storage address;
 
@@ -444,18 +444,16 @@ TEST_F(NameResolverTest, DISABLED_shouldHandleDissection) // Useful for checking
     initResolver(&m_a, AERON_NAME_RESOLVER_DRIVER, "", 0, "A", "[::1]:8050");
     const char *name = "ABCDEFGH";
 
-    aeron_driver_agent_frame_log_header_t *log_header =
-        reinterpret_cast<aeron_driver_agent_frame_log_header_t *>(&buffer[0]);
+    auto *log_header = reinterpret_cast<aeron_driver_agent_frame_log_header_t *>(&buffer[0]);
     log_header->sockaddr_len = sizeof(struct sockaddr_in6);
 
     size_t frame_offset = sizeof(aeron_driver_agent_frame_log_header_t) + log_header->sockaddr_len;
-    aeron_frame_header_t *frame = reinterpret_cast<aeron_frame_header_t *>(&buffer[frame_offset]);
+    auto *frame = reinterpret_cast<aeron_frame_header_t *>(&buffer[frame_offset]);
 
     size_t res_offset = sizeof(aeron_frame_header_t) + frame_offset;
     do
     {
-        aeron_resolution_header_ipv6_t *res =
-            reinterpret_cast<aeron_resolution_header_ipv6_t *>(&buffer[res_offset]);
+        auto *res = reinterpret_cast<aeron_resolution_header_ipv6_t *>(&buffer[res_offset]);
 
         res->resolution_header.res_type = AERON_RES_HEADER_TYPE_NAME_TO_IP6_MD;
         res->resolution_header.res_flags = AERON_RES_HEADER_SELF_FLAG;
@@ -475,5 +473,5 @@ TEST_F(NameResolverTest, DISABLED_shouldHandleDissection) // Useful for checking
 
     aeron_env_set(AERON_AGENT_MASK_ENV_VAR, "0xFFFF");
     aeron_driver_agent_context_init(m_a.context);
-    aeron_driver_agent_log_dissector(AERON_FRAME_IN, buffer, res_offset, NULL);
+    aeron_driver_agent_log_dissector(AERON_FRAME_IN, buffer, res_offset, nullptr);
 }

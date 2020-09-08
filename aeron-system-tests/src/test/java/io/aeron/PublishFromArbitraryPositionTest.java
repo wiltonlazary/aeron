@@ -20,6 +20,7 @@ import io.aeron.driver.ThreadingMode;
 import io.aeron.logbuffer.FragmentHandler;
 import io.aeron.logbuffer.FrameDescriptor;
 import io.aeron.protocol.DataHeaderFlyweight;
+import io.aeron.test.MediaDriverTestWatcher;
 import io.aeron.test.TestMediaDriver;
 import io.aeron.test.Tests;
 import org.agrona.BitUtil;
@@ -48,14 +49,18 @@ public class PublishFromArbitraryPositionTest
     private final UnsafeBuffer srcBuffer = new UnsafeBuffer(ByteBuffer.allocateDirect(MAX_MESSAGE_LENGTH));
     private final long seed = System.nanoTime();
 
+    @RegisterExtension
+    public final MediaDriverTestWatcher testWatcher = new MediaDriverTestWatcher();
+
     private final TestMediaDriver driver = TestMediaDriver.launch(new MediaDriver.Context()
         .errorHandler(Tests::onError)
-        .threadingMode(ThreadingMode.SHARED));
+        .threadingMode(ThreadingMode.SHARED),
+        testWatcher);
 
     private final Aeron aeron = Aeron.connect();
 
     @RegisterExtension
-    public final TestWatcher testWatcher = new TestWatcher()
+    public final TestWatcher randomSeedWatcher = new TestWatcher()
     {
         public void testFailed(final ExtensionContext context, final Throwable cause)
         {
@@ -97,11 +102,7 @@ public class PublishFromArbitraryPositionTest
         try (Subscription subscription = aeron.addSubscription(channelUri, STREAM_ID);
             ExclusivePublication publication = aeron.addExclusivePublication(channelUri, STREAM_ID))
         {
-            while (!publication.isConnected())
-            {
-                Thread.yield();
-                Tests.checkInterruptStatus();
-            }
+            Tests.awaitConnected(publication);
 
             final Thread t = new Thread(
                 () ->
@@ -141,8 +142,7 @@ public class PublishFromArbitraryPositionTest
     {
         while (publication.offer(buffer, 0, 1 + rnd.nextInt(MAX_MESSAGE_LENGTH - 1)) < 0L)
         {
-            Thread.yield();
-            Tests.checkInterruptStatus();
+            Tests.yield();
         }
     }
 }

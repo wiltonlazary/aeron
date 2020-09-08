@@ -18,17 +18,15 @@
 #define AERON_SUBSCRIPTION_H
 
 #include <cstdint>
-#include <iostream>
-#include <atomic>
 #include <memory>
 #include <iterator>
-#include "concurrent/logbuffer/TermReader.h"
-#include "concurrent/status/StatusIndicatorReader.h"
 #include "concurrent/AtomicArrayUpdater.h"
+#include "concurrent/status/StatusIndicatorReader.h"
 #include "Image.h"
 #include "util/Export.h"
 
-namespace aeron {
+namespace aeron
+{
 
 using namespace aeron::concurrent::logbuffer;
 
@@ -54,11 +52,12 @@ class CLIENT_EXPORT Subscription
 public:
     /// @cond HIDDEN_SYMBOLS
     Subscription(
-        ClientConductor& conductor,
+        ClientConductor &conductor,
         std::int64_t registrationId,
-        const std::string& channel,
+        const std::string &channel,
         std::int32_t streamId,
         std::int32_t channelStatusId);
+
     /// @endcond
     ~Subscription();
 
@@ -67,7 +66,7 @@ public:
      *
      * @return Media address for delivery to the channel.
      */
-    inline const std::string& channel() const
+    inline const std::string &channel() const
     {
         return m_channel;
     }
@@ -103,20 +102,61 @@ public:
     }
 
     /**
+     * Get the status for the channel of this {@link Subscription}
+     *
+     * @return status code for this channel
+     */
+    std::int64_t channelStatus() const;
+
+    /**
+     * Fetches the local socket addresses for this subscription. If the channel is not
+     * {@link aeron::concurrent::status::ChannelEndpointStatus::CHANNEL_ENDPOINT_ACTIVE}, then this will return an
+     * empty list.
+     *
+     * The format is as follows:
+     * <br>
+     * <br>
+     * IPv4: <code>ip address:port</code>
+     * <br>
+     * IPv6: <code>[ip6 address]:port</code>
+     * <br>
+     * <br>
+     * This is to match the formatting used in the Aeron URI
+     *
+     * @return local socket address for this subscription.
+     * @see #channelStatus()
+     */
+    std::vector<std::string> localSocketAddresses() const;
+
+    /**
+     * Resolve channel endpoint and replace it with the port from the ephemeral range when 0 was provided. If there are
+     * no addresses, or if there is more than one, returned from {@link #localSocketAddresses()} then the original
+     * {@link #channel()} is returned.
+     * <p>
+     * If the channel is not {@link ChannelEndpointStatus#CHANNEL_ENDPOINT_ACTIVE}, then an empty string will be
+     * returned.
+     *
+     * @return channel URI string with an endpoint being resolved to the allocated port.
+     * @see #channelStatus()
+     * @see #localSocketAddresses()
+     */
+    std::string tryResolveChannelEndpointPort() const;
+
+    /**
      * Add a destination manually to a multi-destination Subscription.
      *
      * @param endpointChannel for the destination to add.
-     * @return correlation id for the add command
+     * @return correlation id for the add command.
      */
-    std::int64_t addDestination(const std::string& endpointChannel);
+    std::int64_t addDestination(const std::string &endpointChannel);
 
     /**
      * Remove a previously added destination from a multi-destination Subscription.
      *
      * @param endpointChannel for the destination to remove.
-     * @return correlation id for the remove command
+     * @return correlation id for the remove command.
      */
-    std::int64_t removeDestination(const std::string& endpointChannel);
+    std::int64_t removeDestination(const std::string &endpointChannel);
 
     /**
      * Retrieve the status of the associated add or remove destination operation with the given correlationId.
@@ -134,7 +174,7 @@ public:
      * @see Subscription::removeDestination
      *
      * @param correlationId of the add/remove command returned by Subscription::addDestination
-     * or Subscription::removeDestination
+     * or Subscription::removeDestination.
      * @return true for added or false if not.
      */
     bool findDestinationResponse(std::int64_t correlationId);
@@ -147,12 +187,12 @@ public:
      *
      * @param fragmentHandler callback for handling each message fragment as it is read.
      * @param fragmentLimit   number of message fragments to limit for the poll across multiple Image s.
-     * @return the number of fragments received
+     * @return the number of fragments received.
      *
      * @see fragment_handler_t
      */
-    template <typename F>
-    inline int poll(F&& fragmentHandler, int fragmentLimit)
+    template<typename F>
+    inline int poll(F &&fragmentHandler, int fragmentLimit)
     {
         auto imageArrayPair = m_imageArray.load();
         auto imageArray = imageArrayPair.first;
@@ -190,11 +230,11 @@ public:
      *
      * @param fragmentHandler callback for handling each message fragment as it is read.
      * @param fragmentLimit   number of message fragments to limit for the poll operation across multiple Image s.
-     * @return the number of fragments received
+     * @return the number of fragments received.
      * @see controlled_poll_fragment_handler_t
      */
-    template <typename F>
-    inline int controlledPoll(F&& fragmentHandler, int fragmentLimit)
+    template<typename F>
+    inline int controlledPoll(F &&fragmentHandler, int fragmentLimit)
     {
         auto imageArrayPair = m_imageArray.load();
         auto imageArray = imageArrayPair.first;
@@ -227,8 +267,8 @@ public:
      * @param blockLengthLimit for each individual block.
      * @return the number of bytes consumed.
      */
-    template <typename F>
-    inline long blockPoll(F&& blockHandler, int blockLengthLimit)
+    template<typename F>
+    inline long blockPoll(F &&blockHandler, int blockLengthLimit)
     {
         auto imageArrayPair = m_imageArray.load();
         auto imageArray = imageArrayPair.first;
@@ -309,7 +349,7 @@ public:
      * This method returns a share_ptr to the underlying Image and must be released before the Image may be fully
      * reclaimed.
      *
-     * @param index in the array
+     * @param index in the array.
      * @return image at given index or exception if out of range.
      */
     inline std::shared_ptr<Image> imageByIndex(size_t index) const
@@ -323,11 +363,11 @@ public:
      * This is only valid until the image becomes unavailable. This is only provided for backwards compatibility and
      * usage should be replaced with Subscription::imageByIndex instead so that the Image is retained easier.
      *
-     * @param index in the array
+     * @param index in the array.
      * @return image at given index or exception if out of range.
      * @deprecated use Subscription::imageByIndex instead.
      */
-    inline Image& imageAtIndex(size_t index) const
+    inline Image &imageAtIndex(size_t index) const
     {
         return *m_imageArray.load().first[index];
     }
@@ -347,7 +387,7 @@ public:
         std::shared_ptr<std::vector<Image>> result(new std::vector<Image>());
 
         forEachImage(
-            [&](Image& image)
+            [&](Image &image)
             {
                 result->push_back(Image(image));
             });
@@ -360,7 +400,7 @@ public:
      *
      * THis method will create a new std::vector<std::shared_ptr<Image>> populated with the underlying {@link Image}s.
      *
-     * @return a std::vector of active std::shared_ptr of {@link Image}s that match this subscription
+     * @return a std::vector of active std::shared_ptr of {@link Image}s that match this subscription.
      */
     inline std::shared_ptr<std::vector<std::shared_ptr<Image>>> copyOfImageList() const
     {
@@ -382,10 +422,10 @@ public:
     /**
      * Iterate over Image list and call passed in function.
      *
-     * @return length of Image list
+     * @return length of Image list.
      */
-    template <typename F>
-    inline int forEachImage(F&& func) const
+    template<typename F>
+    inline int forEachImage(F &&func) const
     {
         auto imageArrayPair = m_imageArray.load();
         auto imageArray = imageArrayPair.first;
@@ -436,16 +476,17 @@ public:
 
     std::pair<Image::array_t, std::size_t> removeImage(std::int64_t correlationId)
     {
-        auto result = m_imageArray.removeElement([&](const std::shared_ptr<Image>& image)
-        {
-            if (image->correlationId() == correlationId)
+        auto result = m_imageArray.removeElement(
+            [&](const std::shared_ptr<Image> &image)
             {
-                image->close();
-                return true;
-            }
+                if (image->correlationId() == correlationId)
+                {
+                    image->close();
+                    return true;
+                }
 
-            return false;
-        });
+                return false;
+            });
 
         return result;
     }
@@ -461,29 +502,22 @@ public:
         }
         else
         {
-            return {nullptr, 0};
+            return { nullptr, 0 };
         }
     }
     /// @endcond
 
-    /**
-     * Get the status for the channel of this {@link Subscription}
-     *
-     * @return status code for this channel
-     */
-    std::int64_t channelStatus() const;
-
 private:
-    ClientConductor& m_conductor;
+    ClientConductor &m_conductor;
     const std::string m_channel;
     std::int32_t m_channelStatusId;
+    std::int32_t m_streamId;
+    std::int64_t m_registrationId;
     char m_paddingBefore[util::BitUtil::CACHE_LINE_LENGTH]{};
     std::size_t m_roundRobinIndex = 0;
     AtomicArrayUpdater<std::shared_ptr<Image>> m_imageArray;
     std::atomic<bool> m_isClosed;
     char m_paddingAfter[util::BitUtil::CACHE_LINE_LENGTH]{};
-    std::int64_t m_registrationId;
-    std::int32_t m_streamId;
 };
 
 }

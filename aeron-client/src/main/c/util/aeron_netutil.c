@@ -26,23 +26,27 @@
 #include "util/aeron_error.h"
 #include "util/aeron_parse_util.h"
 #include "aeron_socket.h"
-#include "aeron_windows.h"
 
 #if defined(AERON_COMPILER_GCC)
 
-#elif defined(AERON_COMPILER_MSVC) && defined(AERON_CPU_X64)
+#elif defined(AERON_COMPILER_MSVC)
 #include <intrin.h>
 #define __builtin_bswap32 _byteswap_ulong
 #define __builtin_bswap64 _byteswap_uint64
 #define __builtin_popcount __popcnt
+
+#if defined(AERON_CPU_X64)
 #define __builtin_popcountll __popcnt64
+#else
+__inline DWORD64 __builtin_popcountll(DWORD64 operand)
+{
+    return __popcnt((DWORD)(operand >> 32)) + __popcnt((DWORD)(operand & UINT32_MAX));
+}
+#endif
+
 #else
 #error Unsupported platform!
 #endif
-
-static aeron_uri_hostname_resolver_func_t aeron_uri_hostname_resolver_func = NULL;
-
-static void *aeron_uri_hostname_resolver_clientd = NULL;
 
 int aeron_ip_addr_resolver(const char *host, struct sockaddr_storage *sockaddr, int family_hint, int protocol)
 {
@@ -59,16 +63,8 @@ int aeron_ip_addr_resolver(const char *host, struct sockaddr_storage *sockaddr, 
     int error, result = -1;
     if ((error = getaddrinfo(host, NULL, &hints, &info)) != 0)
     {
-        if (NULL == aeron_uri_hostname_resolver_func)
-        {
-            aeron_set_err(EINVAL, "Unable to resolve host=(%s): (%d) %s", host, error, gai_strerror(error));
-            return -1;
-        }
-        else if (aeron_uri_hostname_resolver_func(aeron_uri_hostname_resolver_clientd, host, &hints, &info) != 0)
-        {
-            aeron_set_err(EINVAL, "Unable to resolve host=(%s): %s", host, aeron_errmsg());
-            return -1;
-        }
+        aeron_set_err(EINVAL, "Unable to resolve host=(%s): (%d) %s", host, error, gai_strerror(error));
+        return -1;
     }
 
     if (info->ai_family == AF_INET)
@@ -357,7 +353,7 @@ void aeron_set_ipv4_wildcard_host_and_port(struct sockaddr_storage *sockaddr)
 }
 
 #if defined(AERON_COMPILER_GCC)
-union _aeron_128b_as_64b
+union aeron_128b_as_64b
 {
     __uint128_t value;
     uint64_t q[2];
@@ -365,7 +361,7 @@ union _aeron_128b_as_64b
 
 __uint128_t aeron_ipv6_netmask_from_prefixlen(size_t prefixlen)
 {
-    union _aeron_128b_as_64b netmask;
+    union aeron_128b_as_64b netmask;
 
     if (0 == prefixlen)
     {
@@ -397,7 +393,7 @@ bool aeron_ipv6_does_prefix_match(struct in6_addr *in6_addr1, struct in6_addr *i
     return (addr1 & netmask) == (addr2 & netmask);
 }
 #else
-union _aeron_128b_as_64b
+union aeron_128b_as_64b
 {
     uint64_t q[2];
 };
@@ -405,7 +401,7 @@ union _aeron_128b_as_64b
 
 size_t aeron_ipv6_netmask_to_prefixlen(struct in6_addr *netmask)
 {
-    union _aeron_128b_as_64b value;
+    union aeron_128b_as_64b value;
 
     memcpy(&value, netmask, sizeof(value));
 
@@ -638,29 +634,35 @@ bool aeron_is_wildcard_port(struct sockaddr_storage *addr)
 
 int aeron_format_source_identity(char *buffer, size_t length, struct sockaddr_storage *addr)
 {
-    char addr_str[AERON_MAX_PATH] = "";
-    unsigned short port = 0;
+    char addr_str[INET6_ADDRSTRLEN] = "";
 
+    if (length < AERON_NETUTIL_FORMATTED_MAX_LENGTH)
+    {
+        return -ENOSPC;
+    }
+
+    int total = 0;
     if (AF_INET6 == addr->ss_family)
     {
         struct sockaddr_in6 *in6 = (struct sockaddr_in6 *)addr;
 
         inet_ntop(addr->ss_family, &in6->sin6_addr, addr_str, sizeof(addr_str));
-        port = ntohs(in6->sin6_port);
+        unsigned short port = ntohs(in6->sin6_port);
+        total = snprintf(buffer, length, "[%s]:%d", addr_str, port);
     }
     else if (AF_INET == addr->ss_family)
     {
         struct sockaddr_in *in4 = (struct sockaddr_in *)addr;
 
         inet_ntop(addr->ss_family, &in4->sin_addr, addr_str, sizeof(addr_str));
-        port = ntohs(in4->sin_port);
+        unsigned short port = ntohs(in4->sin_port);
+        total = snprintf(buffer, length, "%s:%d", addr_str, port);
     }
 
-    int total = snprintf(buffer, length, "%s:%d", addr_str, port);
     if (total < 0)
     {
         return 0;
     }
 
-    return total > AERON_MAX_PATH - 1 ? AERON_MAX_PATH - 1 : total;
+    return total;
 }

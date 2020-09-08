@@ -15,13 +15,12 @@
  */
 
 #include <gtest/gtest.h>
-#include <media/aeron_udp_channel_transport.h>
 
 extern "C"
 {
-#include <media/aeron_udp_channel_transport_loss.h>
-#include <uri/aeron_uri.h>
-#include <protocol/aeron_udp_protocol.h>
+#include "media/aeron_udp_channel_transport.h"
+#include "media/aeron_udp_channel_transport_loss.h"
+#include "protocol/aeron_udp_protocol.h"
 
 #if !defined(HAVE_STRUCT_MMSGHDR)
 struct mmsghdr
@@ -31,6 +30,8 @@ struct mmsghdr
 };
 #endif
 }
+
+#define TEMP_URL_LEN (128)
 
 class UdpChannelTransportLossTest : public testing::Test
 {
@@ -43,13 +44,15 @@ typedef struct delegate_recv_state_stct
     int messages_received;
     int bytes_received;
 }
-delegate_recv_state_t;
+    delegate_recv_state_t;
 
 void aeron_udp_channel_interceptor_loss_incoming_delegate(
     void *interceptor_state,
     aeron_udp_channel_incoming_interceptor_t *delegate,
+    aeron_udp_channel_transport_t *transport,
     void *receiver_clientd,
     void *endpoint_clientd,
+    void *destination_clientd,
     uint8_t *buffer,
     size_t length,
     struct sockaddr_storage *addr)
@@ -85,9 +88,9 @@ TEST_F(UdpChannelTransportLossTest, shouldDiscardAllPacketsWithRateOfOne)
     aeron_udp_channel_interceptor_loss_configure(&params);
 
     aeron_udp_channel_interceptor_loss_incoming(
-        NULL, &delegate, NULL, NULL, data_0, 1024, NULL);
+        nullptr, &delegate, nullptr, nullptr, nullptr, nullptr, data_0, 1024, nullptr);
     aeron_udp_channel_interceptor_loss_incoming(
-        NULL, &delegate, NULL, NULL, data_1, 1024, NULL);
+        nullptr, &delegate, nullptr, nullptr, nullptr, nullptr, data_1, 1024, nullptr);
 
     EXPECT_EQ(delegate_recv_state.messages_received, 0);
 }
@@ -118,9 +121,9 @@ TEST_F(UdpChannelTransportLossTest, shouldNotDiscardAllPacketsWithRateOfOneWithD
     aeron_udp_channel_interceptor_loss_configure(&params);
 
     aeron_udp_channel_interceptor_loss_incoming(
-        NULL, &delegate, NULL, NULL, data_0, 1024, NULL);
+        nullptr, &delegate, nullptr, nullptr, nullptr, nullptr, data_0, 1024, nullptr);
     aeron_udp_channel_interceptor_loss_incoming(
-        NULL, &delegate, NULL, NULL, data_1, 1024, NULL);
+        nullptr, &delegate, nullptr, nullptr, nullptr, nullptr, data_1, 1024, nullptr);
 
     EXPECT_EQ(delegate_recv_state.messages_received, 2);
 }
@@ -150,9 +153,9 @@ TEST_F(UdpChannelTransportLossTest, shouldNotDiscardAllPacketsWithRateOfZero)
     aeron_udp_channel_interceptor_loss_configure(&params);
 
     aeron_udp_channel_interceptor_loss_incoming(
-        NULL, &delegate, NULL, NULL, data_0, 1024, NULL);
+        nullptr, &delegate, nullptr, nullptr, nullptr, nullptr, data_0, 1024, nullptr);
     aeron_udp_channel_interceptor_loss_incoming(
-        NULL, &delegate, NULL, NULL, data_1, 1024, NULL);
+        nullptr, &delegate, nullptr, nullptr, nullptr, nullptr, data_1, 1024, nullptr);
 
     EXPECT_EQ(delegate_recv_state.messages_received, 2);
 }
@@ -183,7 +186,7 @@ TEST_F(UdpChannelTransportLossTest, shouldDiscardRoughlyHalfTheMessages)
         frame_header->type = msg_type;
 
         aeron_udp_channel_interceptor_loss_incoming(
-            NULL, &delegate, NULL, NULL, data + (i * 1024), 1024, NULL);
+            nullptr, &delegate, nullptr, nullptr, nullptr, nullptr, data + (i * 1024), 1024, nullptr);
     }
 
     EXPECT_LT(delegate_recv_state.messages_received, static_cast<int>(vlen));
@@ -195,10 +198,10 @@ TEST_F(UdpChannelTransportLossTest, shouldDiscardRoughlyHalfTheMessages)
 
 TEST_F(UdpChannelTransportLossTest, shouldParseAllParams)
 {
+    char uri[TEMP_URL_LEN];
     aeron_udp_channel_interceptor_loss_params_t params;
-    memset(&params, 0, sizeof(params));
+    strncpy(uri, "rate=0.20|seed=10|recv-msg-mask=0xF", TEMP_URL_LEN);
 
-    char *uri = strdup("rate=0.20|seed=10|recv-msg-mask=0xF");
     int i = aeron_udp_channel_interceptor_loss_parse_params(uri, &params);
 
     EXPECT_EQ(i, 0);
@@ -209,10 +212,10 @@ TEST_F(UdpChannelTransportLossTest, shouldParseAllParams)
 
 TEST_F(UdpChannelTransportLossTest, shouldFailOnInvalidRate)
 {
+    char uri[TEMP_URL_LEN];
     aeron_udp_channel_interceptor_loss_params_t params;
-    memset(&params, 0, sizeof(params));
+    strncpy(uri, "rate=abc", TEMP_URL_LEN);
 
-    char *uri = strdup("rate=abc");
     int i = aeron_udp_channel_interceptor_loss_parse_params(uri, &params);
 
     EXPECT_EQ(i, -1);
@@ -220,10 +223,10 @@ TEST_F(UdpChannelTransportLossTest, shouldFailOnInvalidRate)
 
 TEST_F(UdpChannelTransportLossTest, shouldFailOnInvalidSeed)
 {
+    char uri[TEMP_URL_LEN];
     aeron_udp_channel_interceptor_loss_params_t params;
-    memset(&params, 0, sizeof(params));
+    strncpy(uri, "seed=abc", TEMP_URL_LEN);
 
-    char *uri = strdup("seed=abc");
     int i = aeron_udp_channel_interceptor_loss_parse_params(uri, &params);
 
     EXPECT_EQ(i, -1);
@@ -231,10 +234,10 @@ TEST_F(UdpChannelTransportLossTest, shouldFailOnInvalidSeed)
 
 TEST_F(UdpChannelTransportLossTest, shouldFailOnInvalidRecvMsgMask)
 {
+    char uri[TEMP_URL_LEN];
     aeron_udp_channel_interceptor_loss_params_t params;
-    memset(&params, 0, sizeof(params));
+    strncpy(uri, "recv-msg-mask=zzz", TEMP_URL_LEN);
 
-    char *uri = strdup("recv-msg-mask=zzz");
     int i = aeron_udp_channel_interceptor_loss_parse_params(uri, &params);
 
     EXPECT_EQ(i, -1);

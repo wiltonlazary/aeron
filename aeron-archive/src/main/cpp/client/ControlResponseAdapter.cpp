@@ -63,54 +63,45 @@ void ControlResponseAdapter::onFragment(
     }
 
     const std::uint16_t templateId = msgHeader.templateId();
-    switch (templateId)
+    if (ControlResponse::sbeTemplateId() == templateId)
     {
-        case ControlResponse::sbeTemplateId():
-        {
-            ControlResponse response(
-                buffer.sbeData() + offset + MessageHeader::encodedLength(),
-                static_cast<std::uint64_t>(length) - MessageHeader::encodedLength(),
-                msgHeader.blockLength(),
-                msgHeader.version());
+        ControlResponse response(
+            buffer.sbeData() + offset + MessageHeader::encodedLength(),
+            static_cast<std::uint64_t>(length) - MessageHeader::encodedLength(),
+            msgHeader.blockLength(),
+            msgHeader.version());
 
-            m_onResponse(
-                response.controlSessionId(),
-                response.correlationId(),
-                response.relevantId(),
-                response.code(),
-                response.errorMessage());
-            break;
-        }
+        m_onResponse(
+            response.controlSessionId(),
+            response.correlationId(),
+            response.relevantId(),
+            response.code(),
+            response.errorMessage());
+    }
+    else if (RecordingDescriptor::sbeTemplateId() == templateId)
+    {
+        RecordingDescriptor descriptor(
+            buffer.sbeData() + offset + MessageHeader::encodedLength(),
+            static_cast<std::uint64_t>(length) - MessageHeader::encodedLength(),
+            msgHeader.blockLength(),
+            msgHeader.version());
 
-        case RecordingDescriptor::sbeTemplateId():
-        {
-            RecordingDescriptor descriptor(
-                buffer.sbeData() + offset + MessageHeader::encodedLength(),
-                static_cast<std::uint64_t>(length) - MessageHeader::encodedLength(),
-                msgHeader.blockLength(),
-                msgHeader.version());
-
-            m_onRecordingDescriptor(
-                descriptor.controlSessionId(),
-                descriptor.correlationId(),
-                descriptor.recordingId(),
-                descriptor.startTimestamp(),
-                descriptor.stopTimestamp(),
-                descriptor.startPosition(),
-                descriptor.stopPosition(),
-                descriptor.initialTermId(),
-                descriptor.segmentFileLength(),
-                descriptor.termBufferLength(),
-                descriptor.mtuLength(),
-                descriptor.sessionId(),
-                descriptor.streamId(),
-                descriptor.strippedChannel(),
-                descriptor.originalChannel(),
-                descriptor.sourceIdentity());
-            break;
-        }
-
-        default:
-            break;
+        m_onRecordingDescriptor(
+            descriptor.controlSessionId(),
+            descriptor.correlationId(),
+            descriptor.recordingId(),
+            descriptor.startTimestamp(),
+            descriptor.stopTimestamp(),
+            descriptor.startPosition(),
+            descriptor.stopPosition(),
+            descriptor.initialTermId(),
+            descriptor.segmentFileLength(),
+            descriptor.termBufferLength(),
+            descriptor.mtuLength(),
+            descriptor.sessionId(),
+            descriptor.streamId(),
+            descriptor.strippedChannel(),
+            descriptor.originalChannel(),
+            descriptor.sourceIdentity());
     }
 }

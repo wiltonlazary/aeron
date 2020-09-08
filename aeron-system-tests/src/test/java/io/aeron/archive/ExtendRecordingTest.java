@@ -25,6 +25,8 @@ import io.aeron.driver.Configuration;
 import io.aeron.driver.MediaDriver;
 import io.aeron.driver.ThreadingMode;
 import io.aeron.logbuffer.FragmentHandler;
+import io.aeron.test.MediaDriverTestWatcher;
+import io.aeron.test.TestMediaDriver;
 import io.aeron.test.Tests;
 import org.agrona.CloseHelper;
 import org.agrona.ExpandableArrayBuffer;
@@ -35,6 +37,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.extension.RegisterExtension;
 import org.mockito.InOrder;
 import org.mockito.Mockito;
 
@@ -73,7 +76,8 @@ public class ExtendRecordingTest
         .endpoint("localhost:3333")
         .build();
 
-    private ArchivingMediaDriver archivingMediaDriver;
+    private TestMediaDriver archivingMediaDriver;
+    private Archive archive;
     private Aeron aeron;
     private File archiveDir;
     private AeronArchive aeronArchive;
@@ -83,18 +87,53 @@ public class ExtendRecordingTest
     private final ControlEventListener controlEventListener =
         (controlSessionId, correlationId, relevantId, code, errorMessage) -> errors.add(errorMessage);
 
+    @RegisterExtension
+    public final MediaDriverTestWatcher testWatcher = new MediaDriverTestWatcher();
+
     @BeforeEach
     public void before()
     {
-        launchAeronAndArchive();
+        final String aeronDirectoryName = CommonContext.generateRandomDirName();
+
+        if (null == archiveDir)
+        {
+            archiveDir = new File(SystemUtil.tmpDirName(), "archive");
+        }
+
+        archivingMediaDriver = TestMediaDriver.launch(
+            new MediaDriver.Context()
+                .aeronDirectoryName(aeronDirectoryName)
+                .termBufferSparseFile(true)
+                .threadingMode(ThreadingMode.SHARED)
+                .errorHandler(Tests::onError)
+                .spiesSimulateConnection(false)
+                .dirDeleteOnStart(true),
+            testWatcher);
+
+        archive = Archive.launch(
+            new Archive.Context()
+                .maxCatalogEntries(MAX_CATALOG_ENTRIES)
+                .aeronDirectoryName(aeronDirectoryName)
+                .archiveDir(archiveDir)
+                .fileSyncLevel(0)
+                .threadingMode(ArchiveThreadingMode.SHARED));
+
+        aeron = Aeron.connect(
+            new Aeron.Context()
+                .aeronDirectoryName(aeronDirectoryName));
+
+        aeronArchive = AeronArchive.connect(
+            new AeronArchive.Context()
+                .aeron(aeron));
     }
 
     @AfterEach
     public void after()
     {
-        CloseHelper.closeAll(aeronArchive, aeron, archivingMediaDriver);
-        archivingMediaDriver.archive().context().deleteDirectory();
-        archivingMediaDriver.mediaDriver().context().deleteDirectory();
+        CloseHelper.closeAll(aeronArchive, aeron, archive, archivingMediaDriver);
+
+        archive.context().deleteDirectory();
+        archivingMediaDriver.context().deleteDirectory();
     }
 
     @Test
@@ -152,8 +191,8 @@ public class ExtendRecordingTest
             .mtu(MTU_LENGTH)
             .build();
 
-        try (Publication publication = aeron.addExclusivePublication(publicationExtendChannel, RECORDED_STREAM_ID);
-            Subscription subscription = aeron.addSubscription(EXTEND_CHANNEL, RECORDED_STREAM_ID))
+        try (Subscription subscription = Tests.reAddSubscription(aeron, EXTEND_CHANNEL, RECORDED_STREAM_ID);
+            Publication publication = aeron.addExclusivePublication(publicationExtendChannel, RECORDED_STREAM_ID))
         {
             subscriptionIdTwo = aeronArchive
                 .extendRecording(recordingId, EXTEND_CHANNEL, RECORDED_STREAM_ID, LOCAL);
@@ -216,8 +255,7 @@ public class ExtendRecordingTest
 
             while (publication.offer(buffer, 0, length) <= 0)
             {
-                Thread.yield();
-                Tests.checkInterruptStatus();
+                Tests.yield();
             }
         }
     }
@@ -242,44 +280,10 @@ public class ExtendRecordingTest
         {
             if (0 == subscription.poll(fragmentHandler, FRAGMENT_LIMIT))
             {
-                Thread.yield();
-                Tests.checkInterruptStatus();
+                Tests.yield();
             }
         }
 
         assertEquals(startIndex + count, received.get());
-    }
-
-    private void launchAeronAndArchive()
-    {
-        final String aeronDirectoryName = CommonContext.generateRandomDirName();
-
-        if (null == archiveDir)
-        {
-            archiveDir = new File(SystemUtil.tmpDirName(), "archive");
-        }
-
-        archivingMediaDriver = ArchivingMediaDriver.launch(
-            new MediaDriver.Context()
-                .aeronDirectoryName(aeronDirectoryName)
-                .termBufferSparseFile(true)
-                .threadingMode(ThreadingMode.SHARED)
-                .errorHandler(Tests::onError)
-                .spiesSimulateConnection(false)
-                .dirDeleteOnStart(true),
-            new Archive.Context()
-                .maxCatalogEntries(MAX_CATALOG_ENTRIES)
-                .aeronDirectoryName(aeronDirectoryName)
-                .archiveDir(archiveDir)
-                .fileSyncLevel(0)
-                .threadingMode(ArchiveThreadingMode.SHARED));
-
-        aeron = Aeron.connect(
-            new Aeron.Context()
-                .aeronDirectoryName(aeronDirectoryName));
-
-        aeronArchive = AeronArchive.connect(
-            new AeronArchive.Context()
-                .aeron(aeron));
     }
 }

@@ -18,10 +18,10 @@
 #define AERON_FRAGMENT_ASSEMBLER_H
 
 #include <unordered_map>
-#include "Aeron.h"
 #include "BufferBuilder.h"
 
-namespace aeron {
+namespace aeron
+{
 
 static const std::size_t DEFAULT_FRAGMENT_ASSEMBLY_BUFFER_LENGTH = 4096;
 
@@ -49,7 +49,7 @@ public:
      * @param initialBufferLength to be used for each session.
      */
     explicit FragmentAssembler(
-        const fragment_handler_t& delegate, size_t initialBufferLength = DEFAULT_FRAGMENT_ASSEMBLY_BUFFER_LENGTH) :
+        const fragment_handler_t &delegate, size_t initialBufferLength = DEFAULT_FRAGMENT_ASSEMBLY_BUFFER_LENGTH) :
         m_initialBufferLength(initialBufferLength), m_delegate(delegate)
     {
     }
@@ -62,7 +62,7 @@ public:
      */
     fragment_handler_t handler()
     {
-        return [this](AtomicBuffer& buffer, util::index_t offset, util::index_t length, Header& header)
+        return [this](AtomicBuffer &buffer, util::index_t offset, util::index_t length, Header &header)
         {
             this->onFragment(buffer, offset, length, header);
         };
@@ -84,7 +84,7 @@ private:
     fragment_handler_t m_delegate;
     std::unordered_map<std::int32_t, BufferBuilder> m_builderBySessionIdMap;
 
-    inline void onFragment(AtomicBuffer& buffer, util::index_t offset, util::index_t length, Header& header)
+    inline void onFragment(AtomicBuffer &buffer, util::index_t offset, util::index_t length, Header &header)
     {
         const std::uint8_t flags = header.flags();
 
@@ -97,12 +97,10 @@ private:
             if ((flags & FrameDescriptor::BEGIN_FRAG) == FrameDescriptor::BEGIN_FRAG)
             {
                 auto result = m_builderBySessionIdMap.emplace(
-                    header.sessionId(), static_cast<std::uint32_t>(m_initialBufferLength));
-                BufferBuilder& builder = result.first->second;
+                    header.sessionId(), BufferBuilder(static_cast<std::uint32_t>(m_initialBufferLength)));
+                BufferBuilder &builder = result.first->second;
 
-                builder
-                    .reset()
-                    .append(buffer, offset, length, header);
+                builder.reset().append(buffer, offset, length, header);
             }
             else
             {
@@ -110,7 +108,7 @@ private:
 
                 if (result != m_builderBySessionIdMap.end())
                 {
-                    BufferBuilder& builder = result->second;
+                    BufferBuilder &builder = result->second;
 
                     if (builder.limit() != DataFrameHeader::LENGTH)
                     {

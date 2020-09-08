@@ -33,7 +33,8 @@ import static io.aeron.agent.EventConfiguration.MAX_EVENT_LENGTH;
 import static io.aeron.protocol.HeaderFlyweight.*;
 import static java.nio.ByteBuffer.allocate;
 import static java.nio.ByteOrder.LITTLE_ENDIAN;
-import static org.agrona.BitUtil.*;
+import static org.agrona.BitUtil.SIZE_OF_INT;
+import static org.agrona.BitUtil.SIZE_OF_LONG;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class DriverEventDissectorTest
@@ -94,8 +95,8 @@ class DriverEventDissectorTest
     void dissectAsFrameTypePad()
     {
         internalEncodeLogHeader(buffer, 0, 5, 5, () -> 1_000_000_000);
-        final int socketAddressOffset =
-            encodeSocketAddress(buffer, LOG_HEADER_LENGTH, new InetSocketAddress("localhost", 8080));
+        final int socketAddressOffset = encodeSocketAddress(
+            buffer, LOG_HEADER_LENGTH, new InetSocketAddress("localhost", 8080));
         final DataHeaderFlyweight flyweight = new DataHeaderFlyweight();
         flyweight.wrap(buffer, LOG_HEADER_LENGTH + socketAddressOffset, 300);
         flyweight.headerType(HDR_TYPE_PAD);
@@ -117,8 +118,8 @@ class DriverEventDissectorTest
     void dissectAsFrameTypeData()
     {
         internalEncodeLogHeader(buffer, 0, 5, 5, () -> 1_000_000_000);
-        final int socketAddressOffset =
-            encodeSocketAddress(buffer, LOG_HEADER_LENGTH, new InetSocketAddress("localhost", 8888));
+        final int socketAddressOffset = encodeSocketAddress(
+            buffer, LOG_HEADER_LENGTH, new InetSocketAddress("localhost", 8888));
         final DataHeaderFlyweight flyweight = new DataHeaderFlyweight();
         flyweight.wrap(buffer, LOG_HEADER_LENGTH + socketAddressOffset, 300);
         flyweight.headerType(HDR_TYPE_DATA);
@@ -140,8 +141,8 @@ class DriverEventDissectorTest
     void dissectAsFrameTypeStatusMessage()
     {
         internalEncodeLogHeader(buffer, 0, 5, 5, () -> 1_000_000_000);
-        final int socketAddressOffset =
-            encodeSocketAddress(buffer, LOG_HEADER_LENGTH, new InetSocketAddress("localhost", 8888));
+        final int socketAddressOffset = encodeSocketAddress(
+            buffer, LOG_HEADER_LENGTH, new InetSocketAddress("localhost", 8888));
         final StatusMessageFlyweight flyweight = new StatusMessageFlyweight();
         flyweight.wrap(buffer, LOG_HEADER_LENGTH + socketAddressOffset, 300);
         flyweight.headerType(HDR_TYPE_SM);
@@ -165,8 +166,8 @@ class DriverEventDissectorTest
     void dissectAsFrameTypeNak()
     {
         internalEncodeLogHeader(buffer, 0, 3, 3, () -> 3_000_000_000L);
-        final int socketAddressOffset =
-            encodeSocketAddress(buffer, LOG_HEADER_LENGTH, new InetSocketAddress("localhost", 8888));
+        final int socketAddressOffset = encodeSocketAddress(
+            buffer, LOG_HEADER_LENGTH, new InetSocketAddress("localhost", 8888));
         final NakFlyweight flyweight = new NakFlyweight();
         flyweight.wrap(buffer, LOG_HEADER_LENGTH + socketAddressOffset, 300);
         flyweight.headerType(HDR_TYPE_NAK);
@@ -189,8 +190,8 @@ class DriverEventDissectorTest
     void dissectAsFrameTypeSetup()
     {
         internalEncodeLogHeader(buffer, 0, 3, 3, () -> 3_000_000_000L);
-        final int socketAddressOffset =
-            encodeSocketAddress(buffer, LOG_HEADER_LENGTH, new InetSocketAddress("localhost", 8888));
+        final int socketAddressOffset = encodeSocketAddress(
+            buffer, LOG_HEADER_LENGTH, new InetSocketAddress("localhost", 8888));
         final SetupFlyweight flyweight = new SetupFlyweight();
         flyweight.wrap(buffer, LOG_HEADER_LENGTH + socketAddressOffset, 300);
         flyweight.headerType(HDR_TYPE_SETUP);
@@ -217,8 +218,8 @@ class DriverEventDissectorTest
     void dissectAsFrameTypeRtt()
     {
         internalEncodeLogHeader(buffer, 0, 3, 3, () -> 3_000_000_000L);
-        final int socketAddressOffset =
-            encodeSocketAddress(buffer, LOG_HEADER_LENGTH, new InetSocketAddress("localhost", 8888));
+        final int socketAddressOffset = encodeSocketAddress(
+            buffer, LOG_HEADER_LENGTH, new InetSocketAddress("localhost", 8888));
         final RttMeasurementFlyweight flyweight = new RttMeasurementFlyweight();
         flyweight.wrap(buffer, LOG_HEADER_LENGTH + socketAddressOffset, 300);
         flyweight.headerType(HDR_TYPE_RTTM);
@@ -241,8 +242,8 @@ class DriverEventDissectorTest
     void dissectAsFrameTypeUnknown()
     {
         internalEncodeLogHeader(buffer, 0, 3, 3, () -> 3_000_000_000L);
-        final int socketAddressOffset =
-            encodeSocketAddress(buffer, LOG_HEADER_LENGTH, new InetSocketAddress("localhost", 8888));
+        final int socketAddressOffset = encodeSocketAddress(
+            buffer, LOG_HEADER_LENGTH, new InetSocketAddress("localhost", 8888));
         final DataHeaderFlyweight flyweight = new DataHeaderFlyweight();
         flyweight.wrap(buffer, LOG_HEADER_LENGTH + socketAddressOffset, 300);
         flyweight.headerType(Integer.MAX_VALUE);
@@ -559,6 +560,23 @@ class DriverEventDissectorTest
         dissectAsCommand(eventCode, buffer, 0, builder);
 
         assertEquals("[1.0] " + CONTEXT + ": " + eventCode.name() + " [5/5]: COMMAND_UNKNOWN: " + eventCode,
+            builder.toString());
+    }
+
+    @Test
+    void dissectUntetheredSubscriptionStateChange()
+    {
+        final int offset = 12;
+        internalEncodeLogHeader(buffer, offset, 22, 88, () -> 1_500_000_000L);
+        buffer.putLong(offset + LOG_HEADER_LENGTH, 88, LITTLE_ENDIAN);
+        buffer.putInt(offset + LOG_HEADER_LENGTH + SIZE_OF_LONG, 123, LITTLE_ENDIAN);
+        buffer.putInt(offset + LOG_HEADER_LENGTH + SIZE_OF_LONG + SIZE_OF_INT, 777, LITTLE_ENDIAN);
+        buffer.putStringAscii(offset + LOG_HEADER_LENGTH + SIZE_OF_LONG + 2 * SIZE_OF_INT, "state changed");
+
+        DriverEventDissector.dissectUntetheredSubscriptionStateChange(buffer, offset, builder);
+
+        assertEquals("[1.5] " + CONTEXT + ": " + UNTETHERED_SUBSCRIPTION_STATE_CHANGE.name() +
+            " [22/88]: subscriptionId=88, streamId=123, sessionId=777, state changed",
             builder.toString());
     }
 

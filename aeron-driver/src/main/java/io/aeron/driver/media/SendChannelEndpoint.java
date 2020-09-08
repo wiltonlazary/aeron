@@ -20,12 +20,13 @@ import io.aeron.CommonContext;
 import io.aeron.ErrorCode;
 import io.aeron.driver.*;
 import io.aeron.exceptions.ControlProtocolException;
-import io.aeron.status.ChannelEndpointStatus;
 import io.aeron.protocol.NakFlyweight;
 import io.aeron.protocol.RttMeasurementFlyweight;
 import io.aeron.protocol.StatusMessageFlyweight;
-import org.agrona.collections.BiInt2ObjectMap;
-import org.agrona.concurrent.*;
+import io.aeron.status.LocalSocketAddressStatus;
+import io.aeron.status.ChannelEndpointStatus;
+import org.agrona.collections.Long2ObjectHashMap;
+import org.agrona.concurrent.UnsafeBuffer;
 import org.agrona.concurrent.status.AtomicCounter;
 
 import java.io.IOException;
@@ -34,9 +35,12 @@ import java.net.PortUnreachableException;
 import java.nio.ByteBuffer;
 import java.util.concurrent.TimeUnit;
 
-import static io.aeron.status.ChannelEndpointStatus.status;
-import static io.aeron.driver.status.SystemCounterDescriptor.*;
+import static io.aeron.driver.status.SystemCounterDescriptor.NAK_MESSAGES_RECEIVED;
+import static io.aeron.driver.status.SystemCounterDescriptor.STATUS_MESSAGES_RECEIVED;
 import static io.aeron.protocol.StatusMessageFlyweight.SEND_SETUP_FLAG;
+import static io.aeron.status.ChannelEndpointStatus.status;
+import static java.util.Objects.requireNonNull;
+import static org.agrona.collections.Hashing.compoundKey;
 
 /**
  * Aggregator of multiple {@link NetworkPublication}s onto a single transport channel for
@@ -44,16 +48,16 @@ import static io.aeron.protocol.StatusMessageFlyweight.SEND_SETUP_FLAG;
  */
 public class SendChannelEndpoint extends UdpChannelTransport
 {
-    private static final long DESTINATION_TIMEOUT = TimeUnit.SECONDS.toNanos(5);
+    static final long DESTINATION_TIMEOUT = TimeUnit.SECONDS.toNanos(5);
 
-    private long timeOfLastSmNs;
     private int refCount = 0;
-    private final BiInt2ObjectMap<NetworkPublication> publicationBySessionAndStreamId = new BiInt2ObjectMap<>();
+    protected long timeOfLastResolutionNs;
+    private final Long2ObjectHashMap<NetworkPublication> publicationBySessionAndStreamId = new Long2ObjectHashMap<>();
     private final MultiSndDestination multiSndDestination;
     private final AtomicCounter statusMessagesReceived;
     private final AtomicCounter nakMessagesReceived;
     private final AtomicCounter statusIndicator;
-    private final CachedNanoClock cachedNanoClock;
+    private AtomicCounter localSocketAddressIndicator;
 
     public SendChannelEndpoint(
         final UdpChannel udpChannel, final AtomicCounter statusIndicator, final MediaDriver.Context context)
@@ -68,20 +72,23 @@ public class SendChannelEndpoint extends UdpChannelTransport
         nakMessagesReceived = context.systemCounters().get(NAK_MESSAGES_RECEIVED);
         statusMessagesReceived = context.systemCounters().get(STATUS_MESSAGES_RECEIVED);
         this.statusIndicator = statusIndicator;
-        this.cachedNanoClock = context.cachedNanoClock();
-        this.timeOfLastSmNs = cachedNanoClock.nanoTime();
 
         MultiSndDestination multiSndDestination = null;
         if (udpChannel.isManualControlMode())
         {
-            multiSndDestination = new ManualSndMultiDestination(context.cachedNanoClock(), DESTINATION_TIMEOUT);
+            multiSndDestination = new ManualSndMultiDestination(context.cachedNanoClock());
         }
         else if (udpChannel.isDynamicControlMode() || udpChannel.hasExplicitControl())
         {
-            multiSndDestination = new DynamicSndMultiDestination(context.cachedNanoClock(), DESTINATION_TIMEOUT);
+            multiSndDestination = new DynamicSndMultiDestination(context.cachedNanoClock());
         }
 
         this.multiSndDestination = multiSndDestination;
+    }
+
+    public void localSocketAddressIndicator(final AtomicCounter counter)
+    {
+        localSocketAddressIndicator = counter;
     }
 
     public void decRef()
@@ -112,6 +119,12 @@ public class SendChannelEndpoint extends UdpChannelTransport
                 throw ex;
             }
         }
+
+        LocalSocketAddressStatus.updateBindAddress(
+            requireNonNull(localSocketAddressIndicator, "localSocketAddressIndicator not allocated"),
+            bindAddressAndPort(),
+            context.countersMetaDataBuffer());
+        localSocketAddressIndicator.setOrdered(ChannelEndpointStatus.ACTIVE);
     }
 
     public String originalUriString()
@@ -130,7 +143,7 @@ public class SendChannelEndpoint extends UdpChannelTransport
         if (currentStatus != ChannelEndpointStatus.INITIALIZING)
         {
             throw new IllegalStateException(
-                "channel cannot be registered unless INITALIZING: status=" + status(currentStatus));
+                "channel cannot be registered unless INITIALIZING: status=" + status(currentStatus));
         }
 
         statusIndicator.appendToLabel(bindAddressAndPort());
@@ -139,10 +152,11 @@ public class SendChannelEndpoint extends UdpChannelTransport
 
     public void closeStatusIndicator()
     {
-        if (!statusIndicator.isClosed())
+        statusIndicator.close();
+
+        if (null != localSocketAddressIndicator)
         {
-            statusIndicator.setOrdered(ChannelEndpointStatus.CLOSING);
-            statusIndicator.close();
+            localSocketAddressIndicator.close();
         }
     }
 
@@ -163,7 +177,8 @@ public class SendChannelEndpoint extends UdpChannelTransport
      */
     public void registerForSend(final NetworkPublication publication)
     {
-        publicationBySessionAndStreamId.put(publication.sessionId(), publication.streamId(), publication);
+        final long key = compoundKey(publication.sessionId(), publication.streamId());
+        publicationBySessionAndStreamId.put(key, publication);
     }
 
     /**
@@ -173,7 +188,8 @@ public class SendChannelEndpoint extends UdpChannelTransport
      */
     public void unregisterForSend(final NetworkPublication publication)
     {
-        publicationBySessionAndStreamId.remove(publication.sessionId(), publication.streamId());
+        final long key = compoundKey(publication.sessionId(), publication.streamId());
+        publicationBySessionAndStreamId.remove(key);
     }
 
     /**
@@ -224,15 +240,17 @@ public class SendChannelEndpoint extends UdpChannelTransport
         {
             multiSndDestination.checkForReResolution(this, nowNs, conductorProxy);
         }
-        else if (!udpChannel.isMulticast() &&
-            !udpChannel.isDynamicControlMode() &&
-            nowNs > (timeOfLastSmNs + DESTINATION_TIMEOUT))
+        else if (udpChannel.hasExplicitEndpoint() && !udpChannel.isMulticast())
         {
-            final String endpoint = udpChannel.channelUri().get(CommonContext.ENDPOINT_PARAM_NAME);
-            final InetSocketAddress address = udpChannel.remoteData();
+            final long timeOfLastStatusMessageNs = timeOfLastStatusMessageNs();
 
-            conductorProxy.reResolveEndpoint(endpoint, this, address);
-            timeOfLastSmNs = nowNs;
+            if (((timeOfLastStatusMessageNs + DESTINATION_TIMEOUT) - nowNs) < 0 &&
+                ((timeOfLastResolutionNs + DESTINATION_TIMEOUT) - nowNs) < 0)
+            {
+                final String endpoint = udpChannel.channelUri().get(CommonContext.ENDPOINT_PARAM_NAME);
+                conductorProxy.reResolveEndpoint(endpoint, this, udpChannel.remoteData());
+                timeOfLastResolutionNs = nowNs;
+            }
         }
     }
 
@@ -244,7 +262,6 @@ public class SendChannelEndpoint extends UdpChannelTransport
     {
         final int sessionId = msg.sessionId();
         final int streamId = msg.streamId();
-        final NetworkPublication publication = publicationBySessionAndStreamId.get(sessionId, streamId);
 
         if (null != multiSndDestination)
         {
@@ -252,11 +269,16 @@ public class SendChannelEndpoint extends UdpChannelTransport
 
             if (0 == sessionId && 0 == streamId && SEND_SETUP_FLAG == (msg.flags() & SEND_SETUP_FLAG))
             {
-                publicationBySessionAndStreamId.forEach(NetworkPublication::triggerSendSetupFrame);
+                for (final NetworkPublication publication : publicationBySessionAndStreamId.values())
+                {
+                    publication.triggerSendSetupFrame();
+                }
+
                 statusMessagesReceived.incrementOrdered();
             }
         }
 
+        final NetworkPublication publication = publicationBySessionAndStreamId.get(compoundKey(sessionId, streamId));
         if (null != publication)
         {
             if (SEND_SETUP_FLAG == (msg.flags() & SEND_SETUP_FLAG))
@@ -268,7 +290,6 @@ public class SendChannelEndpoint extends UdpChannelTransport
                 publication.onStatusMessage(msg, srcAddress);
             }
 
-            timeOfLastSmNs = cachedNanoClock.nanoTime();
             statusMessagesReceived.incrementOrdered();
         }
     }
@@ -279,7 +300,8 @@ public class SendChannelEndpoint extends UdpChannelTransport
         final int length,
         final InetSocketAddress srcAddress)
     {
-        final NetworkPublication publication = publicationBySessionAndStreamId.get(msg.sessionId(), msg.streamId());
+        final long key = compoundKey(msg.sessionId(), msg.streamId());
+        final NetworkPublication publication = publicationBySessionAndStreamId.get(key);
 
         if (null != publication)
         {
@@ -294,8 +316,8 @@ public class SendChannelEndpoint extends UdpChannelTransport
         final int length,
         final InetSocketAddress srcAddress)
     {
-        final NetworkPublication publication = publicationBySessionAndStreamId.get(msg.sessionId(), msg.streamId());
-
+        final long key = compoundKey(msg.sessionId(), msg.streamId());
+        final NetworkPublication publication = publicationBySessionAndStreamId.get(key);
         if (null != publication)
         {
             publication.onRttMeasurement(msg, srcAddress);
@@ -330,5 +352,17 @@ public class SendChannelEndpoint extends UdpChannelTransport
         {
             updateEndpoint(newAddress, statusIndicator);
         }
+    }
+
+    private long timeOfLastStatusMessageNs()
+    {
+        long timeNs = 0;
+
+        for (final NetworkPublication publication : publicationBySessionAndStreamId.values())
+        {
+            timeNs = Math.max(timeNs, publication.timeOfLastStatusMessageNs());
+        }
+
+        return 0;
     }
 }

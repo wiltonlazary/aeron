@@ -59,14 +59,13 @@ aeron_logbuffer_metadata_t;
 
 #define AERON_LOGBUFFER_FRAME_ALIGNMENT (32)
 
-#define AERON_LOGBUFFER_RAWTAIL_VOLATILE(d,m) \
+#define AERON_LOGBUFFER_RAWTAIL_VOLATILE(d, m) \
 do \
 { \
     int32_t active_term_count; \
-    size_t partition; \
-    AERON_GET_VOLATILE(active_term_count,(m->active_term_count)); \
-    partition = (size_t)(active_term_count % AERON_LOGBUFFER_PARTITION_COUNT); \
-    AERON_GET_VOLATILE(d, m->term_tail_counters[partition]); \
+    AERON_GET_VOLATILE(active_term_count, ((m)->active_term_count)); \
+    size_t partition = (size_t)(active_term_count % AERON_LOGBUFFER_PARTITION_COUNT); \
+    AERON_GET_VOLATILE(d, (m)->term_tail_counters[partition]); \
 } \
 while(false)
 
@@ -129,7 +128,7 @@ inline int32_t aeron_logbuffer_compute_term_id_from_position(
 
 inline int32_t aeron_logbuffer_compute_term_offset_from_position(int64_t position, size_t position_bits_to_shift)
 {
-    int64_t mask = (1l << position_bits_to_shift) - 1l;
+    int64_t mask = (1u << position_bits_to_shift) - 1;
 
     return (int32_t)(position & mask);
 }
@@ -146,7 +145,6 @@ inline bool aeron_logbuffer_cas_raw_tail(
 inline int32_t aeron_logbuffer_active_term_count(aeron_logbuffer_metadata_t *log_meta_data)
 {
     int32_t active_term_count;
-
     AERON_GET_VOLATILE(active_term_count, log_meta_data->active_term_count);
     return active_term_count;
 }
@@ -176,7 +174,8 @@ inline bool aeron_logbuffer_rotate_log(
             break;
         }
     }
-    while (!aeron_logbuffer_cas_raw_tail(log_meta_data, next_index, raw_tail, (int64_t)next_term_id << 32));
+    while (!aeron_logbuffer_cas_raw_tail(
+        log_meta_data, next_index, raw_tail, (int64_t)((uint64_t)next_term_id << 32u)));
 
     return aeron_logbuffer_cas_active_term_count(log_meta_data, current_term_count, next_term_count);
 }

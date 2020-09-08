@@ -19,10 +19,10 @@
 #define _GNU_SOURCE
 #endif
 
+#include <errno.h>
 #include <stdlib.h>
 #include <string.h>
 
-#include "concurrent/aeron_atomic.h"
 #include "concurrent/aeron_thread.h"
 #include "protocol/aeron_udp_protocol.h"
 #include "util/aeron_error.h"
@@ -47,14 +47,13 @@ static const aeron_udp_channel_interceptor_loss_params_t *aeron_udp_channel_inte
 static unsigned short data_loss_xsubi[3];
 
 int aeron_udp_channel_interceptor_loss_init_incoming(
-    void **interceptor_state,
-    aeron_udp_channel_transport_affinity_t affinity);
+    void **interceptor_state, aeron_driver_context_t *context, aeron_udp_channel_transport_affinity_t affinity);
 
 aeron_udp_channel_interceptor_bindings_t *aeron_udp_channel_interceptor_loss_load(
     const aeron_udp_channel_interceptor_bindings_t *delegate_bindings)
 {
     aeron_udp_channel_interceptor_bindings_t *interceptor_bindings;
-    if (aeron_alloc((void **) &interceptor_bindings, sizeof(aeron_udp_channel_interceptor_bindings_t)) < 0)
+    if (aeron_alloc((void **)&interceptor_bindings, sizeof(aeron_udp_channel_interceptor_bindings_t)) < 0)
     {
         return NULL;
     }
@@ -66,6 +65,12 @@ aeron_udp_channel_interceptor_bindings_t *aeron_udp_channel_interceptor_loss_loa
     interceptor_bindings->incoming_func = aeron_udp_channel_interceptor_loss_incoming;
     interceptor_bindings->outgoing_close_func = NULL;
     interceptor_bindings->incoming_close_func = NULL;
+    interceptor_bindings->outgoing_transport_notification_func = NULL;
+    interceptor_bindings->outgoing_publication_notification_func = NULL;
+    interceptor_bindings->outgoing_image_notification_func = NULL;
+    interceptor_bindings->incoming_transport_notification_func = NULL;
+    interceptor_bindings->incoming_publication_notification_func = NULL;
+    interceptor_bindings->incoming_image_notification_func = NULL;
 
     interceptor_bindings->meta_info.name = "loss";
     interceptor_bindings->meta_info.type = "interceptor";
@@ -106,10 +111,9 @@ void aeron_udp_channel_transport_loss_load_env()
 }
 
 int aeron_udp_channel_interceptor_loss_init_incoming(
-    void **interceptor_state,
-    aeron_udp_channel_transport_affinity_t affinity)
+    void **interceptor_state, aeron_driver_context_t *context, aeron_udp_channel_transport_affinity_t affinity)
 {
-    (void) aeron_thread_once(&env_is_initialized, aeron_udp_channel_transport_loss_load_env);
+    (void)aeron_thread_once(&env_is_initialized, aeron_udp_channel_transport_loss_load_env);
 
     if (NULL == aeron_udp_channel_interceptor_loss_params)
     {
@@ -122,9 +126,7 @@ int aeron_udp_channel_interceptor_loss_init_incoming(
 }
 
 static bool aeron_udp_channel_interceptor_loss_should_drop_frame(
-    const uint8_t *buffer,
-    const double rate,
-    const unsigned long msg_type_mask)
+    const uint8_t *buffer, const double rate, const unsigned long msg_type_mask)
 {
     const aeron_frame_header_t *frame_header = (aeron_frame_header_t *)buffer;
     const unsigned int msg_type_bit = 1U << (unsigned int)frame_header->type;
@@ -136,8 +138,10 @@ static bool aeron_udp_channel_interceptor_loss_should_drop_frame(
 void aeron_udp_channel_interceptor_loss_incoming(
     void *interceptor_state,
     aeron_udp_channel_incoming_interceptor_t *delegate,
+    aeron_udp_channel_transport_t *transport,
     void *receiver_clientd,
     void *endpoint_clientd,
+    void *destination_clientd,
     uint8_t *buffer,
     size_t length,
     struct sockaddr_storage *addr)
@@ -149,22 +153,24 @@ void aeron_udp_channel_interceptor_loss_incoming(
         delegate->incoming_func(
             delegate->interceptor_state,
             delegate->next_interceptor,
+            transport,
             receiver_clientd,
             endpoint_clientd,
+            destination_clientd,
             buffer,
             length,
             addr);
     }
 }
 
-int aeron_udp_channel_interceptor_loss_parse_params(char* uri, aeron_udp_channel_interceptor_loss_params_t* params)
+int aeron_udp_channel_interceptor_loss_parse_params(char *uri, aeron_udp_channel_interceptor_loss_params_t *params)
 {
-    return aeron_uri_parse_params(uri, aeron_udp_channel_interceptor_loss_parse_callback, (void *) params);
+    return aeron_uri_parse_params(uri, aeron_udp_channel_interceptor_loss_parse_callback, (void *)params);
 }
 
 int aeron_udp_channel_interceptor_loss_parse_callback(void *clientd, const char *key, const char *value)
 {
-    aeron_udp_channel_interceptor_loss_params_t* loss_params = clientd;
+    aeron_udp_channel_interceptor_loss_params_t *loss_params = clientd;
     int result = 0;
 
     if (strncmp(key, "rate", sizeof("rate")) == 0)

@@ -16,10 +16,10 @@
 #ifndef AERON_IMAGE_CONTROLLEDFRAGMENTASSEMBLER_H
 #define AERON_IMAGE_CONTROLLEDFRAGMENTASSEMBLER_H
 
-#include "Aeron.h"
 #include "BufferBuilder.h"
 
-namespace aeron {
+namespace aeron
+{
 
 static const std::size_t DEFAULT_IMAGE_CONTROLLED_FRAGMENT_ASSEMBLY_BUFFER_LENGTH = 4096;
 
@@ -45,10 +45,10 @@ public:
      * @param initialBufferLength to be used for rebuilding.
      */
     explicit ImageControlledFragmentAssembler(
-        const controlled_poll_fragment_handler_t& delegate,
+        const controlled_poll_fragment_handler_t &delegate,
         size_t initialBufferLength = DEFAULT_IMAGE_CONTROLLED_FRAGMENT_ASSEMBLY_BUFFER_LENGTH) :
         m_delegate(delegate),
-        m_builder(initialBufferLength)
+        m_builder(static_cast<std::uint32_t>(initialBufferLength))
     {
     }
 
@@ -60,7 +60,7 @@ public:
      */
     controlled_poll_fragment_handler_t handler()
     {
-        return [&](AtomicBuffer& buffer, util::index_t offset, util::index_t length, Header& header)
+        return [&](AtomicBuffer &buffer, util::index_t offset, util::index_t length, Header &header)
         {
             return this->onFragment(buffer, offset, length, header);
         };
@@ -70,9 +70,9 @@ private:
     controlled_poll_fragment_handler_t m_delegate;
     BufferBuilder m_builder;
 
-    ControlledPollAction onFragment(AtomicBuffer& buffer, util::index_t offset, util::index_t length, Header& header)
+    ControlledPollAction onFragment(AtomicBuffer &buffer, util::index_t offset, util::index_t length, Header &header)
     {
-        const std::uint8_t flags = header.flags();
+        std::uint8_t flags = header.flags();
         ControlledPollAction action = ControlledPollAction::CONTINUE;
 
         if ((flags & FrameDescriptor::UNFRAGMENTED) == FrameDescriptor::UNFRAGMENTED)

@@ -17,7 +17,6 @@ package io.aeron.driver;
 
 import io.aeron.CommonContext;
 import io.aeron.driver.buffer.RawLog;
-import io.aeron.driver.status.SystemCounters;
 import io.aeron.logbuffer.LogBufferDescriptor;
 import io.aeron.logbuffer.LogBufferUnblocker;
 import org.agrona.CloseHelper;
@@ -42,7 +41,7 @@ public final class IpcPublication implements DriverManagedResource, Subscribable
 {
     enum State
     {
-        ACTIVE, INACTIVE, LINGER
+        ACTIVE, DRAINING, LINGER
     }
 
     private static final ReadablePosition[] EMPTY_POSITIONS = new ReadablePosition[0];
@@ -80,6 +79,7 @@ public final class IpcPublication implements DriverManagedResource, Subscribable
 
     public IpcPublication(
         final long registrationId,
+        final MediaDriver.Context ctx,
         final long tag,
         final int sessionId,
         final int streamId,
@@ -87,13 +87,7 @@ public final class IpcPublication implements DriverManagedResource, Subscribable
         final Position publisherLimit,
         final RawLog rawLog,
         final int termWindowLength,
-        final long unblockTimeoutNs,
-        final long untetheredWindowLimitTimeoutNs,
-        final long untetheredRestingTimeoutNs,
-        final long nowNs,
-        final SystemCounters systemCounters,
-        final boolean isExclusive,
-        final ErrorHandler errorHandler)
+        final boolean isExclusive)
     {
         this.registrationId = registrationId;
         this.tag = tag;
@@ -102,7 +96,7 @@ public final class IpcPublication implements DriverManagedResource, Subscribable
         this.isExclusive = isExclusive;
         this.termBuffers = rawLog.termBuffers();
         this.initialTermId = initialTermId(rawLog.metaData());
-        this.errorHandler = errorHandler;
+        this.errorHandler = ctx.errorHandler();
 
         final int termLength = rawLog.termLength();
         this.termBufferLength = termLength;
@@ -112,16 +106,16 @@ public final class IpcPublication implements DriverManagedResource, Subscribable
         this.publisherPos = publisherPos;
         this.publisherLimit = publisherLimit;
         this.rawLog = rawLog;
-        this.unblockTimeoutNs = unblockTimeoutNs;
-        this.untetheredWindowLimitTimeoutNs = untetheredWindowLimitTimeoutNs;
-        this.untetheredRestingTimeoutNs = untetheredRestingTimeoutNs;
-        this.unblockedPublications = systemCounters.get(UNBLOCKED_PUBLICATIONS);
+        this.unblockTimeoutNs = ctx.publicationUnblockTimeoutNs();
+        this.untetheredWindowLimitTimeoutNs = ctx.untetheredWindowLimitTimeoutNs();
+        this.untetheredRestingTimeoutNs = ctx.untetheredRestingTimeoutNs();
+        this.unblockedPublications = ctx.systemCounters().get(UNBLOCKED_PUBLICATIONS);
         this.metaDataBuffer = rawLog.metaData();
 
         consumerPosition = producerPosition();
         lastConsumerPosition = consumerPosition;
         cleanPosition = consumerPosition;
-        timeOfLastConsumerPositionUpdateNs = nowNs;
+        timeOfLastConsumerPositionUpdateNs = ctx.cachedNanoClock().nanoTime();
     }
 
     public int sessionId()
@@ -183,7 +177,7 @@ public final class IpcPublication implements DriverManagedResource, Subscribable
         for (int i = 0, size = untetheredSubscriptions.size(); i < size; i++)
         {
             final UntetheredSubscription untetheredSubscription = untetheredSubscriptions.get(i);
-            if (UntetheredSubscription.RESTING == untetheredSubscription.state)
+            if (UntetheredSubscription.State.RESTING == untetheredSubscription.state)
             {
                 CloseHelper.close(errorHandler, untetheredSubscription.position);
             }
@@ -244,7 +238,7 @@ public final class IpcPublication implements DriverManagedResource, Subscribable
                 break;
             }
 
-            case INACTIVE:
+            case DRAINING:
             {
                 final long producerPosition = producerPosition();
                 publisherPos.setOrdered(producerPosition);
@@ -281,7 +275,7 @@ public final class IpcPublication implements DriverManagedResource, Subscribable
     {
         if (0 == --refCount)
         {
-            state = State.INACTIVE;
+            state = State.DRAINING;
             final long producerPosition = producerPosition();
             publisherLimit.setOrdered(producerPosition);
             LogBufferDescriptor.endOfStreamPosition(metaDataBuffer, producerPosition);
@@ -353,59 +347,47 @@ public final class IpcPublication implements DriverManagedResource, Subscribable
 
     private void checkUntetheredSubscriptions(final long nowNs, final DriverConductor conductor)
     {
-        final ArrayList<UntetheredSubscription> untetheredSubscriptions = this.untetheredSubscriptions;
-        final int untetheredSubscriptionsSize = untetheredSubscriptions.size();
-        if (0 == untetheredSubscriptionsSize)
-        {
-            return;
-        }
+        final long untetheredWindowLimit = (consumerPosition - termWindowLength) + (termWindowLength >> 2);
 
-        final long untetheredWindowLimit = (consumerPosition - termWindowLength) + (termWindowLength >> 3);
-
-        for (int lastIndex = untetheredSubscriptionsSize - 1, i = lastIndex; i >= 0; i--)
+        for (int lastIndex = untetheredSubscriptions.size() - 1, i = lastIndex; i >= 0; i--)
         {
             final UntetheredSubscription untethered = untetheredSubscriptions.get(i);
-            switch (untethered.state)
+            if (UntetheredSubscription.State.ACTIVE == untethered.state)
             {
-                case UntetheredSubscription.ACTIVE:
-                    if (untethered.position.getVolatile() > untetheredWindowLimit)
-                    {
-                        untethered.timeOfLastUpdateNs = nowNs;
-                    }
-                    else if ((untethered.timeOfLastUpdateNs + untetheredWindowLimitTimeoutNs) - nowNs <= 0)
-                    {
-                        conductor.notifyUnavailableImageLink(registrationId, untethered.subscriptionLink);
-                        untethered.state = UntetheredSubscription.LINGER;
-                        untethered.timeOfLastUpdateNs = nowNs;
-                    }
-                    break;
-
-                case UntetheredSubscription.LINGER:
-                    if ((untethered.timeOfLastUpdateNs + untetheredWindowLimitTimeoutNs) - nowNs <= 0)
-                    {
-                        subscriberPositions = ArrayUtil.remove(subscriberPositions, untethered.position);
-                        untethered.state = UntetheredSubscription.RESTING;
-                        untethered.timeOfLastUpdateNs = nowNs;
-                    }
-                    break;
-
-                case UntetheredSubscription.RESTING:
-                    if ((untethered.timeOfLastUpdateNs + untetheredRestingTimeoutNs) - nowNs <= 0)
-                    {
-                        subscriberPositions = ArrayUtil.add(subscriberPositions, untethered.position);
-                        conductor.notifyAvailableImageLink(
-                            registrationId,
-                            sessionId,
-                            untethered.subscriptionLink,
-                            untethered.position.id(),
-                            consumerPosition,
-                            rawLog.fileName(),
-                            CommonContext.IPC_CHANNEL);
-                        untethered.state = UntetheredSubscription.ACTIVE;
-                        untethered.timeOfLastUpdateNs = nowNs;
-                        LogBufferDescriptor.isConnected(metaDataBuffer, true);
-                    }
-                    break;
+                if (untethered.position.getVolatile() > untetheredWindowLimit)
+                {
+                    untethered.timeOfLastUpdateNs = nowNs;
+                }
+                else if ((untethered.timeOfLastUpdateNs + untetheredWindowLimitTimeoutNs) - nowNs <= 0)
+                {
+                    conductor.notifyUnavailableImageLink(registrationId, untethered.subscriptionLink);
+                    untethered.state(UntetheredSubscription.State.LINGER, nowNs, streamId, sessionId);
+                }
+            }
+            else if (UntetheredSubscription.State.LINGER == untethered.state)
+            {
+                if ((untethered.timeOfLastUpdateNs + untetheredWindowLimitTimeoutNs) - nowNs <= 0)
+                {
+                    subscriberPositions = ArrayUtil.remove(subscriberPositions, untethered.position);
+                    untethered.state(UntetheredSubscription.State.RESTING, nowNs, streamId, sessionId);
+                }
+            }
+            else if (UntetheredSubscription.State.RESTING == untethered.state)
+            {
+                if ((untethered.timeOfLastUpdateNs + untetheredRestingTimeoutNs) - nowNs <= 0)
+                {
+                    subscriberPositions = ArrayUtil.add(subscriberPositions, untethered.position);
+                    conductor.notifyAvailableImageLink(
+                        registrationId,
+                        sessionId,
+                        untethered.subscriptionLink,
+                        untethered.position.id(),
+                        consumerPosition,
+                        rawLog.fileName(),
+                        CommonContext.IPC_CHANNEL);
+                    untethered.state(UntetheredSubscription.State.ACTIVE, nowNs, streamId, sessionId);
+                    LogBufferDescriptor.isConnected(metaDataBuffer, true);
+                }
             }
         }
     }

@@ -46,9 +46,10 @@ class ClusterTermination
     }
 
     void terminationPosition(
-        final MemberStatusPublisher memberStatusPublisher,
+        final ConsensusPublisher consensusPublisher,
         final ClusterMember[] members,
         final ClusterMember thisMember,
+        final long leadershipTermId,
         final long position)
     {
         for (final ClusterMember member : members)
@@ -57,7 +58,7 @@ class ClusterTermination
 
             if (member != thisMember)
             {
-                memberStatusPublisher.terminationPosition(member.publication(), position);
+                consensusPublisher.terminationPosition(member.publication(), leadershipTermId, position);
             }
         }
     }
@@ -66,10 +67,8 @@ class ClusterTermination
     {
         boolean result = true;
 
-        for (int i = 0, length = members.length; i < length; i++)
+        for (final ClusterMember member : members)
         {
-            final ClusterMember member = members[i];
-
             if (!member.hasTerminated() && member.logPosition() < terminationPosition)
             {
                 result = false;

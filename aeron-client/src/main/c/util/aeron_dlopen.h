@@ -25,26 +25,39 @@
 #include <stddef.h>
 
 #define aeron_dlsym dlsym
-#define aeron_dlopen(x) dlopen(x, RTLD_LAZY)
+#define aeron_dlopen(x) dlopen(x, RTLD_LAZY | RTLD_GLOBAL)
 #define aeron_dlerror dlerror
 
 const char *aeron_dlinfo(const void *addr, char *buffer, size_t max_buffer_length);
 
-#elif defined(AERON_COMPILER_MSVC) && defined(AERON_CPU_X64)
+#elif defined(AERON_COMPILER_MSVC)
 
-#include <WinSock2.h>
-#include <windows.h>
+#define RTLD_DEFAULT ((void *)-123)
+#define RTLD_NEXT ((void *)-124)
 
-#define RTLD_DEFAULT ((HMODULE)-123)
-#define RTLD_NEXT ((HMODULE)-124)
-
-void* aeron_dlsym(HMODULE module, LPCSTR name);
-HMODULE aeron_dlopen(LPCSTR filename);
-char* aeron_dlerror();
-const char *aeron_dlinfo(const void* addr, char* buffer, size_t max_buffer_length);
+void *aeron_dlsym(void *module, const char *name);
+void *aeron_dlopen(const char *filename);
+char *aeron_dlerror();
+const char *aeron_dlinfo(const void *addr, char *buffer, size_t max_buffer_length);
 
 #else
 #error Unsupported platform!
 #endif
+
+typedef struct aeron_dl_loaded_lib_state_stct
+{
+    void *handle;
+}
+aeron_dl_loaded_lib_state_t;
+
+typedef struct aeron_dl_loaded_libs_state_stct
+{
+    aeron_dl_loaded_lib_state_t *libs;
+    size_t num_libs;
+}
+aeron_dl_loaded_libs_state_t;
+
+int aeron_dl_load_libs(aeron_dl_loaded_libs_state_t **state, const char *libs);
+int aeron_dl_load_libs_delete(aeron_dl_loaded_libs_state_t *state);
 
 #endif //AERON_DLOPEN_H

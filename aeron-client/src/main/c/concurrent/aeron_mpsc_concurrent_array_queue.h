@@ -16,7 +16,6 @@
 #ifndef AERON_MPSC_CONCURRENT_ARRAY_QUEUE_H
 #define AERON_MPSC_CONCURRENT_ARRAY_QUEUE_H
 
-#include <stdint.h>
 #include "util/aeron_bitutil.h"
 #include "aeron_atomic.h"
 #include "aeron_concurrent_array_queue.h"
@@ -146,7 +145,17 @@ inline uint64_t aeron_mpsc_concurrent_array_queue_size(volatile aeron_mpsc_concu
     }
     while (current_head_after != current_head_before);
 
-    return current_tail - current_head_after;
+    uint64_t size = current_tail - current_head_after;
+    if ((int64_t)size < 0)
+    {
+        return 0;
+    }
+    else if (size > queue->capacity)
+    {
+        return queue->capacity;
+    }
+
+    return size;
 }
 
 #endif //AERON_MPSC_CONCURRENT_ARRAY_QUEUE_H

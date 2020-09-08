@@ -51,6 +51,7 @@ typedef struct aeron_send_channel_endpoint_stct
     bool has_sender_released;
     aeron_udp_channel_transport_t transport;
     aeron_atomic_counter_t channel_status;
+    aeron_atomic_counter_t local_sockaddr_indicator;
     aeron_udp_destination_tracker_t *destination_tracker;
     aeron_driver_sender_proxy_t *sender_proxy;
     aeron_int64_to_ptr_hash_map_t publication_dispatch_map;
@@ -59,16 +60,19 @@ typedef struct aeron_send_channel_endpoint_stct
     struct sockaddr_storage current_data_addr;
     aeron_clock_cache_t *cached_clock;
     int64_t time_of_last_sm_ns;
+    uint8_t padding[AERON_CACHE_LINE_LENGTH];
 }
 aeron_send_channel_endpoint_t;
 
 int aeron_send_channel_endpoint_create(
     aeron_send_channel_endpoint_t **endpoint,
     aeron_udp_channel_t *channel,
-    aeron_atomic_counter_t *status_indicator,
-    aeron_driver_context_t *context);
+    aeron_driver_context_t *context,
+    aeron_counters_manager_t *counters_manager,
+    int64_t registration_id);
 
-int aeron_send_channel_endpoint_delete(aeron_counters_manager_t *counters_manager, aeron_send_channel_endpoint_t *endpoint);
+int aeron_send_channel_endpoint_delete(
+    aeron_counters_manager_t *counters_manager, aeron_send_channel_endpoint_t *endpoint);
 
 void aeron_send_channel_endpoint_incref(void *clientd);
 void aeron_send_channel_endpoint_decref(void *clientd);
@@ -84,8 +88,10 @@ int aeron_send_channel_endpoint_remove_publication(
 
 void aeron_send_channel_endpoint_dispatch(
     aeron_udp_channel_data_paths_t *data_paths,
+    aeron_udp_channel_transport_t *transport,
     void *sender_clientd,
     void *endpoint_clientd,
+    void *destination_clientd,
     uint8_t *buffer,
     size_t length,
     struct sockaddr_storage *addr);
@@ -100,14 +106,10 @@ void aeron_send_channel_endpoint_on_rttm(
     aeron_send_channel_endpoint_t *endpoint, uint8_t *buffer, size_t length, struct sockaddr_storage *addr);
 
 int aeron_send_channel_endpoint_check_for_re_resolution(
-    aeron_send_channel_endpoint_t *endpoint,
-    int64_t now_ns,
-    aeron_driver_conductor_proxy_t *conductor_proxy);
+    aeron_send_channel_endpoint_t *endpoint, int64_t now_ns, aeron_driver_conductor_proxy_t *conductor_proxy);
 
 void aeron_send_channel_endpoint_resolution_change(
-    aeron_send_channel_endpoint_t *endpoint,
-    const char *endpoint_name,
-    struct sockaddr_storage *new_addr);
+    aeron_send_channel_endpoint_t *endpoint, const char *endpoint_name, struct sockaddr_storage *new_addr);
 
 inline void aeron_send_channel_endpoint_sender_release(aeron_send_channel_endpoint_t *endpoint)
 {
@@ -123,18 +125,16 @@ inline bool aeron_send_channel_endpoint_has_sender_released(aeron_send_channel_e
 }
 
 inline int aeron_send_channel_endpoint_add_destination(
-    aeron_send_channel_endpoint_t *endpoint,
-    aeron_uri_t *uri,
-    struct sockaddr_storage *addr)
+    aeron_send_channel_endpoint_t *endpoint, aeron_uri_t *uri, struct sockaddr_storage *addr)
 {
     const int64_t now_ns = aeron_clock_cached_nano_time(endpoint->destination_tracker->cached_clock);
     return aeron_udp_destination_tracker_manual_add_destination(endpoint->destination_tracker, now_ns, uri, addr);
 }
 
 inline int aeron_send_channel_endpoint_remove_destination(
-    aeron_send_channel_endpoint_t *endpoint, struct sockaddr_storage *addr)
+    aeron_send_channel_endpoint_t *endpoint, struct sockaddr_storage *addr, aeron_uri_t **removed_uri)
 {
-    return aeron_udp_destination_tracker_remove_destination(endpoint->destination_tracker, addr);
+    return aeron_udp_destination_tracker_remove_destination(endpoint->destination_tracker, addr, removed_uri);
 }
 
 inline int aeron_send_channel_endpoint_bind_addr_and_port(

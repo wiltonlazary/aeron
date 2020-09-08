@@ -17,6 +17,8 @@ package io.aeron.cluster.service;
 
 import io.aeron.Aeron;
 import io.aeron.DirectBufferVector;
+import io.aeron.ExclusivePublication;
+import io.aeron.Image;
 import io.aeron.cluster.client.AeronCluster;
 import io.aeron.cluster.client.ClusterException;
 import io.aeron.cluster.codecs.CloseReason;
@@ -32,6 +34,13 @@ import java.util.function.Consumer;
 
 /**
  * Interface for a {@link ClusteredService} to interact with cluster hosting it.
+ * <p>
+ * This object should only be used to send messages to the cluster or schedule timers in response to other messages
+ * and timers. Sending messages and timers should not happen from cluster lifecycle methods like
+ * {@link ClusteredService#onStart(Cluster, Image)}, {@link ClusteredService#onRoleChange(Cluster.Role)} or
+ * {@link ClusteredService#onTakeSnapshot(ExclusivePublication)}, or {@link ClusteredService#onTerminate(Cluster)},
+ * with the exception of the session lifecycle methods {@link ClusteredService#onSessionOpen(ClientSession, long)} and
+ * {@link ClusteredService#onSessionClose(ClientSession, long, CloseReason)}.
  */
 public interface Cluster
 {
@@ -52,28 +61,17 @@ public interface Cluster
          */
         LEADER(2);
 
-        static final Role[] ROLES;
-
-        static
-        {
-            final Role[] roles = values();
-            ROLES = new Role[roles.length];
-            for (final Role role : roles)
-            {
-                final int code = role.code();
-                if (null != ROLES[code])
-                {
-                    throw new ClusterException("code already in use: " + code);
-                }
-
-                ROLES[code] = role;
-            }
-        }
+        static final Role[] ROLES = values();
 
         private final int code;
 
         Role(final int code)
         {
+            if (code != ordinal())
+            {
+                throw new IllegalArgumentException(name() + " - code must equal ordinal value: code=" + code);
+            }
+
             this.code = code;
         }
 
@@ -93,14 +91,14 @@ public interface Cluster
          * @param code for the {@link Role}.
          * @return the {@link Role} of the cluster node.
          */
-        public static Role get(final int code)
+        public static Role get(final long code)
         {
             if (code < 0 || code > (ROLES.length - 1))
             {
                 throw new IllegalStateException("Invalid role counter code: " + code);
             }
 
-            return ROLES[code];
+            return ROLES[(int)code];
         }
 
         /**
@@ -112,7 +110,7 @@ public interface Cluster
          */
         public static Role get(final AtomicCounter counter)
         {
-            return get((int)counter.get());
+            return get(counter.get());
         }
     }
 
@@ -145,7 +143,7 @@ public interface Cluster
     Aeron aeron();
 
     /**
-     * Get the  {@link ClusteredServiceContainer.Context} under which the container is running.
+     * Get the {@link ClusteredServiceContainer.Context} under which the container is running.
      *
      * @return the {@link ClusteredServiceContainer.Context} under which the container is running.
      */
@@ -201,10 +199,10 @@ public interface Cluster
 
     /**
      * Schedule a timer for a given deadline and provide a correlation id to identify the timer when it expires or
-     * for cancellation. This action asynchronous and will race with the timer expiring.
+     * for cancellation. This action is asynchronous and will race with the timer expiring.
      * <p>
      * If the correlationId is for an existing scheduled timer then it will be reschedule to the new deadline. However
-     * it is best do generate correlationIds in a monotonic fashion and be aware of potential clashes with other
+     * it is best to generate correlationIds in a monotonic fashion and be aware of potential clashes with other
      * services in the same cluster. Service isolation can be achieved by using the upper bits for service id.
      * <p>
      * Timers should only be scheduled or cancelled in the context of processing a
@@ -215,14 +213,14 @@ public interface Cluster
      * If applied to other events then they are not guaranteed to be reliable.
      *
      * @param correlationId to identify the timer when it expires. {@link Long#MAX_VALUE} not supported.
-     * @param deadline      time in after which the timer will fire. {@link Long#MAX_VALUE} not supported.
-     * @return true if the event to schedule a timer request has been sent or false if back pressure is applied.
+     * @param deadline      time after which the timer will fire. {@link Long#MAX_VALUE} not supported.
+     * @return true if the event to schedule a timer request has been sent or false if back-pressure is applied.
      * @see #cancelTimer(long)
      */
     boolean scheduleTimer(long correlationId, long deadline);
 
     /**
-     * Cancel a previous scheduled timer. This action asynchronous and will race with the timer expiring.
+     * Cancel a previously scheduled timer. This action is asynchronous and will race with the timer expiring.
      * <p>
      * Timers should only be scheduled or cancelled in the context of processing a
      * {@link ClusteredService#onSessionMessage(ClientSession, long, DirectBuffer, int, int, Header)},
@@ -232,7 +230,7 @@ public interface Cluster
      * If applied to other events then they are not guaranteed to be reliable.
      *
      * @param correlationId for the timer provided when it was scheduled. {@link Long#MAX_VALUE} not supported.
-     * @return true if the event to cancel request has been sent or false if back pressure is applied.
+     * @return true if the event to cancel request has been sent or false if back-pressure is applied.
      * @see #scheduleTimer(long, long)
      */
     boolean cancelTimer(long correlationId);
@@ -300,7 +298,7 @@ public interface Cluster
 
     /**
      * {@link IdleStrategy} which should be used by the service when it experiences back-pressure on egress,
-     * closing sessions, or making timer requests, or any long running actions.
+     * closing sessions, making timer requests, or any long running actions.
      *
      * @return the {@link IdleStrategy} which should be used by the service when it experiences back-pressure.
      */

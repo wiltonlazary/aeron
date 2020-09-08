@@ -32,13 +32,19 @@ if ("${CMAKE_SYSTEM_NAME}" MATCHES "Linux")
 endif ()
 
 set(SOURCE
+    collections/aeron_array_to_ptr_hash_map.c
     collections/aeron_bit_set.c
+    collections/aeron_int64_counter_map.c
     collections/aeron_int64_to_ptr_hash_map.c
+    collections/aeron_int64_to_tagged_ptr_hash_map.c
+    collections/aeron_map.c
     collections/aeron_str_to_ptr_hash_map.c
     concurrent/aeron_atomic.c
     concurrent/aeron_broadcast_receiver.c
+    concurrent/aeron_broadcast_transmitter.c
     concurrent/aeron_counters_manager.c
     concurrent/aeron_distinct_error_log.c
+    concurrent/aeron_exclusive_term_appender.c
     concurrent/aeron_logbuffer_descriptor.c
     concurrent/aeron_mpsc_concurrent_array_queue.c
     concurrent/aeron_mpsc_rb.c
@@ -53,6 +59,7 @@ set(SOURCE
     concurrent/aeron_thread.c
     protocol/aeron_udp_protocol.c
     util/aeron_arrayutil.c
+    util/aeron_bitutil.c
     util/aeron_clock.c
     util/aeron_dlopen.c
     util/aeron_env.c
@@ -64,33 +71,44 @@ set(SOURCE
     util/aeron_parse_util.c
     util/aeron_properties_util.c
     util/aeron_strutil.c
-    aeronc.c
     aeron_agent.c
     aeron_alloc.c
     aeron_client.c
     aeron_client_conductor.c
+    aeron_cnc_file_descriptor.c
     aeron_context.c
+    aeron_counter.c
     aeron_exclusive_publication.c
+    aeron_fragment_assembler.c
     aeron_image.c
     aeron_log_buffer.c
     aeron_publication.c
     aeron_socket.c
     aeron_subscription.c
+    aeron_version.c
     aeron_windows.c
+    aeronc.c
     )
 
 set(HEADERS
+    collections/aeron_array_to_ptr_hash_map.h
     collections/aeron_bit_set.h
+    collections/aeron_int64_counter_map.h
     collections/aeron_int64_to_ptr_hash_map.h
+    collections/aeron_int64_to_tagged_ptr_hash_map.h
+    collections/aeron_map.h
     collections/aeron_str_to_ptr_hash_map.h
     command/aeron_control_protocol.h
     concurrent/aeron_atomic.h
     concurrent/aeron_atomic64_gcc_x86_64.h
     concurrent/aeron_atomic64_msvc.h
+    concurrent/aeron_broadcast_descriptor.h
     concurrent/aeron_broadcast_receiver.h
+    concurrent/aeron_broadcast_transmitter.h
     concurrent/aeron_concurrent_array_queue.h
     concurrent/aeron_counters_manager.h
     concurrent/aeron_distinct_error_log.h
+    concurrent/aeron_exclusive_term_appender.h
     concurrent/aeron_logbuffer_descriptor.h
     concurrent/aeron_mpsc_concurrent_array_queue.h
     concurrent/aeron_mpsc_rb.h
@@ -119,7 +137,6 @@ set(HEADERS
     util/aeron_platform.h
     util/aeron_properties_util.h
     util/aeron_strutil.h
-    aeronc.h
     aeron_agent.h
     aeron_alloc.h
     aeron_client.h
@@ -127,13 +144,16 @@ set(HEADERS
     aeron_cnc_file_descriptor.h
     aeron_common.h
     aeron_context.h
+    aeron_counter.h
     aeron_exclusive_publication.h
+    aeron_fragment_assembler.h
     aeron_image.h
     aeron_log_buffer.h
     aeron_publication.h
     aeron_socket.h
     aeron_subscription.h
     aeron_windows.h
+    aeronc.h
     )
 
 add_library(aeron SHARED ${SOURCE} ${HEADERS})

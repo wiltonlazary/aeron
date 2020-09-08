@@ -27,18 +27,16 @@ extern "C"
 class NameResolverCacheTest : public testing::Test
 {
 public:
-    NameResolverCacheTest()
-    {
-    }
+    NameResolverCacheTest() = default;
 
 protected:
-    void TearDown() override
+    virtual void TearDown()
     {
         aeron_name_resolver_cache_close(&m_cache);
     }
 
-    aeron_name_resolver_cache_t m_cache;
-    int64_t m_counter;
+    aeron_name_resolver_cache_t m_cache{};
+    int64_t m_counter = 0;
 };
 
 TEST_F(NameResolverCacheTest, shouldAddAndLookupEntry)
@@ -64,7 +62,7 @@ TEST_F(NameResolverCacheTest, shouldAddAndLookupEntry)
         ASSERT_EQ(
             1, aeron_name_resolver_cache_add_or_update(
             &m_cache, name, strlen(name), &cache_addr, 0, &m_counter))
-            << "Iteration: " << i;
+                            << "Iteration: " << i;
         ASSERT_LE(0,
             aeron_name_resolver_cache_lookup_by_name(&m_cache, name, strlen(name), cache_addr.res_type, &cache_entry));
         ASSERT_EQ(cache_addr.res_type, cache_entry->cache_addr.res_type);
@@ -91,6 +89,7 @@ TEST_F(NameResolverCacheTest, shouldTimeoutEntries)
         {
             cache_addr.address[j] = rand();
         }
+
         cache_addr.port = rand();
 
         aeron_name_resolver_cache_add_or_update(&m_cache, name, strlen(name), &cache_addr, now_ms, &m_counter);
@@ -103,13 +102,13 @@ TEST_F(NameResolverCacheTest, shouldTimeoutEntries)
 
     ASSERT_EQ(2, aeron_name_resolver_cache_timeout_old_entries(&m_cache, now_ms, &m_counter));
     ASSERT_LE(0, aeron_name_resolver_cache_lookup_by_name(
-        &m_cache, "hostname1", strlen("hostname1"), cache_addr.res_type, NULL));
+        &m_cache, "hostname1", strlen("hostname1"), cache_addr.res_type, nullptr));
     ASSERT_LE(0, aeron_name_resolver_cache_lookup_by_name(
-        &m_cache, "hostname3", strlen("hostname3"), cache_addr.res_type, NULL));
+        &m_cache, "hostname3", strlen("hostname3"), cache_addr.res_type, nullptr));
     ASSERT_LE(0, aeron_name_resolver_cache_lookup_by_name(
-        &m_cache, "hostname4", strlen("hostname4"), cache_addr.res_type, NULL));
+        &m_cache, "hostname4", strlen("hostname4"), cache_addr.res_type, nullptr));
     ASSERT_EQ(-1, aeron_name_resolver_cache_lookup_by_name(
-        &m_cache, "hostname0", strlen("hostname0"), cache_addr.res_type, NULL));
+        &m_cache, "hostname0", strlen("hostname0"), cache_addr.res_type, nullptr));
     ASSERT_EQ(-1, aeron_name_resolver_cache_lookup_by_name(
-        &m_cache, "hostname2", strlen("hostname2"), cache_addr.res_type, NULL));
+        &m_cache, "hostname2", strlen("hostname2"), cache_addr.res_type, nullptr));
 }

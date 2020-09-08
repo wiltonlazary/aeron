@@ -16,23 +16,14 @@
 package io.aeron.cluster;
 
 import io.aeron.*;
-import io.aeron.archive.client.AeronArchive;
-import io.aeron.archive.client.ControlResponsePoller;
-import io.aeron.archive.codecs.ControlResponseCode;
-import io.aeron.archive.codecs.SourceLocation;
-import io.aeron.archive.status.RecordingPos;
+import io.aeron.archive.client.*;
+import io.aeron.archive.codecs.*;
 import io.aeron.cluster.client.ClusterException;
-import io.aeron.cluster.codecs.MessageHeaderDecoder;
-import io.aeron.cluster.codecs.SnapshotMarkerDecoder;
 import io.aeron.cluster.codecs.SnapshotRecordingsDecoder;
-import io.aeron.cluster.service.ClusteredServiceContainer;
-import io.aeron.logbuffer.ControlledFragmentHandler;
-import io.aeron.logbuffer.Header;
 import org.agrona.CloseHelper;
-import org.agrona.DirectBuffer;
-import org.agrona.collections.Long2LongHashMap;
-import org.agrona.concurrent.CountedErrorHandler;
-import org.agrona.concurrent.status.CountersReader;
+import org.agrona.ErrorHandler;
+import org.agrona.collections.LongArrayList;
+import org.agrona.concurrent.NoOpLock;
 
 import java.util.ArrayList;
 
@@ -55,64 +46,60 @@ class DynamicJoin implements AutoCloseable
     }
 
     private final AeronArchive localArchive;
-    private final MemberStatusAdapter memberStatusAdapter;
-    private final MemberStatusPublisher memberStatusPublisher;
+    private final ConsensusAdapter consensusAdapter;
+    private final ConsensusPublisher consensusPublisher;
     private final ConsensusModule.Context ctx;
     private final ConsensusModuleAgent consensusModuleAgent;
-    private final String[] clusterMemberStatusEndpoints;
-    private final String memberEndpoints;
-    private final String memberStatusEndpoint;
-    private final String transferEndpoint;
+    private final String[] clusterConsensusEndpoints;
+    private final String consensusEndpoints;
+    private final String consensusEndpoint;
+    private final String catchupEndpoint;
+    private final String archiveEndpoint;
     private final ArrayList<RecordingLog.Snapshot> leaderSnapshots = new ArrayList<>();
-    private final Long2LongHashMap leaderSnapshotLengthMap = new Long2LongHashMap(NULL_LENGTH);
+    private final LongArrayList snapshotLengths = new LongArrayList();
     private final long intervalNs;
 
-    private ExclusivePublication memberStatusPublication;
+    private ExclusivePublication consensusPublication;
     private State state = State.INIT;
     private ClusterMember[] clusterMembers;
     private ClusterMember leaderMember;
     private AeronArchive.AsyncConnect leaderArchiveAsyncConnect;
     private AeronArchive leaderArchive;
-    private Subscription snapshotRetrieveSubscription;
-    private Image snapshotRetrieveImage;
-    private SnapshotReader snapshotReader;
+    private SnapshotRetrieveMonitor snapshotRetrieveMonitor;
     private Counter recoveryStateCounter;
     private long timeOfLastActivityNs = 0;
     private long correlationId = NULL_VALUE;
     private int memberId = NULL_VALUE;
-    private int clusterMembersStatusEndpointsCursor = NULL_VALUE;
+    private int clusterConsensusEndpointsCursor = NULL_VALUE;
     private int snapshotCursor = 0;
-    private int snapshotReplaySessionId = NULL_VALUE;
 
     DynamicJoin(
-        final String clusterMemberStatusEndpoints,
+        final String consensusEndpoints,
         final AeronArchive localArchive,
-        final MemberStatusAdapter memberStatusAdapter,
-        final MemberStatusPublisher memberStatusPublisher,
+        final ConsensusAdapter consensusAdapter,
+        final ConsensusPublisher consensusPublisher,
         final ConsensusModule.Context ctx,
         final ConsensusModuleAgent consensusModuleAgent)
     {
         final ClusterMember thisMember = ClusterMember.parseEndpoints(-1, ctx.memberEndpoints());
 
         this.localArchive = localArchive;
-        this.memberStatusAdapter = memberStatusAdapter;
-        this.memberStatusPublisher = memberStatusPublisher;
+        this.consensusAdapter = consensusAdapter;
+        this.consensusPublisher = consensusPublisher;
         this.ctx = ctx;
         this.consensusModuleAgent = consensusModuleAgent;
         this.intervalNs = ctx.dynamicJoinIntervalNs();
-        this.memberEndpoints = ctx.memberEndpoints();
-        this.memberStatusEndpoint = thisMember.memberFacingEndpoint();
-        this.transferEndpoint = thisMember.transferEndpoint();
-        this.clusterMemberStatusEndpoints = clusterMemberStatusEndpoints.split(",");
+        this.consensusEndpoints = ctx.memberEndpoints();
+        this.consensusEndpoint = thisMember.consensusEndpoint();
+        this.catchupEndpoint = thisMember.catchupEndpoint();
+        this.archiveEndpoint = thisMember.archiveEndpoint();
+        this.clusterConsensusEndpoints = consensusEndpoints.split(",");
     }
 
     public void close()
     {
-        final CountedErrorHandler countedErrorHandler = ctx.countedErrorHandler();
-        CloseHelper.close(countedErrorHandler, memberStatusPublication);
-        CloseHelper.close(countedErrorHandler, snapshotRetrieveSubscription);
-        CloseHelper.close(countedErrorHandler, leaderArchive);
-        CloseHelper.close(countedErrorHandler, leaderArchiveAsyncConnect);
+        final ErrorHandler countedErrorHandler = ctx.countedErrorHandler();
+        CloseHelper.closeAll(countedErrorHandler, consensusPublication, leaderArchive, leaderArchiveAsyncConnect);
     }
 
     ClusterMember[] clusterMembers()
@@ -133,7 +120,7 @@ class DynamicJoin implements AutoCloseable
     int doWork(final long nowNs)
     {
         int workCount = 0;
-        workCount += memberStatusAdapter.poll();
+        workCount += consensusAdapter.poll();
 
         switch (state)
         {
@@ -174,7 +161,7 @@ class DynamicJoin implements AutoCloseable
 
             for (final ClusterMember follower : passiveFollowers)
             {
-                if (memberStatusEndpoint.equals(follower.memberFacingEndpoint()))
+                if (consensusEndpoint.equals(follower.consensusEndpoint()))
                 {
                     memberId = follower.id();
                     clusterMembers = ClusterMember.parse(activeMembers);
@@ -182,15 +169,15 @@ class DynamicJoin implements AutoCloseable
 
                     if (null != leaderMember)
                     {
-                        if (!leaderMember.memberFacingEndpoint().equals(
-                            clusterMemberStatusEndpoints[clusterMembersStatusEndpointsCursor]))
+                        if (!leaderMember.consensusEndpoint().equals(
+                            clusterConsensusEndpoints[clusterConsensusEndpointsCursor]))
                         {
-                            CloseHelper.close(ctx.countedErrorHandler(), memberStatusPublication);
+                            CloseHelper.close(ctx.countedErrorHandler(), consensusPublication);
 
-                            final ChannelUri memberStatusUri = ChannelUri.parse(ctx.memberStatusChannel());
-                            memberStatusUri.put(ENDPOINT_PARAM_NAME, leaderMember.memberFacingEndpoint());
-                            memberStatusPublication = ctx.aeron().addExclusivePublication(
-                                memberStatusUri.toString(), ctx.memberStatusStreamId());
+                            final ChannelUri consensusUri = ChannelUri.parse(ctx.consensusChannel());
+                            consensusUri.put(ENDPOINT_PARAM_NAME, leaderMember.consensusEndpoint());
+                            consensusPublication = ctx.aeron().addExclusivePublication(
+                                consensusUri.toString(), ctx.consensusStreamId());
                         }
 
                         timeOfLastActivityNs = 0;
@@ -203,13 +190,11 @@ class DynamicJoin implements AutoCloseable
         }
     }
 
-    void onSnapshotRecordings(
-        final long correlationId, final SnapshotRecordingsDecoder snapshotRecordingsDecoder)
+    void onSnapshotRecordings(final long correlationId, final SnapshotRecordingsDecoder snapshotRecordingsDecoder)
     {
         if (State.PASSIVE_FOLLOWER == state && correlationId == this.correlationId)
         {
             final SnapshotRecordingsDecoder.SnapshotsDecoder snapshotsDecoder = snapshotRecordingsDecoder.snapshots();
-
             if (snapshotsDecoder.count() > 0)
             {
                 for (final SnapshotRecordingsDecoder.SnapshotsDecoder snapshot : snapshotsDecoder)
@@ -237,14 +222,12 @@ class DynamicJoin implements AutoCloseable
             }
             else
             {
-                final ChannelUri leaderArchiveUri = ChannelUri.parse(ctx.archiveContext().controlRequestChannel());
-                leaderArchiveUri.put(ENDPOINT_PARAM_NAME, leaderMember.archiveEndpoint());
-
                 final AeronArchive.Context leaderArchiveCtx = new AeronArchive.Context()
                     .aeron(ctx.aeron())
-                    .controlRequestChannel(leaderArchiveUri.toString())
+                    .lock(NoOpLock.INSTANCE)
+                    .controlRequestChannel("aeron:udp?endpoint=" + leaderMember.archiveEndpoint())
                     .controlRequestStreamId(ctx.archiveContext().controlRequestStreamId())
-                    .controlResponseChannel(ctx.archiveContext().controlResponseChannel())
+                    .controlResponseChannel("aeron:udp?endpoint=" + archiveEndpoint)
                     .controlResponseStreamId(ctx.archiveContext().controlResponseStreamId());
 
                 leaderArchiveAsyncConnect = AeronArchive.asyncConnect(leaderArchiveCtx);
@@ -257,27 +240,27 @@ class DynamicJoin implements AutoCloseable
     {
         if (nowNs > (timeOfLastActivityNs + intervalNs))
         {
-            int cursor = ++clusterMembersStatusEndpointsCursor;
-            if (cursor >= clusterMemberStatusEndpoints.length)
+            int cursor = ++clusterConsensusEndpointsCursor;
+            if (cursor >= clusterConsensusEndpoints.length)
             {
-                clusterMembersStatusEndpointsCursor = 0;
+                clusterConsensusEndpointsCursor = 0;
                 cursor = 0;
             }
 
-            CloseHelper.close(ctx.countedErrorHandler(), memberStatusPublication);
-            final ChannelUri uri = ChannelUri.parse(ctx.memberStatusChannel());
-            uri.put(ENDPOINT_PARAM_NAME, clusterMemberStatusEndpoints[cursor]);
-            memberStatusPublication = ctx.aeron().addExclusivePublication(uri.toString(), ctx.memberStatusStreamId());
+            CloseHelper.close(ctx.countedErrorHandler(), consensusPublication);
+            final ChannelUri uri = ChannelUri.parse(ctx.consensusChannel());
+            uri.put(ENDPOINT_PARAM_NAME, clusterConsensusEndpoints[cursor]);
+            consensusPublication = ctx.aeron().addExclusivePublication(uri.toString(), ctx.consensusStreamId());
             correlationId = NULL_VALUE;
             timeOfLastActivityNs = nowNs;
 
             return 1;
         }
-        else if (NULL_VALUE == correlationId && memberStatusPublication.isConnected())
+        else if (NULL_VALUE == correlationId && consensusPublication.isConnected())
         {
             final long correlationId = ctx.aeron().nextCorrelationId();
 
-            if (memberStatusPublisher.addPassiveMember(memberStatusPublication, correlationId, memberEndpoints))
+            if (consensusPublisher.addPassiveMember(consensusPublication, correlationId, consensusEndpoints))
             {
                 timeOfLastActivityNs = nowNs;
                 this.correlationId = correlationId;
@@ -295,7 +278,7 @@ class DynamicJoin implements AutoCloseable
         {
             correlationId = ctx.aeron().nextCorrelationId();
 
-            if (memberStatusPublisher.snapshotRecordingQuery(memberStatusPublication, correlationId, memberId))
+            if (consensusPublisher.snapshotRecordingQuery(consensusPublication, correlationId, memberId))
             {
                 timeOfLastActivityNs = nowNs;
                 return 1;
@@ -331,16 +314,15 @@ class DynamicJoin implements AutoCloseable
         }
         else if (pollForResponse(leaderArchive, correlationId))
         {
-            final long snapshotStopPosition = (int)leaderArchive.controlResponsePoller().relevantId();
-
             correlationId = NULL_VALUE;
+            final long snapshotStopPosition = leaderArchive.controlResponsePoller().relevantId();
 
             if (NULL_POSITION == snapshotStopPosition)
             {
                 throw new ClusterException("snapshot stopPosition is NULL_POSITION");
             }
 
-            leaderSnapshotLengthMap.put(snapshotCursor, snapshotStopPosition);
+            snapshotLengths.addLong(snapshotCursor, snapshotStopPosition);
             if (++snapshotCursor >= leaderSnapshots.size())
             {
                 snapshotCursor = 0;
@@ -363,59 +345,35 @@ class DynamicJoin implements AutoCloseable
             return null == leaderArchive ? 0 : 1;
         }
 
-        if (null != snapshotReader)
+        if (null != snapshotRetrieveMonitor)
         {
-            if (snapshotReader.poll() == 0)
+            workCount += snapshotRetrieveMonitor.poll();
+            if (snapshotRetrieveMonitor.isDone())
             {
-                if (snapshotReader.isDone())
-                {
-                    consensusModuleAgent.retrievedSnapshot(
-                        snapshotReader.recordingId(), leaderSnapshots.get(snapshotCursor));
+                consensusModuleAgent.retrievedSnapshot(
+                    snapshotRetrieveMonitor.recordingId(), leaderSnapshots.get(snapshotCursor));
 
-                    CloseHelper.close(ctx.countedErrorHandler(), snapshotRetrieveSubscription);
-                    snapshotRetrieveSubscription = null;
-                    snapshotRetrieveImage = null;
-                    snapshotReader = null;
-                    correlationId = NULL_VALUE;
-                    snapshotReplaySessionId = NULL_VALUE;
+                snapshotRetrieveMonitor = null;
+                correlationId = NULL_VALUE;
 
-                    if (++snapshotCursor >= leaderSnapshots.size())
-                    {
-                        state(State.SNAPSHOT_LOAD);
-                        workCount++;
-                    }
-                }
-                else if (null != snapshotRetrieveImage && snapshotRetrieveImage.isClosed())
+                if (++snapshotCursor >= leaderSnapshots.size())
                 {
-                    throw new ClusterException("retrieval of snapshot image ended unexpectedly");
+                    state(State.SNAPSHOT_LOAD);
+                    workCount++;
                 }
-            }
-            else
-            {
-                workCount++;
-            }
-        }
-        else if (null == snapshotRetrieveImage && null != snapshotRetrieveSubscription)
-        {
-            snapshotRetrieveImage = snapshotRetrieveSubscription.imageBySessionId(snapshotReplaySessionId);
-            if (null != snapshotRetrieveImage)
-            {
-                snapshotReader = new SnapshotReader(
-                    snapshotRetrieveImage, ctx.aeron().countersReader(), leaderSnapshotLengthMap.get(snapshotCursor));
-                workCount++;
             }
         }
         else if (NULL_VALUE == correlationId)
         {
             final long replayId = ctx.aeron().nextCorrelationId();
             final RecordingLog.Snapshot snapshot = leaderSnapshots.get(snapshotCursor);
-            final String transferChannel = "aeron:udp?endpoint=" + transferEndpoint;
+            final String catchupChannel = "aeron:udp?endpoint=" + catchupEndpoint;
 
             if (leaderArchive.archiveProxy().replay(
                 snapshot.recordingId,
                 0,
                 NULL_LENGTH,
-                transferChannel,
+                catchupChannel,
                 ctx.replayStreamId(),
                 replayId,
                 leaderArchive.controlSessionId()))
@@ -426,12 +384,19 @@ class DynamicJoin implements AutoCloseable
         }
         else if (pollForResponse(leaderArchive, correlationId))
         {
-            snapshotReplaySessionId = (int)leaderArchive.controlResponsePoller().relevantId();
-            final String replaySubscriptionChannel =
-                "aeron:udp?endpoint=" + transferEndpoint + "|session-id=" + snapshotReplaySessionId;
+            final int replaySessionId = (int)leaderArchive.controlResponsePoller().relevantId();
+            final String catchupChannel = "aeron:udp?endpoint=" + catchupEndpoint + "|session-id=" + replaySessionId;
 
-            snapshotRetrieveSubscription = ctx.aeron().addSubscription(replaySubscriptionChannel, ctx.replayStreamId());
-            localArchive.startRecording(replaySubscriptionChannel, ctx.replayStreamId(), SourceLocation.REMOTE, true);
+            snapshotRetrieveMonitor = new SnapshotRetrieveMonitor(localArchive, snapshotLengths.get(snapshotCursor));
+
+            localArchive.archiveProxy().startRecording(
+                catchupChannel,
+                ctx.replayStreamId(),
+                SourceLocation.REMOTE,
+                true,
+                localArchive.context().aeron().nextCorrelationId(),
+                localArchive.controlSessionId());
+
             workCount++;
         }
 
@@ -444,10 +409,10 @@ class DynamicJoin implements AutoCloseable
 
         if (null == recoveryStateCounter)
         {
-            recoveryStateCounter = consensusModuleAgent.loadSnapshotsFromDynamicJoin();
+            recoveryStateCounter = consensusModuleAgent.loadSnapshotsForDynamicJoin();
             workCount++;
         }
-        else if (consensusModuleAgent.pollForEndOfSnapshotLoad(recoveryStateCounter, nowNs))
+        else if (consensusModuleAgent.pollForSnapshotLoadAck(recoveryStateCounter, nowNs))
         {
             CloseHelper.close(ctx.countedErrorHandler(), recoveryStateCounter);
             recoveryStateCounter = null;
@@ -463,7 +428,7 @@ class DynamicJoin implements AutoCloseable
         int workCount = 0;
         final long leadershipTermId = leaderSnapshots.isEmpty() ? NULL_VALUE : leaderSnapshots.get(0).leadershipTermId;
 
-        if (memberStatusPublisher.joinCluster(memberStatusPublication, leadershipTermId, memberId))
+        if (consensusPublisher.joinCluster(consensusPublication, leadershipTermId, memberId))
         {
             if (consensusModuleAgent.dynamicJoinComplete())
             {
@@ -501,108 +466,5 @@ class DynamicJoin implements AutoCloseable
         }
 
         return false;
-    }
-
-    static class SnapshotReader implements ControlledFragmentHandler
-    {
-        private static final int FRAGMENT_LIMIT = 10;
-
-        private final long endPosition;
-        private final MessageHeaderDecoder messageHeaderDecoder = new MessageHeaderDecoder();
-        private final SnapshotMarkerDecoder snapshotMarkerDecoder = new SnapshotMarkerDecoder();
-        private final CountersReader countersReader;
-        private final Image image;
-        private long recordingId = RecordingPos.NULL_RECORDING_ID;
-        private long recordingPosition = NULL_POSITION;
-        private int counterId;
-        private boolean inSnapshot = false;
-        private boolean inHeader = false;
-
-        SnapshotReader(final Image image, final CountersReader countersReader, final long endPosition)
-        {
-            this.countersReader = countersReader;
-            this.image = image;
-            this.counterId = RecordingPos.findCounterIdBySession(countersReader, image.sessionId());
-            this.endPosition = endPosition;
-        }
-
-        boolean isDone()
-        {
-            return endPosition <= recordingPosition;
-        }
-
-        long recordingId()
-        {
-            return recordingId;
-        }
-
-        void pollRecordingPosition()
-        {
-            if (CountersReader.NULL_COUNTER_ID == counterId)
-            {
-                counterId = RecordingPos.findCounterIdBySession(countersReader, image.sessionId());
-            }
-            else if (RecordingPos.NULL_RECORDING_ID == recordingId)
-            {
-                recordingId = RecordingPos.getRecordingId(countersReader, counterId);
-            }
-            else
-            {
-                recordingPosition = countersReader.getCounterValue(counterId);
-            }
-        }
-
-        int poll()
-        {
-            pollRecordingPosition();
-
-            return image.controlledPoll(this, FRAGMENT_LIMIT);
-        }
-
-        public Action onFragment(final DirectBuffer buffer, final int offset, final int length, final Header header)
-        {
-            if (inHeader)
-            {
-                messageHeaderDecoder.wrap(buffer, offset);
-
-                if (messageHeaderDecoder.templateId() == SnapshotMarkerDecoder.TEMPLATE_ID)
-                {
-                    snapshotMarkerDecoder.wrap(
-                        buffer,
-                        offset + MessageHeaderDecoder.ENCODED_LENGTH,
-                        messageHeaderDecoder.blockLength(),
-                        messageHeaderDecoder.version());
-
-                    final long typeId = snapshotMarkerDecoder.typeId();
-                    if (typeId != ConsensusModule.Configuration.SNAPSHOT_TYPE_ID &&
-                        typeId != ClusteredServiceContainer.SNAPSHOT_TYPE_ID)
-                    {
-                        throw new ClusterException("unexpected snapshot type: " + typeId);
-                    }
-
-                    switch (snapshotMarkerDecoder.mark())
-                    {
-                        case BEGIN:
-                            if (inSnapshot)
-                            {
-                                throw new ClusterException("already in snapshot");
-                            }
-                            inSnapshot = true;
-                            inHeader = true;
-                            return Action.CONTINUE;
-
-                        case END:
-                            if (!inSnapshot)
-                            {
-                                throw new ClusterException("missing begin snapshot");
-                            }
-                            inHeader = false;
-                            return Action.CONTINUE;
-                    }
-                }
-            }
-
-            return ControlledFragmentHandler.Action.CONTINUE;
-        }
     }
 }

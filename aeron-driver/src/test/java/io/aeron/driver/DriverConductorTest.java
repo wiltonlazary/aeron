@@ -50,7 +50,7 @@ import java.util.function.LongConsumer;
 
 import static io.aeron.ErrorCode.*;
 import static io.aeron.driver.Configuration.*;
-import static io.aeron.driver.status.ClientHeartbeatTimestamp.CLIENT_HEARTBEAT_TYPE_ID;
+import static io.aeron.driver.status.ClientHeartbeatTimestamp.HEARTBEAT_TYPE_ID;
 import static io.aeron.protocol.DataHeaderFlyweight.createDefaultHeader;
 import static org.agrona.concurrent.status.CountersReader.*;
 import static org.hamcrest.CoreMatchers.is;
@@ -127,11 +127,13 @@ public class DriverConductorTest
         counterKeyAndLabel.putStringAscii(COUNTER_LABEL_OFFSET, COUNTER_LABEL);
 
         final UnsafeBuffer counterBuffer = new UnsafeBuffer(ByteBuffer.allocate(BUFFER_LENGTH));
-        spyCountersManager = spy(new CountersManager(
-            new UnsafeBuffer(ByteBuffer.allocate(BUFFER_LENGTH * 2)), counterBuffer, StandardCharsets.US_ASCII));
+        final UnsafeBuffer metaDataBuffer = new UnsafeBuffer(
+            ByteBuffer.allocate(Configuration.countersMetadataBufferLength(BUFFER_LENGTH)));
+        spyCountersManager = spy(new CountersManager(metaDataBuffer, counterBuffer, StandardCharsets.US_ASCII));
 
         final SystemCounters mockSystemCounters = mock(SystemCounters.class);
         when(mockSystemCounters.get(any())).thenReturn(mockErrorCounter);
+        when(mockErrorCounter.appendToLabel(any())).thenReturn(mockErrorCounter);
 
         final MediaDriver.Context ctx = new MediaDriver.Context()
             .tempBuffer(new UnsafeBuffer(new byte[METADATA_LENGTH]))
@@ -158,9 +160,8 @@ public class DriverConductorTest
             .receiverProxy(receiverProxy)
             .senderProxy(senderProxy)
             .driverConductorProxy(driverConductorProxy)
+            .receiveChannelEndpointThreadLocals(new ReceiveChannelEndpointThreadLocals())
             .nameResolver(DefaultNameResolver.INSTANCE);
-
-        ctx.receiveChannelEndpointThreadLocals(new ReceiveChannelEndpointThreadLocals(ctx));
 
         driverProxy = new DriverProxy(toDriverCommands, toDriverCommands.nextCorrelationId());
         driverConductor = new DriverConductor(ctx);
@@ -702,7 +703,7 @@ public class DriverConductorTest
         final PublicationImage publicationImage = captor2.getValue();
 
         publicationImage.activate();
-        publicationImage.ifActiveGoInactive();
+        publicationImage.deactivate();
 
         doWorkUntil(() -> nanoClock.nanoTime() >= imageLivenessTimeoutNs() + 1000);
 
@@ -740,7 +741,7 @@ public class DriverConductorTest
 
         driverConductor.doWork();
 
-        publicationImage.ifActiveGoInactive();
+        publicationImage.deactivate();
 
         doWorkUntil(() -> nanoClock.nanoTime() >= imageLivenessTimeoutNs() + 1000);
 
@@ -784,7 +785,7 @@ public class DriverConductorTest
         final PublicationImage publicationImage = captor2.getValue();
 
         publicationImage.activate();
-        publicationImage.ifActiveGoInactive();
+        publicationImage.deactivate();
 
         doWorkUntil(() -> nanoClock.nanoTime() >= imageLivenessTimeoutNs() / 2);
 
@@ -1801,18 +1802,16 @@ public class DriverConductorTest
 
     private static AtomicCounter clientHeartbeatCounter(final CountersReader countersReader)
     {
-        final DirectBuffer buffer = countersReader.metaDataBuffer();
-
         for (int i = 0, size = countersReader.maxCounterId(); i < size; i++)
         {
-            if (countersReader.getCounterState(i) == RECORD_ALLOCATED)
+            final int counterState = countersReader.getCounterState(i);
+            if (counterState == RECORD_ALLOCATED && countersReader.getCounterTypeId(i) == HEARTBEAT_TYPE_ID)
             {
-                final int recordOffset = CountersReader.metaDataOffset(i);
-
-                if (buffer.getInt(recordOffset + TYPE_ID_OFFSET) == CLIENT_HEARTBEAT_TYPE_ID)
-                {
-                    return new AtomicCounter(countersReader.valuesBuffer(), i);
-                }
+                return new AtomicCounter(countersReader.valuesBuffer(), i);
+            }
+            else if (RECORD_UNUSED == counterState)
+            {
+                break;
             }
         }
 

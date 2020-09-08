@@ -16,7 +16,6 @@
 
 #include "aeron_driver_sender.h"
 #include "aeron_alloc.h"
-#include "concurrent/aeron_thread.h"
 
 void aeron_driver_sender_proxy_offer(aeron_driver_sender_proxy_t *sender_proxy, void *cmd)
 {
@@ -256,8 +255,7 @@ void aeron_driver_sender_proxy_on_resolution_change(
     }
 }
 
-void aeron_driver_sender_proxy_on_delete_cmd(
-    aeron_driver_sender_proxy_t *sender_proxy, aeron_command_base_t *cmd)
+void aeron_driver_sender_proxy_on_delete_cmd(aeron_driver_sender_proxy_t *sender_proxy, aeron_command_base_t *cmd)
 {
     if (AERON_THREADING_MODE_IS_SHARED_OR_INVOKER(sender_proxy->threading_mode))
     {

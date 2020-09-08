@@ -78,7 +78,7 @@ class RecordingSession implements Session
         countedErrorHandler = ctx.countedErrorHandler();
         progressEventPosition = image.joinPosition();
 
-        blockLengthLimit = Math.min(image.termBufferLength(), Archive.Configuration.MAX_BLOCK_LENGTH);
+        blockLengthLimit = Math.min(image.termBufferLength(), ctx.fileIoMaxLength());
         recordingWriter = new RecordingWriter(
             recordingId, startPosition, segmentLength, image, ctx, archiveDirChannel, checksumBuffer, checksum);
     }
@@ -105,14 +105,14 @@ class RecordingSession implements Session
 
     public void close()
     {
-        CloseHelper.close(countedErrorHandler, recordingWriter);
-        CloseHelper.close(countedErrorHandler, position);
         if (autoStop)
         {
             final Subscription subscription = image.subscription();
             CloseHelper.close(countedErrorHandler, subscription);
             controlSession.archiveConductor().removeRecordingSubscription(subscription.registrationId());
         }
+        CloseHelper.close(countedErrorHandler, position);
+        recordingWriter.close();
     }
 
     public void abortClose()
@@ -165,9 +165,9 @@ class RecordingSession implements Session
         return workCount;
     }
 
-    Image image()
+    Subscription subscription()
     {
-        return image;
+        return image.subscription();
     }
 
     ControlSession controlSession()
@@ -219,7 +219,7 @@ class RecordingSession implements Session
 
             if (workCount > 0)
             {
-                this.position.setOrdered(image.position());
+                this.position.setOrdered(recordingWriter.position());
             }
             else if (image.isEndOfStream() || image.isClosed())
             {
@@ -228,7 +228,7 @@ class RecordingSession implements Session
 
             if (null != recordingEventsProxy)
             {
-                final long recordedPosition = position.getWeak();
+                final long recordedPosition = recordingWriter.position();
                 if (progressEventPosition < recordedPosition)
                 {
                     if (recordingEventsProxy.progress(recordingId, image.joinPosition(), recordedPosition))

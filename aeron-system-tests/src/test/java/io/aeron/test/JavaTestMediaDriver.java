@@ -19,10 +19,11 @@ import io.aeron.driver.MediaDriver;
 import io.aeron.driver.ext.DebugChannelEndpointConfiguration;
 import io.aeron.driver.ext.DebugReceiveChannelEndpoint;
 import io.aeron.driver.ext.LossGenerator;
+import org.agrona.concurrent.AgentInvoker;
 
 public final class JavaTestMediaDriver implements TestMediaDriver
 {
-    private MediaDriver mediaDriver;
+    private final MediaDriver mediaDriver;
 
     private JavaTestMediaDriver(final MediaDriver mediaDriver)
     {
@@ -48,6 +49,11 @@ public final class JavaTestMediaDriver implements TestMediaDriver
     public String aeronDirectoryName()
     {
         return mediaDriver.aeronDirectoryName();
+    }
+
+    public AgentInvoker sharedAgentInvoker()
+    {
+        return mediaDriver.sharedAgentInvoker();
     }
 
     public static void enableLossGenerationOnReceive(

@@ -27,8 +27,7 @@ import io.aeron.test.Tests;
 import org.agrona.CloseHelper;
 import org.agrona.IoUtil;
 import org.agrona.MutableDirectBuffer;
-import org.agrona.concurrent.Agent;
-import org.agrona.concurrent.MessageHandler;
+import org.agrona.concurrent.*;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -48,7 +47,6 @@ import static java.util.Collections.synchronizedSet;
 import static java.util.stream.Collectors.toSet;
 import static org.agrona.BitUtil.SIZE_OF_INT;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 public class ClusterLoggingAgentTest
@@ -122,7 +120,6 @@ public class ClusterLoggingAgentTest
             .recordingEventsChannel("aeron:udp?control-mode=dynamic|control=localhost:8030");
 
         final Archive.Context archiveCtx = new Archive.Context()
-            .aeronDirectoryName(aeronDirectoryName)
             .errorHandler(Tests::onError)
             .archiveDir(new File(testDir, "archive"))
             .deleteArchiveOnStart(true)
@@ -133,7 +130,6 @@ public class ClusterLoggingAgentTest
             .threadingMode(ArchiveThreadingMode.SHARED);
 
         final ConsensusModule.Context consensusModuleCtx = new ConsensusModule.Context()
-            .aeronDirectoryName(aeronDirectoryName)
             .errorHandler(Tests::onError)
             .clusterDir(new File(testDir, "consensus-module"))
             .archiveContext(aeronArchiveContext.clone())

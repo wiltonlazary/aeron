@@ -16,11 +16,9 @@
 #ifndef AERON_COUNTERS_READER_H
 #define AERON_COUNTERS_READER_H
 
-#include <cstdint>
-#include <cstddef>
 #include <functional>
-#include <util/BitUtil.h>
 
+#include "util/BitUtil.h"
 #include "AtomicBuffer.h"
 
 namespace aeron { namespace concurrent {
@@ -28,7 +26,7 @@ namespace aeron { namespace concurrent {
 /**
  * Reads the counters metadata and values buffers.
  *
- * This class is threadsafe and can be used across threads.
+ * This class is threadsafe.
  *
  * <b>Values Buffer</b>
  * <pre>
@@ -38,7 +36,13 @@ namespace aeron { namespace concurrent {
  *  |                        Counter Value                          |
  *  |                                                               |
  *  +---------------------------------------------------------------+
- *  |                     120 bytes of padding                     ...
+ *  |                       Registration Id                         |
+ *  |                                                               |
+ *  +---------------------------------------------------------------+
+ *  |                          Owner Id                             |
+ *  |                                                               |
+ *  +---------------------------------------------------------------+
+ *  |                     104 bytes of padding                     ...
  * ...                                                              |
  *  +---------------------------------------------------------------+
  *  |                   Repeats to end of buffer                   ...
@@ -56,7 +60,7 @@ namespace aeron { namespace concurrent {
  *  +---------------------------------------------------------------+
  *  |                          Type Id                              |
  *  +---------------------------------------------------------------+
- *  |                   Free-for-reuse Deadline                     |
+ *  |                  Free-for-reuse Deadline (ms)                 |
  *  |                                                               |
  *  +---------------------------------------------------------------+
  *  |                      112 bytes for key                       ...
@@ -74,47 +78,100 @@ namespace aeron { namespace concurrent {
  * </pre>
  */
 
-typedef std::function<void(
-    std::int32_t,
-    std::int32_t,
-    const AtomicBuffer&,
-    const std::string&)> on_counters_metadata_t;
+typedef std::function<void(std::int32_t, std::int32_t, const AtomicBuffer&, const std::string&)> on_counters_metadata_t;
 
 class CountersReader
 {
 public:
-    inline CountersReader(const AtomicBuffer& metadataBuffer, const AtomicBuffer& valuesBuffer) :
+    inline CountersReader(const AtomicBuffer &metadataBuffer, const AtomicBuffer &valuesBuffer) :
         m_metadataBuffer(metadataBuffer),
         m_valuesBuffer(valuesBuffer),
-        m_maxCounterId(valuesBuffer.capacity() / COUNTER_LENGTH)
+        m_maxCounterId((valuesBuffer.capacity() / COUNTER_LENGTH) - 1)
     {
     }
 
     template <typename F>
-    void forEach(F&& onCountersMetadata) const
+    void forEach(F &&onCountersMetadata) const
     {
         std::int32_t id = 0;
 
-        for (util::index_t i = 0, capacity = m_metadataBuffer.capacity(); i < capacity; i += METADATA_LENGTH)
+        for (util::index_t offset = 0, capacity = m_metadataBuffer.capacity();
+            offset < capacity;
+            offset += METADATA_LENGTH)
         {
-            std::int32_t recordStatus = m_metadataBuffer.getInt32Volatile(i);
-
-            if (RECORD_UNUSED == recordStatus)
+            std::int32_t recordStatus = m_metadataBuffer.getInt32Volatile(offset);
+            if (RECORD_ALLOCATED == recordStatus)
             {
-                break;
-            }
-            else if (RECORD_ALLOCATED == recordStatus)
-            {
-                const auto& record = m_metadataBuffer.overlayStruct<CounterMetaDataDefn>(i);
-
-                const std::string label = m_metadataBuffer.getString(i + LABEL_LENGTH_OFFSET);
-                const AtomicBuffer keyBuffer(m_metadataBuffer.buffer() + i + KEY_OFFSET, sizeof(CounterMetaDataDefn::key));
+                const auto &record = m_metadataBuffer.overlayStruct<CounterMetaDataDefn>(offset);
+                const std::string label = m_metadataBuffer.getString(offset + LABEL_LENGTH_OFFSET);
+                const AtomicBuffer keyBuffer(
+                    m_metadataBuffer.buffer() + offset + KEY_OFFSET, sizeof(CounterMetaDataDefn::key));
 
                 onCountersMetadata(id, record.typeId, keyBuffer, label);
+            }
+            else if (RECORD_UNUSED == recordStatus)
+            {
+                break;
             }
 
             id++;
         }
+    }
+
+    inline std::int32_t findByRegistrationId(const std::int64_t registrationId) const
+    {
+        std::int32_t id = 0;
+
+        for (util::index_t offset = 0, capacity = m_metadataBuffer.capacity();
+            offset < capacity;
+            offset += METADATA_LENGTH)
+        {
+            std::int32_t recordStatus = m_metadataBuffer.getInt32Volatile(offset);
+            if (RECORD_ALLOCATED == recordStatus)
+            {
+                if (m_valuesBuffer.getInt64Volatile(counterOffset(id) + REGISTRATION_ID_OFFSET) == registrationId)
+                {
+                    return id;
+                }
+            }
+            else if (RECORD_UNUSED == recordStatus)
+            {
+                break;
+            }
+
+            id++;
+        }
+
+        return NULL_COUNTER_ID;
+    }
+
+    inline std::int32_t findByTypeIdAndRegistrationId(
+        const std::int32_t typeId, const std::int64_t registrationId) const
+    {
+        std::int32_t id = 0;
+
+        for (util::index_t offset = 0, capacity = m_metadataBuffer.capacity();
+             offset < capacity;
+             offset += METADATA_LENGTH)
+        {
+            std::int32_t recordStatus = m_metadataBuffer.getInt32Volatile(offset);
+            if (RECORD_ALLOCATED == recordStatus)
+            {
+                if (m_metadataBuffer.getInt32(offset + TYPE_ID_OFFSET) == typeId &&
+                    m_valuesBuffer.getInt64Volatile(counterOffset(id) + REGISTRATION_ID_OFFSET) == registrationId)
+                {
+                    return id;
+                }
+            }
+            else if (RECORD_UNUSED == recordStatus)
+            {
+                break;
+            }
+
+            id++;
+        }
+
+        return NULL_COUNTER_ID;
     }
 
     inline std::int32_t maxCounterId() const
@@ -125,28 +182,42 @@ public:
     inline std::int64_t getCounterValue(std::int32_t id) const
     {
         validateCounterId(id);
-
         return m_valuesBuffer.getInt64Volatile(counterOffset(id));
+    }
+
+    inline std::int64_t getCounterRegistrationId(std::int32_t id) const
+    {
+        validateCounterId(id);
+        return m_valuesBuffer.getInt64Volatile(counterOffset(id) + REGISTRATION_ID_OFFSET);
+    }
+
+    inline std::int64_t getCounterOwnerId(std::int32_t id) const
+    {
+        validateCounterId(id);
+        return m_valuesBuffer.getInt64(counterOffset(id) + OWNER_ID_OFFSET);
     }
 
     inline std::int32_t getCounterState(std::int32_t id) const
     {
         validateCounterId(id);
-
         return m_metadataBuffer.getInt32Volatile(metadataOffset(id));
     }
 
-    inline std::int64_t getFreeToReuseDeadline(std::int32_t id) const
+    inline std::int32_t getCounterTypeId(std::int32_t id) const
     {
         validateCounterId(id);
+        return m_metadataBuffer.getInt32Volatile(metadataOffset(id) + TYPE_ID_OFFSET);
+    }
 
-        return m_metadataBuffer.getInt64Volatile(metadataOffset(id) + FREE_TO_REUSE_DEADLINE_OFFSET);
+    inline std::int64_t getFreeForReuseDeadline(std::int32_t id) const
+    {
+        validateCounterId(id);
+        return m_metadataBuffer.getInt64Volatile(metadataOffset(id) + FREE_FOR_REUSE_DEADLINE_OFFSET);
     }
 
     inline std::string getCounterLabel(std::int32_t id) const
     {
         validateCounterId(id);
-
         return m_metadataBuffer.getString(metadataOffset(id) + LABEL_LENGTH_OFFSET);
     }
 
@@ -175,7 +246,9 @@ public:
     struct CounterValueDefn
     {
         std::int64_t counterValue;
-        std::int8_t pad1[(2 * util::BitUtil::CACHE_LINE_LENGTH) - sizeof(std::int64_t)];
+        std::int64_t registrationId;
+        std::int64_t ownerId;
+        std::int8_t padding[(2 * util::BitUtil::CACHE_LINE_LENGTH) - (3 * sizeof(std::int64_t))];
     };
 
     struct CounterMetaDataDefn
@@ -195,12 +268,17 @@ public:
     static const std::int32_t RECORD_ALLOCATED = 1;
     static const std::int32_t RECORD_RECLAIMED = -1;
 
+    static const std::int64_t DEFAULT_REGISTRATION_ID = INT64_C(0);
+    static const std::int64_t DEFAULT_OWNER_ID = INT64_C(0);
     static const std::int64_t NOT_FREE_TO_REUSE = INT64_MAX;
 
     static const util::index_t COUNTER_LENGTH = sizeof(CounterValueDefn);
+    static const util::index_t REGISTRATION_ID_OFFSET = offsetof(CounterValueDefn, registrationId);
+    static const util::index_t OWNER_ID_OFFSET = offsetof(CounterValueDefn, ownerId);
+
     static const util::index_t METADATA_LENGTH = sizeof(CounterMetaDataDefn);
     static const util::index_t TYPE_ID_OFFSET = offsetof(CounterMetaDataDefn, typeId);
-    static const util::index_t FREE_TO_REUSE_DEADLINE_OFFSET = offsetof(CounterMetaDataDefn, freeToReuseDeadline);
+    static const util::index_t FREE_FOR_REUSE_DEADLINE_OFFSET = offsetof(CounterMetaDataDefn, freeToReuseDeadline);
     static const util::index_t KEY_OFFSET = offsetof(CounterMetaDataDefn, key);
     static const util::index_t LABEL_LENGTH_OFFSET = offsetof(CounterMetaDataDefn, labelLength);
 
@@ -212,7 +290,7 @@ protected:
     AtomicBuffer m_valuesBuffer;
     const std::int32_t m_maxCounterId;
 
-    void validateCounterId(std::int32_t counterId) const
+    inline void validateCounterId(std::int32_t counterId) const
     {
         if (counterId < 0 || counterId > m_maxCounterId)
         {

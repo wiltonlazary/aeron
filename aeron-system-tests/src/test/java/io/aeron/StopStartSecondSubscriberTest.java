@@ -38,8 +38,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 public class StopStartSecondSubscriberTest
 {
-    public static final String CHANNEL1 = "aeron:udp?endpoint=localhost:24325";
-    public static final String CHANNEL2 = "aeron:udp?endpoint=localhost:24326";
+    private static final String CHANNEL1 = "aeron:udp?endpoint=localhost:24325";
+    private static final String CHANNEL2 = "aeron:udp?endpoint=localhost:24326";
     private static final int STREAM_ID1 = 1001;
     private static final int STREAM_ID2 = 1002;
 
@@ -119,14 +119,12 @@ public class StopStartSecondSubscriberTest
 
         while (publicationOne.offer(buffer, 0, BitUtil.SIZE_OF_INT) < 0L)
         {
-            Thread.yield();
-            Tests.checkInterruptStatus();
+            Tests.yield();
         }
 
         while (publicationTwo.offer(buffer, 0, BitUtil.SIZE_OF_INT) < 0L)
         {
-            Thread.yield();
-            Tests.checkInterruptStatus();
+            Tests.yield();
         }
 
         final MutableInteger fragmentsRead1 = new MutableInteger();
@@ -180,8 +178,7 @@ public class StopStartSecondSubscriberTest
         {
             while (running.get() && publication.offer(buffer, 0, BitUtil.SIZE_OF_INT) < 0L)
             {
-                Thread.yield();
-                Tests.checkInterruptStatus();
+                Tests.yield();
             }
         }
     }

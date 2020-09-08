@@ -20,11 +20,10 @@
 #include <cstdint>
 #include <string>
 #include <cstddef>
-#include <command/Flyweight.h>
-#include <concurrent/AtomicBuffer.h>
-#include <util/Index.h>
+#include "command/Flyweight.h"
 
-namespace aeron { namespace protocol {
+namespace aeron { namespace protocol
+{
 
 /**
  * Flyweight for command header fields.
@@ -47,8 +46,8 @@ class HeaderFlyweight : public command::Flyweight<HeaderDefn>
 public:
     typedef HeaderFlyweight this_t;
 
-    HeaderFlyweight(concurrent::AtomicBuffer& buffer, std::int32_t offset)
-    : command::Flyweight<HeaderDefn>(buffer, offset)
+    HeaderFlyweight(concurrent::AtomicBuffer &buffer, std::int32_t offset) :
+        command::Flyweight<HeaderDefn>(buffer, offset)
     {
     }
 
@@ -57,7 +56,7 @@ public:
         return m_struct.frameLength;
     }
 
-    inline this_t& frameLength(std::int32_t value)
+    inline this_t &frameLength(std::int32_t value)
     {
         m_struct.frameLength = value;
         return *this;
@@ -68,7 +67,7 @@ public:
         return m_struct.version;
     }
 
-    inline this_t& version(std::int8_t value)
+    inline this_t &version(std::int8_t value)
     {
         m_struct.version = value;
         return *this;
@@ -79,7 +78,7 @@ public:
         return m_struct.flags;
     }
 
-    inline this_t& flags(std::int8_t value)
+    inline this_t &flags(std::int8_t value)
     {
         m_struct.flags = value;
         return *this;
@@ -90,7 +89,7 @@ public:
         return m_struct.type;
     }
 
-    inline this_t& type(std::int16_t value)
+    inline this_t &type(std::int16_t value)
     {
         m_struct.type = value;
         return *this;

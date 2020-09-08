@@ -28,6 +28,7 @@ import io.aeron.protocol.DataHeaderFlyweight;
 import io.aeron.protocol.HeaderFlyweight;
 import io.aeron.protocol.SetupFlyweight;
 import io.aeron.protocol.StatusMessageFlyweight;
+import org.agrona.CloseHelper;
 import org.agrona.ErrorHandler;
 import org.agrona.concurrent.*;
 import org.agrona.concurrent.status.AtomicCounter;
@@ -57,9 +58,6 @@ public class ReceiverTest
     private static final int POSITION_BITS_TO_SHIFT = LogBufferDescriptor.positionBitsToShift(TERM_BUFFER_LENGTH);
     private static final String URI = "aeron:udp?endpoint=localhost:45678";
     private static final UdpChannel UDP_CHANNEL = UdpChannel.parse(URI);
-    private static final long IMAGE_LIVENESS_TIMEOUT_NS = Configuration.imageLivenessTimeoutNs();
-    private static final long UNTETHERED_WINDOW_LIMIT_TIMEOUT_NS = Configuration.untetheredWindowLimitTimeoutNs();
-    private static final long UNTETHERED_RESTING_TIMEOUT_NS = Configuration.untetheredRestingTimeoutNs();
     private static final long CORRELATION_ID = 20;
     private static final int STREAM_ID = 1010;
     private static final int INITIAL_TERM_ID = 3;
@@ -96,7 +94,7 @@ public class ReceiverTest
 
     private final CachedNanoClock nanoClock = new CachedNanoClock();
     private final CachedEpochClock epochClock = new CachedEpochClock();
-    private final LossReport lossReport = mock(LossReport.class);
+    private final LossReport mockLossReport = mock(LossReport.class);
 
     private final RawLog rawLog = TestLogFactory.newLogBuffers(TERM_BUFFER_LENGTH);
 
@@ -110,6 +108,13 @@ public class ReceiverTest
     private final ManyToOneConcurrentArrayQueue<Runnable> toConductorQueue =
         new ManyToOneConcurrentArrayQueue<>(Configuration.CMD_QUEUE_CAPACITY);
     private final CongestionControl congestionControl = mock(CongestionControl.class);
+    private final MediaDriver.Context ctx = new MediaDriver.Context()
+        .systemCounters(mockSystemCounters)
+        .errorHandler(mockErrorHandler)
+        .nanoClock(nanoClock)
+        .epochClock(epochClock)
+        .cachedNanoClock(nanoClock)
+        .lossReport(mockLossReport);
 
     private ReceiveChannelEndpoint receiveChannelEndpoint;
 
@@ -141,12 +146,11 @@ public class ReceiverTest
             .receiverCommandQueue(new OneToOneConcurrentArrayQueue<>(Configuration.CMD_QUEUE_CAPACITY))
             .nanoClock(nanoClock)
             .cachedNanoClock(nanoClock)
+            .receiveChannelEndpointThreadLocals(new ReceiveChannelEndpointThreadLocals())
             .driverConductorProxy(driverConductorProxy);
 
         receiverProxy = new ReceiverProxy(
             ThreadingMode.DEDICATED, ctx.receiverCommandQueue(), mock(AtomicCounter.class));
-
-        ctx.receiveChannelEndpointThreadLocals(new ReceiveChannelEndpointThreadLocals(ctx));
 
         receiver = new Receiver(ctx);
         receiverProxy.receiver(receiver);
@@ -157,25 +161,22 @@ public class ReceiverTest
 
         termBuffers = rawLog.termBuffers();
 
-        final MediaDriver.Context context = new MediaDriver.Context()
+        final MediaDriver.Context receiverChannelContext = new MediaDriver.Context()
+            .receiveChannelEndpointThreadLocals(new ReceiveChannelEndpointThreadLocals())
             .systemCounters(mockSystemCounters)
             .cachedNanoClock(nanoClock);
-
-        context.receiveChannelEndpointThreadLocals(new ReceiveChannelEndpointThreadLocals(context));
 
         receiveChannelEndpoint = new ReceiveChannelEndpoint(
             UdpChannel.parse(URI),
             new DataPacketDispatcher(driverConductorProxy, receiver),
             mock(AtomicCounter.class),
-            context);
+            receiverChannelContext);
     }
 
     @AfterEach
-    public void tearDown() throws Exception
+    public void tearDown()
     {
-        receiveChannelEndpoint.close();
-        senderChannel.close();
-        receiver.onClose();
+        CloseHelper.closeAll(receiveChannelEndpoint, senderChannel, receiver::onClose);
     }
 
     @Test
@@ -188,14 +189,12 @@ public class ReceiverTest
         receiver.doWork();
 
         fillSetupFrame(setupHeader);
-        receiveChannelEndpoint
-            .onSetupMessage(setupHeader, setupBuffer, SetupFlyweight.HEADER_LENGTH, senderAddress, 0);
+        receiveChannelEndpoint.onSetupMessage(
+            setupHeader, setupBuffer, SetupFlyweight.HEADER_LENGTH, senderAddress, 0);
 
         final PublicationImage image = new PublicationImage(
             CORRELATION_ID,
-            IMAGE_LIVENESS_TIMEOUT_NS,
-            UNTETHERED_WINDOW_LIMIT_TIMEOUT_NS,
-            UNTETHERED_RESTING_TIMEOUT_NS,
+            ctx,
             receiveChannelEndpoint,
             0,
             senderAddress,
@@ -209,20 +208,15 @@ public class ReceiverTest
             POSITIONS,
             mockHighestReceivedPosition,
             mockRebuildPosition,
-            nanoClock,
-            nanoClock,
-            epochClock,
-            mockSystemCounters,
             SOURCE_ADDRESS,
-            congestionControl,
-            lossReport,
-            mockErrorHandler);
+            congestionControl);
 
-        final int messagesRead = toConductorQueue.drain((e) ->
-        {
-            // pass in new term buffer from conductor, which should trigger SM
-            receiverProxy.newPublicationImage(receiveChannelEndpoint, image);
-        });
+        final int messagesRead = toConductorQueue.drain(
+            (e) ->
+            {
+                // pass in new term buffer from conductor, which should trigger SM
+                receiverProxy.newPublicationImage(receiveChannelEndpoint, image);
+            });
 
         assertThat(messagesRead, is(1));
 
@@ -267,9 +261,7 @@ public class ReceiverTest
             {
                 final PublicationImage image = new PublicationImage(
                     CORRELATION_ID,
-                    IMAGE_LIVENESS_TIMEOUT_NS,
-                    UNTETHERED_WINDOW_LIMIT_TIMEOUT_NS,
-                    UNTETHERED_RESTING_TIMEOUT_NS,
+                    ctx,
                     receiveChannelEndpoint,
                     0,
                     senderAddress,
@@ -283,14 +275,8 @@ public class ReceiverTest
                     POSITIONS,
                     mockHighestReceivedPosition,
                     mockRebuildPosition,
-                    nanoClock,
-                    nanoClock,
-                    epochClock,
-                    mockSystemCounters,
                     SOURCE_ADDRESS,
-                    congestionControl,
-                    lossReport,
-                    mockErrorHandler);
+                    congestionControl);
 
                 receiverProxy.newPublicationImage(receiveChannelEndpoint, image);
             });
@@ -339,9 +325,7 @@ public class ReceiverTest
             {
                 final PublicationImage image = new PublicationImage(
                     CORRELATION_ID,
-                    IMAGE_LIVENESS_TIMEOUT_NS,
-                    UNTETHERED_WINDOW_LIMIT_TIMEOUT_NS,
-                    UNTETHERED_RESTING_TIMEOUT_NS,
+                    ctx,
                     receiveChannelEndpoint,
                     0,
                     senderAddress,
@@ -355,14 +339,8 @@ public class ReceiverTest
                     POSITIONS,
                     mockHighestReceivedPosition,
                     mockRebuildPosition,
-                    nanoClock,
-                    nanoClock,
-                    epochClock,
-                    mockSystemCounters,
                     SOURCE_ADDRESS,
-                    congestionControl,
-                    lossReport,
-                    mockErrorHandler);
+                    congestionControl);
 
                 receiverProxy.newPublicationImage(receiveChannelEndpoint, image);
             });
@@ -414,9 +392,7 @@ public class ReceiverTest
             {
                 final PublicationImage image = new PublicationImage(
                     CORRELATION_ID,
-                    IMAGE_LIVENESS_TIMEOUT_NS,
-                    UNTETHERED_WINDOW_LIMIT_TIMEOUT_NS,
-                    UNTETHERED_RESTING_TIMEOUT_NS,
+                    ctx,
                     receiveChannelEndpoint,
                     0,
                     senderAddress,
@@ -430,14 +406,8 @@ public class ReceiverTest
                     POSITIONS,
                     mockHighestReceivedPosition,
                     mockRebuildPosition,
-                    nanoClock,
-                    nanoClock,
-                    epochClock,
-                    mockSystemCounters,
                     SOURCE_ADDRESS,
-                    congestionControl,
-                    lossReport,
-                    mockErrorHandler);
+                    congestionControl);
 
                 receiverProxy.newPublicationImage(receiveChannelEndpoint, image);
             });
@@ -493,9 +463,7 @@ public class ReceiverTest
             {
                 final PublicationImage image = new PublicationImage(
                     CORRELATION_ID,
-                    IMAGE_LIVENESS_TIMEOUT_NS,
-                    UNTETHERED_WINDOW_LIMIT_TIMEOUT_NS,
-                    UNTETHERED_RESTING_TIMEOUT_NS,
+                    ctx,
                     receiveChannelEndpoint,
                     0,
                     senderAddress,
@@ -509,14 +477,8 @@ public class ReceiverTest
                     POSITIONS,
                     mockHighestReceivedPosition,
                     mockRebuildPosition,
-                    nanoClock,
-                    nanoClock,
-                    epochClock,
-                    mockSystemCounters,
                     SOURCE_ADDRESS,
-                    congestionControl,
-                    lossReport,
-                    mockErrorHandler);
+                    congestionControl);
 
                 receiverProxy.newPublicationImage(receiveChannelEndpoint, image);
             });
@@ -595,7 +557,7 @@ public class ReceiverTest
         receiver.onRemoveSubscription(receiveChannelEndpoint, STREAM_ID);
         receiver.doWork();
 
-        verify(mockImage).ifActiveGoInactive();
+        verify(mockImage).deactivate();
         verify(mockImage, never()).removeFromDispatcher();
     }
 
