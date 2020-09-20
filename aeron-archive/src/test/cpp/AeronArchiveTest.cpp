@@ -43,8 +43,10 @@ typedef intptr_t pid_t;
 #include "client/RecordingEventsAdapter.h"
 #include "client/RecordingPos.h"
 #include "client/ReplayMerge.h"
+#include "ArchiveTestUtil.h"
 
 using namespace aeron;
+using namespace aeron::util;
 using namespace aeron::archive::client;
 
 #ifdef _WIN32
@@ -170,13 +172,13 @@ public:
             const std::string cncFilename = m_context.aeron()->context().cncFileName();
             const std::string aeronPath = aeron::Context::defaultAeronPath();
             m_context.aeron(nullptr);
-#
+
             if (aeron::Context::requestDriverTermination(aeronPath, nullptr, 0))
             {
                 m_stream << "Waiting for driver termination" << std::endl;
 
                 const std::chrono::duration<long, std::milli> IDLE_SLEEP_MS_1(1);
-                while (-1 != MemoryMappedFile::getFileSize(cncFilename.c_str()))
+                while (test::fileExists(cncFilename.c_str()))
                 {
                     std::this_thread::sleep_for(IDLE_SLEEP_MS_1);
                 }
@@ -370,7 +372,7 @@ protected:
     AeronArchive::Context_t m_context;
     pid_t m_pid = -1;
     std::ostringstream m_stream;
-    bool m_debug = false;
+    bool m_debug = true;
 };
 
 TEST_F(AeronArchiveTest, shouldAsyncConnectToArchive)
@@ -919,7 +921,7 @@ TEST_F(AeronArchiveTest, shouldExceptionForIncorrectInitialCredentials)
             std::memcpy(arr, credentials.data(), credentials.length());
             arr[credentials.length()] = '\0';
 
-            return { arr, (std::uint32_t)credentials.length() };
+            return { arr, static_cast<std::uint32_t>(credentials.length()) };
         };
 
     m_context.credentialsSupplier(CredentialsSupplier(onEncodedCredentials));
@@ -942,7 +944,7 @@ TEST_F(AeronArchiveTest, shouldBeAbleToHandleBeingChallenged)
             std::memcpy(arr, credentials.data(), credentials.length());
             arr[credentials.length()] = '\0';
 
-            return { arr, (std::uint32_t)credentials.length() };
+            return { arr, static_cast<std::uint32_t>(credentials.length()) };
         };
 
     auto onChallenge =
@@ -954,7 +956,7 @@ TEST_F(AeronArchiveTest, shouldBeAbleToHandleBeingChallenged)
             std::memcpy(arr, credentials.data(), credentials.length());
             arr[credentials.length()] = '\0';
 
-            return { arr, (std::uint32_t)credentials.length() };
+            return { arr, static_cast<std::uint32_t>(credentials.length()) };
         };
 
     m_context.credentialsSupplier(CredentialsSupplier(onEncodedCredentials, onChallenge));
@@ -976,7 +978,7 @@ TEST_F(AeronArchiveTest, shouldExceptionForIncorrectChallengeCredentials)
             std::memcpy(arr, credentials.data(), credentials.length());
             arr[credentials.length()] = '\0';
 
-            return { arr, (std::uint32_t)credentials.length() };
+            return { arr, static_cast<std::uint32_t>(credentials.length()) };
         };
 
     auto onChallenge =
@@ -988,7 +990,7 @@ TEST_F(AeronArchiveTest, shouldExceptionForIncorrectChallengeCredentials)
             std::memcpy(arr, credentials.data(), credentials.length());
             arr[credentials.length()] = '\0';
 
-            return { arr, (std::uint32_t)credentials.length() };
+            return { arr, static_cast<std::uint32_t>(credentials.length()) };
         };
 
     m_context.credentialsSupplier(CredentialsSupplier(onEncodedCredentials, onChallenge));

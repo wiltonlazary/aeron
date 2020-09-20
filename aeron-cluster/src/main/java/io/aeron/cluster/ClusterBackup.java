@@ -20,8 +20,7 @@ import io.aeron.archive.client.AeronArchive;
 import io.aeron.cluster.client.AeronCluster;
 import io.aeron.cluster.client.ClusterException;
 import io.aeron.cluster.codecs.mark.ClusterComponentType;
-import io.aeron.cluster.service.ClusterMarkFile;
-import io.aeron.cluster.service.ClusteredServiceContainer;
+import io.aeron.cluster.service.*;
 import io.aeron.exceptions.ConcurrentConcludeException;
 import org.agrona.CloseHelper;
 import org.agrona.ErrorHandler;
@@ -52,22 +51,22 @@ public final class ClusterBackup implements AutoCloseable
     /**
      * The type id of the {@link Counter} used for the backup state.
      */
-    public static final int BACKUP_STATE_TYPE_ID = 208;
+    public static final int BACKUP_STATE_TYPE_ID = AeronCounters.CLUSTER_BACKUP_STATE_TYPE_ID;
 
     /**
      * The type id of the {@link Counter} used for the live log position counter.
      */
-    public static final int LIVE_LOG_POSITION_TYPE_ID = 209;
+    public static final int LIVE_LOG_POSITION_TYPE_ID = AeronCounters.CLUSTER_BACKUP_LIVE_LOG_POSITION_TYPE_ID;
 
     /**
      * The type id of the {@link Counter} used for the next query deadline counter.
      */
-    public static final int QUERY_DEADLINE_TYPE_ID = 210;
+    public static final int QUERY_DEADLINE_TYPE_ID = AeronCounters.CLUSTER_BACKUP_QUERY_DEADLINE_TYPE_ID;
 
     /**
      * The type id of the {@link Counter} used for keeping track of the number of errors that have occurred.
      */
-    public static final int CLUSTER_BACKUP_ERROR_COUNT_TYPE_ID = 211;
+    public static final int CLUSTER_BACKUP_ERROR_COUNT_TYPE_ID = AeronCounters.CLUSTER_BACKUP_ERROR_COUNT_TYPE_ID;
 
     enum State
     {
@@ -336,6 +335,7 @@ public final class ClusterBackup implements AutoCloseable
         private String aeronDirectoryName = CommonContext.getAeronDirectoryName();
         private Aeron aeron;
 
+        private int clusterId = ClusteredServiceContainer.Configuration.clusterId();
         private String consensusChannel = Configuration.CONSENSUS_CHANNEL_DEFAULT;
         private int consensusStreamId = ConsensusModule.Configuration.consensusStreamId();
         private int consensusModuleSnapshotStreamId = ConsensusModule.Configuration.snapshotStreamId();
@@ -451,7 +451,8 @@ public final class ClusterBackup implements AutoCloseable
 
                 if (null == errorCounter)
                 {
-                    errorCounter = aeron.addCounter(CLUSTER_BACKUP_ERROR_COUNT_TYPE_ID, "ClusterBackup errors");
+                    errorCounter = ClusterCounters.allocate(
+                        aeron, "ClusterBackup errors", CLUSTER_BACKUP_ERROR_COUNT_TYPE_ID, clusterId);
                 }
             }
 
@@ -476,17 +477,19 @@ public final class ClusterBackup implements AutoCloseable
 
             if (null == stateCounter)
             {
-                stateCounter = aeron.addCounter(BACKUP_STATE_TYPE_ID, "Backup State");
+                stateCounter = ClusterCounters.allocate(aeron, "ClusterBackup State", BACKUP_STATE_TYPE_ID, clusterId);
             }
 
             if (null == liveLogPositionCounter)
             {
-                liveLogPositionCounter = aeron.addCounter(LIVE_LOG_POSITION_TYPE_ID, "Live Log Position");
+                liveLogPositionCounter = ClusterCounters.allocate(
+                    aeron, "ClusterBackup live log position", LIVE_LOG_POSITION_TYPE_ID, clusterId);
             }
 
             if (null == nextQueryDeadlineMsCounter)
             {
-                nextQueryDeadlineMsCounter = aeron.addCounter(QUERY_DEADLINE_TYPE_ID, "Next Query Deadline (ms)");
+                nextQueryDeadlineMsCounter = ClusterCounters.allocate(
+                    aeron, "ClusterBackup next query deadline (ms)", QUERY_DEADLINE_TYPE_ID, clusterId);
             }
 
             if (null == threadFactory)
@@ -619,6 +622,30 @@ public final class ClusterBackup implements AutoCloseable
         public boolean deleteDirOnStart()
         {
             return deleteDirOnStart;
+        }
+
+        /**
+         * Set the id for this cluster instance.
+         *
+         * @param clusterId for this clustered instance.
+         * @return this for a fluent API
+         * @see io.aeron.cluster.service.ClusteredServiceContainer.Configuration#CLUSTER_ID_PROP_NAME
+         */
+        public Context clusterId(final int clusterId)
+        {
+            this.clusterId = clusterId;
+            return this;
+        }
+
+        /**
+         * Get the id for this cluster instance.
+         *
+         * @return the id for this cluster instance.
+         * @see io.aeron.cluster.service.ClusteredServiceContainer.Configuration#CLUSTER_ID_PROP_NAME
+         */
+        public int clusterId()
+        {
+            return clusterId;
         }
 
         /**

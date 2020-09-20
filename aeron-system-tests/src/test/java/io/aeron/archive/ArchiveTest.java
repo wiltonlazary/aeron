@@ -114,6 +114,7 @@ public class ArchiveTest
             TestMediaDriver.notSupportedOnCMediaDriver("C driver does not integrate with Java Invoker");
         }
 
+        IoUtil.delete(new File(CommonContext.getAeronDirectoryName()), false);
         rnd.setSeed(seed);
         requestedInitialTermId = rnd.nextInt(1234);
 

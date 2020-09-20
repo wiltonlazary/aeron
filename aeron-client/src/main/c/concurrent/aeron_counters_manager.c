@@ -22,10 +22,6 @@
 #include "concurrent/aeron_counters_manager.h"
 #include "util/aeron_error.h"
 
-#ifdef _MSC_VER
-#define _Static_assert static_assert
-#endif
-
 int aeron_counters_manager_init(
     aeron_counters_manager_t *manager,
     uint8_t *metadata_buffer,
@@ -154,8 +150,8 @@ void aeron_counters_manager_append_to_label(
     size_t available_length = sizeof(metadata->label) - current_length;
     size_t copy_length = length > available_length ? available_length : length;
 
-    memcpy(metadata->label, value, copy_length);
-    AERON_PUT_ORDERED(metadata->label_length, ((int32_t)(current_length + copy_length)));
+    memcpy(metadata->label + current_length, value, copy_length);
+    AERON_PUT_ORDERED(metadata->label_length, (int32_t)(current_length + copy_length));
 }
 
 void aeron_counters_manager_remove_free_list_index(aeron_counters_manager_t *manager, int index)
@@ -359,6 +355,22 @@ int aeron_counters_reader_counter_state(aeron_counters_reader_t *counters_reader
         counters_reader->metadata + AERON_COUNTER_METADATA_OFFSET(counter_id));
 
     AERON_GET_VOLATILE(*state, metadata->state);
+
+    return 0;
+}
+
+int aeron_counters_reader_counter_type_id(
+    aeron_counters_reader_t *counters_reader, int32_t counter_id, int32_t *type_id)
+{
+    if (counter_id < 0 || counter_id > counters_reader->max_counter_id)
+    {
+        return -1;
+    }
+
+    aeron_counter_metadata_descriptor_t *metadata = (aeron_counter_metadata_descriptor_t *)(
+        counters_reader->metadata + AERON_COUNTER_METADATA_OFFSET(counter_id) + AERON_COUNTER_TYPE_ID_OFFSET);
+
+    AERON_GET_VOLATILE(*type_id, metadata->state);
 
     return 0;
 }

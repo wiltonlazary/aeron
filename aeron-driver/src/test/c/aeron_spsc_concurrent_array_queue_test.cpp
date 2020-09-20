@@ -45,9 +45,9 @@ public:
         aeron_spsc_concurrent_array_queue_close(&m_q);
     }
 
-    static void drain_func(void *clientd, volatile void *element)
+    static void drain_func(void *clientd, void *element)
     {
-        SpscQueueTest *t = (SpscQueueTest *)clientd;
+        auto *t = (SpscQueueTest *)clientd;
 
         (*t).m_drain(element);
     }
@@ -61,7 +61,7 @@ public:
     }
 
 protected:
-    aeron_spsc_concurrent_array_queue_t m_q;
+    aeron_spsc_concurrent_array_queue_t m_q = {};
     std::function<void(volatile void *)> m_drain;
 };
 
@@ -143,7 +143,7 @@ TEST_F(SpscQueueTest, shouldDrainFullQueue)
 
 TEST_F(SpscQueueTest, shouldDrainingFullQueueWithLimit)
 {
-    uint64_t limit = CAPACITY / 2;
+    size_t limit = CAPACITY / 2;
     fillQueue();
 
     int64_t counter = 1;
@@ -160,10 +160,10 @@ TEST_F(SpscQueueTest, shouldDrainingFullQueueWithLimit)
 
 #define NUM_MESSAGES (10 * 1000 * 1000)
 
-static void spsc_queue_concurrent_handler(void *clientd, volatile void *element)
+static void spsc_queue_concurrent_handler(void *clientd, void *element)
 {
-    size_t *counts = (size_t *)clientd;
-    uint64_t messageNumber = (uint64_t)element;
+    auto *counts = (size_t *)clientd;
+    auto messageNumber = (uint64_t)element;
 
     EXPECT_EQ(++(*counts), (size_t)messageNumber);
 }
@@ -199,7 +199,7 @@ TEST(SpscQueueConcurrentTest, shouldExchangeMessages)
 
     while (msgCount < NUM_MESSAGES)
     {
-        const uint64_t drainCount = aeron_spsc_concurrent_array_queue_drain_all(
+        const size_t drainCount = aeron_spsc_concurrent_array_queue_drain_all(
             &q, spsc_queue_concurrent_handler, &counts);
 
         if (0 == drainCount)

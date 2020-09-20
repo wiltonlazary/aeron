@@ -727,6 +727,17 @@ int aeron_counters_reader_counter_owner_id(
 int aeron_counters_reader_counter_state(aeron_counters_reader_t *counters_reader, int32_t counter_id, int32_t *state);
 
 /**
+ * Get the type id for a counter.
+ *
+ * @param counters_reader that contains the counter
+ * @param counter_id to find
+ * @param type id out pointer for the current state to be stored in.
+ * @return -1 on failure, 0 on success.
+ */
+int aeron_counters_reader_counter_type_id(
+    aeron_counters_reader_t *counters_reader, int32_t counter_id, int32_t *type_id);
+
+/**
  * Get the label for a counter.
  *
  * @param counters_reader that contains the counter
@@ -1122,6 +1133,29 @@ int aeron_exclusive_publication_async_destination_poll(aeron_async_destination_t
 int aeron_publication_close(
     aeron_publication_t *publication, aeron_notification_t on_close_complete, void *on_close_complete_clientd);
 
+/**
+ * Get the publication's channel
+ *
+ * @param publication this
+ * @return channel uri string
+ */
+const char *aeron_publication_channel(aeron_publication_t *publication);
+
+/**
+ * Get the publication's stream id
+ *
+ * @param publication this
+ * @return stream id
+ */
+int32_t aeron_publication_stream_id(aeron_publication_t *publication);
+
+/**
+ * Get the publication's session id
+ * @param publication this
+ * @return session id
+ */
+int32_t aeron_publication_session_id(aeron_publication_t *publication);
+
 /*
  * Exclusive Publication functions
  */
@@ -1306,25 +1340,25 @@ typedef enum aeron_controlled_fragment_handler_action_en
     /**
      * Abort the current polling operation and do not advance the position for this fragment.
      */
-    AERON_ACTION_ABORT,
+    AERON_ACTION_ABORT = 1,
 
     /**
      * Break from the current polling operation and commit the position as of the end of the current fragment
      * being handled.
      */
-    AERON_ACTION_BREAK,
+    AERON_ACTION_BREAK = 2,
 
     /**
      * Continue processing but commit the position as of the end of the current fragment so that
      * flow control is applied to this point.
      */
-    AERON_ACTION_COMMIT,
+    AERON_ACTION_COMMIT = 3,
 
     /**
      * Continue processing until fragment limit or no fragments with position commit at end of poll as in
      * aeron_fragment_handler_t.
      */
-    AERON_ACTION_CONTINUE
+    AERON_ACTION_CONTINUE = 4
 }
 aeron_controlled_fragment_handler_action_t;
 

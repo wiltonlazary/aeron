@@ -13,8 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-cmake_minimum_required(VERSION 3.1.3 FATAL_ERROR)
-cmake_policy(VERSION 3.1.3)
+cmake_minimum_required(VERSION 3.6.1 FATAL_ERROR)
+cmake_policy(VERSION 3.6.1)
 
 file(STRINGS version.txt AERON_VERSION_TXT LIMIT_COUNT 1 REGEX "^[0-9]+(\\.[0-9]+)+")
 string(REGEX REPLACE "^([0-9]+(\\.[0-9]+)+).*$" "\\1" AERON_VERSION_FROM_FILE "${AERON_VERSION_TXT}")
@@ -102,8 +102,8 @@ endif ()
 if (AERON_BUILD_SAMPLES)
     ExternalProject_Add(
         hdr_histogram
-        URL ${CMAKE_CURRENT_SOURCE_DIR}/cppbuild/HdrHistogram_c-0.11.0.zip
-        URL_MD5 ed24e82b10c91fe32efefe0ac71b4763
+        URL ${CMAKE_CURRENT_SOURCE_DIR}/cppbuild/HdrHistogram_c-0.11.1.zip
+        URL_MD5 da9b87e97b4b897772f2226f73741605
         CMAKE_ARGS -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER};-DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER};-DCMAKE_C_STANDARD=99;-DCMAKE_PREFIX_PATH=${CMAKE_CURRENT_BINARY_DIR}/zlib64;-DCMAKE_IGNORE_PATH="optimized;C:/Program Files/PostgreSQL/12/lib"
         PREFIX "${AERON_THIRDPARTY_BINARY_DIR}/hdr_histogram"
         BUILD_BYPRODUCTS "${AERON_THIRDPARTY_BINARY_DIR}/hdr_histogram/src/hdr_histogram-build/src/${CMAKE_CFG_INTDIR}/${CMAKE_STATIC_LIBRARY_PREFIX}hdr_histogram_static${CMAKE_STATIC_LIBRARY_SUFFIX}"
@@ -168,8 +168,8 @@ if (UNIX)
     endif (CXX_WARNINGS_AS_ERRORS)
 
     if (SANITISE_BUILD)
-        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=address -fsanitize=leak -fsanitize=undefined")
-        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address -fsanitize=leak -fsanitize=undefined")
+        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=address -fsanitize=leak -fsanitize=undefined -DAERON_SANITIZE_ENABLED")
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address -fsanitize=leak -fsanitize=undefined -DAERON_SANITIZE_ENABLED")
     endif (SANITISE_BUILD)
 
     if (COVERAGE_BUILD)
@@ -237,6 +237,8 @@ endif ()
 
 set(AERON_CLIENT_SOURCE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/aeron-client/src/main/cpp")
 
+set(AERON_CLIENT_WRAPPER_SOURCE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/aeron-client/src/main/cpp_wrapper")
+
 set(AERON_C_CLIENT_SOURCE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/aeron-client/src/main/c")
 
 set(AERON_DRIVER_SOURCE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/aeron-driver/src/main/c")
@@ -247,6 +249,7 @@ if (AERON_TESTS)
     set(AERON_CLIENT_TEST_PATH "${CMAKE_CURRENT_SOURCE_DIR}/aeron-client/src/test/cpp")
     set(AERON_DRIVER_TEST_PATH "${CMAKE_CURRENT_SOURCE_DIR}/aeron-driver/src/test/c")
     set(AERON_C_CLIENT_TEST_PATH "${CMAKE_CURRENT_SOURCE_DIR}/aeron-client/src/test/c")
+    set(AERON_CLIENT_WRAPPER_TEST_PATH "${CMAKE_CURRENT_SOURCE_DIR}/aeron-client/src/test/cpp_wrapper")
     set(AERON_ARCHIVE_TEST_PATH "${CMAKE_CURRENT_SOURCE_DIR}/aeron-archive/src/test/cpp")
     set(AERON_SYSTEM_TEST_PATH "${CMAKE_CURRENT_SOURCE_DIR}/aeron-system-tests")
 
@@ -267,9 +270,12 @@ add_definitions(-D_FILE_OFFSET_BITS=64)
 add_subdirectory(${AERON_C_CLIENT_SOURCE_PATH})
 
 add_subdirectory(${AERON_CLIENT_SOURCE_PATH})
+add_subdirectory(${AERON_CLIENT_WRAPPER_SOURCE_PATH})
+
 if (AERON_TESTS)
     add_subdirectory(${AERON_CLIENT_TEST_PATH})
     add_subdirectory(${AERON_C_CLIENT_TEST_PATH})
+    add_subdirectory(${AERON_CLIENT_WRAPPER_TEST_PATH})
 endif ()
 if (AERON_BUILD_SAMPLES)
     add_subdirectory(${AERON_SAMPLES_PATH})
@@ -296,7 +302,7 @@ if (BUILD_AERON_ARCHIVE_API)
         "${CMAKE_CURRENT_SOURCE_DIR}}/aeron-archive/src/main/java/*.java")
 
     add_custom_command(OUTPUT ${AERON_ALL_JAR}
-        COMMAND ${GRADLE_WRAPPER} :aeron-all:clean :aeron-all:assemble --no-daemon -x javadoc
+        COMMAND ${GRADLE_WRAPPER} :aeron-all:clean :aeron-all:assemble --no-daemon -x javadoc --console=plain -q
         DEPENDS ${AERON_ALL_SOURCES}
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
         COMMENT "Generating aeron-all jar")

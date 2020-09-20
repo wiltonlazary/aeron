@@ -13,19 +13,26 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.aeron;
+#ifndef AERON_CONCURRENT_ATOMIC64_H
+#define AERON_CONCURRENT_ATOMIC64_H
 
-import org.junit.jupiter.api.Test;
+#include "util/Platform.h"
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
+#if defined(AERON_COMPILER_GCC)
+    #if defined(AERON_CPU_X64)
+        #include "concurrent/atomic/Atomic64_gcc_x86_64.h"
+    #else
+        #include "concurrent/atomic/Atomic64_gcc_cpp11.h"
+    #endif
+#elif defined(AERON_COMPILER_MSVC) && defined(AERON_CPU_X64)
+    #include "concurrent/atomic/Atomic64_msvc.h"
+#else
+    #error Unsupported platform!
+#endif
 
-public final class BufferBuilderUtilTest
-{
-    @Test
-    public void shouldFindMaxCapacityWhenRequested()
-    {
-        assertEquals(
-            BufferBuilderUtil.MAX_CAPACITY,
-            BufferBuilderUtil.findSuitableCapacity(0, BufferBuilderUtil.MAX_CAPACITY));
-    }
-}
+/**
+ * Set of Operations to support atomic operations in C++ that are
+ * consistent with the same semantics in the JVM.
+ */
+
+#endif

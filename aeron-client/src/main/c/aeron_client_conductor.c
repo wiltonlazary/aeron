@@ -28,6 +28,7 @@
 #include "aeron_cnc_file_descriptor.h"
 #include "aeron_image.h"
 #include "aeron_counter.h"
+#include "aeron_counters.h"
 
 int aeron_client_conductor_init(aeron_client_conductor_t *conductor, aeron_context_t *context)
 {
@@ -209,7 +210,7 @@ int aeron_client_conductor_init(aeron_client_conductor_t *conductor, aeron_conte
     return 0;
 }
 
-void aeron_client_conductor_on_command(void *clientd, volatile void *item)
+void aeron_client_conductor_on_command(void *clientd, void *item)
 {
     aeron_client_command_base_t *cmd = (aeron_client_command_base_t *)item;
 
@@ -220,7 +221,6 @@ void aeron_client_conductor_on_driver_response(int32_t type_id, uint8_t *buffer,
 {
     aeron_client_conductor_t *conductor = (aeron_client_conductor_t *)clientd;
     int result = 0;
-
     char error_message[AERON_MAX_PATH] = "\0";
 
     switch (type_id)
@@ -370,10 +370,13 @@ void aeron_client_conductor_on_driver_response(int32_t type_id, uint8_t *buffer,
         }
 
         default:
+        {
+
             AERON_CLIENT_FORMAT_BUFFER(error_message, "response=%x unknown", type_id);
             conductor->error_handler(
                 conductor->error_handler_clientd, AERON_ERROR_CODE_UNKNOWN_COMMAND_TYPE_ID, error_message);
             break;
+        }
     }
 
     if (result < 0)
@@ -388,7 +391,7 @@ void aeron_client_conductor_on_driver_response(int32_t type_id, uint8_t *buffer,
 
     return;
 
-    malformed_command:
+malformed_command:
     AERON_CLIENT_FORMAT_BUFFER(error_message, "command=%x too short: length=%" PRIu32, type_id, (uint32_t)length);
     conductor->error_handler(conductor->error_handler_clientd, AERON_ERROR_CODE_MALFORMED_COMMAND, error_message);
 }
